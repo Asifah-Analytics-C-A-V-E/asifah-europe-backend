@@ -1,7 +1,7 @@
 """
 Asifah Analytics — Russia Stability Index Backend
 Europe Backend Module
-v1.1.0 — May 6 2026 (Phase 4 commodity-aware)
+v1.2.0 — June 1 2026 (Financial Pulse Card upgrade)
 
 ANALYTICAL FRAME:
 Russia's stability is measured on an INVERTED scale from its peer autocracies —
@@ -31,10 +31,12 @@ VECTORS (5):
   global_alignment    15%  — China-Russia axis, BRICS, sanctions evasion signals
 
 LIVE DATA SOURCES:
-  Ruble/USD:    open.er-api.com (free, no key)
+  Ruble/USD:    open.er-api.com (free, no key) — for scoring vector
+  USD/RUB:      Yahoo Finance RUB=X (free, no key) — for Financial Pulse Card sparkline
   Brent Crude:  Yahoo Finance BZ=F (free, no key)
-  MOEX Index:   Alpha Vantage (ALPHA_VANTAGE_KEY) — Moscow Exchange benchmark
-  Urals proxy:  Calculated from Brent minus historical discount range
+  Urals proxy:  Calculated synthetic = Brent - $12 baseline (Argus Media est.)
+  MOEX Index:   Yahoo Finance IMOEX.ME (v1.2.0 SWAPPED from Alpha Vantage)
+  MOEX Stock:   Yahoo Finance MOEX.ME — exchange operator (4th tile, structural integrity)
   Articles:     NewsAPI + GDELT
   Commodity:    europe:commodity:russia (populated by Europe proxy from ME backend)
 
@@ -52,9 +54,13 @@ ENDPOINTS:
 CHANGELOG:
   v1.0.0 (2026-04-11): Initial build
   v1.1.0 (2026-05-06): Phase 4 Gold Standard — commodity-aware
-                       - Added _read_russia_commodity_pressure() helper
-                       - Surface commodity_pressure in summary endpoint
-                       - NO stability score penalty (Option A leverage policy)
+  v1.2.0 (2026-06-01): Financial Pulse Card upgrade
+                       - SWAPPED MOEX from Alpha Vantage → Yahoo (IMOEX.ME)
+                       - ADDED MOEX.ME (exchange operator stock) as 4th tile
+                       - ADDED canonical Financial Pulse payload assembly
+                       - ADDED sparkline-derived 24h math for Yahoo fetches
+                       - ADDED per-tile market_status (MOEX hours UTC+3)
+                       - PRESERVED full v1.1.0 stability scoring logic untouched
 
 COPYRIGHT 2025-2026 Asifah Analytics. All rights reserved.
 """
@@ -293,6 +299,170 @@ def _read_russia_commodity_pressure():
 # LIVE MARKET DATA FETCHERS
 # ============================================
 
+def _fetch_yahoo_chart_with_sparkline(ticker, ticker_url_encoded=None):
+    """
+    v1.2.0 canonical Yahoo helper (mirrors Saudi/Nigeria pattern).
+
+    Returns dict with:
+      - price (latest)
+      - change_pct_24h (sparkline-derived, robust on weekends/holidays)
+      - sparkline (30-day list of {time, value})
+    Returns None on error.
+
+    SPARKLINE-DERIVED 24H MATH:
+      previousClose can equal chartPreviousClose on weekends — both fields
+      drift to chart-range-start. We instead use sparkline[-1] vs sparkline[-2]
+      for the 24h delta, which is always the last two trading days.
+    """
+    if ticker_url_encoded is None:
+        ticker_url_encoded = ticker
+    url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker_url_encoded}'
+    try:
+        r = requests.get(
+            url,
+            params={'interval': '1d', 'range': '1mo'},
+            timeout=10,
+            headers={'User-Agent': 'Mozilla/5.0 (AsifahAnalytics/1.0)'},
+        )
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        result = (data.get('chart', {}).get('result') or [{}])[0]
+        meta = result.get('meta', {})
+
+        # Build sparkline FIRST so we can derive prev_close from it
+        sparkline = []
+        try:
+            timestamps = result.get('timestamp', []) or []
+            closes = (result.get('indicators', {}).get('quote') or [{}])[0].get('close', []) or []
+            for i, ts in enumerate(timestamps):
+                if i < len(closes) and closes[i] is not None:
+                    sparkline.append({
+                        'time':  datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat(),
+                        'value': round(float(closes[i]), 4),
+                    })
+        except Exception:
+            pass
+
+        price = meta.get('regularMarketPrice')
+        if price is None and sparkline:
+            price = sparkline[-1]['value']
+
+        # Sparkline-derived 24h delta
+        prev_close = None
+        if len(sparkline) >= 2:
+            prev_close = sparkline[-2]['value']
+        if prev_close in (None, 0):
+            prev_close = meta.get('previousClose') or meta.get('chartPreviousClose')
+
+        if price is None or prev_close in (None, 0):
+            return None
+        change_pct = ((price - prev_close) / prev_close) * 100
+
+        return {
+            'price':      round(float(price), 4),
+            'change_pct': round(change_pct, 3),
+            'sparkline':  sparkline,
+        }
+    except Exception as e:
+        print(f'[Russia Stability] Yahoo fetch error for {ticker}: {str(e)[:120]}')
+        return None
+
+
+# ============================================
+# MARKET STATUS HELPERS (per-tile)
+# ============================================
+
+def _moex_market_status():
+    """
+    Moscow Exchange (MOEX) trading hours.
+    Main session: 10:00-18:50 Moscow time (UTC+3, no DST since 2011).
+    Pre-market: 09:50-10:00, Evening session: 19:00-23:50.
+    Returns 'open' / 'closed' / 'pre-market' / 'after-hours'.
+    """
+    now = datetime.now(timezone.utc)
+    moscow = now + timedelta(hours=3)
+    weekday = moscow.weekday()  # Mon=0 ... Sun=6
+    if weekday >= 5:
+        return 'closed'
+    h, m = moscow.hour, moscow.minute
+    minutes = h * 60 + m
+    pre_open  = 9 * 60 + 50    # 09:50
+    open_min  = 10 * 60         # 10:00
+    close_min = 18 * 60 + 50    # 18:50
+    eve_open  = 19 * 60         # 19:00 (evening session)
+    eve_close = 23 * 60 + 50    # 23:50
+    if minutes < pre_open:
+        return 'closed'
+    elif minutes < open_min:
+        return 'pre-market'
+    elif minutes < close_min:
+        return 'open'
+    elif minutes < eve_open:
+        return 'after-hours'
+    elif minutes < eve_close:
+        return 'open'  # evening session counts as open
+    else:
+        return 'closed'
+
+
+def _brent_market_status():
+    """
+    ICE Brent trades Mon-Fri effectively 24/5 (Sun 22:00 UTC → Sat 22:00 UTC).
+    """
+    now = datetime.now(timezone.utc)
+    weekday = now.weekday()
+    h = now.hour
+    if weekday == 5 and h >= 22:    # Sat 22:00+ = closed
+        return 'closed'
+    if weekday == 6 and h < 22:     # Sun before 22:00 UTC = closed
+        return 'closed'
+    return 'open'
+
+
+def _fx_market_status():
+    """USD/RUB FX market — effectively 24/5 like Brent."""
+    return _brent_market_status()
+
+
+def _aggregate_market_status(statuses):
+    """Combine per-tile statuses into a single card-level status."""
+    if all(s == 'open' for s in statuses):
+        return 'open'
+    if all(s == 'closed' for s in statuses):
+        return 'closed'
+    if any(s == 'pre-market' for s in statuses):
+        return 'pre-market'
+    if any(s == 'after-hours' for s in statuses):
+        return 'after-hours'
+    if any(s == 'open' for s in statuses):
+        return 'partial'
+    return 'closed'
+
+
+# ============================================
+# TIER LOGIC (polarity-aware, for Financial Pulse card tiles)
+# ============================================
+
+def _fp_tier(chg, inverted=False):
+    """
+    Financial Pulse tile tier — color band.
+      Standard polarity (IMOEX, MOEX.ME, Brent): rising = good
+      Inverted polarity (USD/RUB):                rising = bad (weaker ruble)
+    Tiers: rally / stable / warning / stress
+    """
+    if chg is None:
+        return 'stable'
+    c = -chg if inverted else chg
+    if c <= -2:
+        return 'stress'
+    if c <= -1:
+        return 'warning'
+    if c >= 2:
+        return 'rally'
+    return 'stable'
+
+
 def _fetch_ruble_usd():
     """
     Fetch live Ruble/USD from open.er-api.com (free, no key).
@@ -389,55 +559,255 @@ def _fetch_urals_discount(brent_price):
 
 def _fetch_moex_index():
     """
-    Fetch Moscow Exchange (MOEX) index via Alpha Vantage.
-    MOEX is the primary Russian equity benchmark — a proxy for domestic
-    business confidence and sanction impact on Russian capital markets.
+    Fetch MOEX Russia Index (IMOEX) — v1.2.0 SWAPPED from Alpha Vantage → Yahoo.
 
-    Alpha Vantage ticker: IMOEX (or MOEX) — may need INDEXRUS:IMOEX format.
-    Falls back gracefully if unavailable.
+    Why the swap (May 2026):
+      - Alpha Vantage free tier = 25 calls/day, often rate-limited
+      - Yahoo Finance carries IMOEX.ME cleanly with sparkline data
+      - Same pattern as Saudi (TASI), Nigeria (NGN/USD), Brent
 
     MOEX context:
       Pre-war 2022:  ~3,800 points (baseline)
       March 2022:    ~2,200 (sanctions shock bottom)
       Recovery 2023-24: ~3,000-3,500 (war economy adaptation)
       Stress level:  <2,500
+
+    Returns (price, status) — preserves v1.1.0 shape for stability scoring.
+    Sparkline + change_pct collected separately via _fetch_moex_index_full().
     """
-    if not ALPHA_VANTAGE_KEY:
-        print("[Russia Stability] MOEX: No Alpha Vantage key")
-        return None, 'unknown'
-    try:
-        # Alpha Vantage global quote endpoint
-        resp = requests.get(
-            'https://www.alphavantage.co/query',
-            params={
-                'function': 'GLOBAL_QUOTE',
-                'symbol':   'IMOEX.ME',
-                'apikey':   ALPHA_VANTAGE_KEY,
-            },
-            timeout=(5, 15)
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            quote = data.get('Global Quote', {})
-            price = quote.get('05. price')
-            change_pct = quote.get('10. change percent', '0%').replace('%', '')
-            if price:
-                price_f = float(price)
-                if price_f < 2500:
-                    status = 'stress'
-                elif price_f < 3000:
-                    status = 'warning'
-                else:
-                    status = 'stable'
-                print(f"[Russia Stability] MOEX: {price_f:.0f} ({change_pct}%, {status})")
-                return round(price_f, 0), status
-        # Alpha Vantage sometimes returns note for rate limits
-        note = data.get('Note') or data.get('Information', '')
-        if note:
-            print(f"[Russia Stability] MOEX Alpha Vantage note: {note[:80]}")
-    except Exception as e:
-        print(f"[Russia Stability] MOEX fetch error: {str(e)[:80]}")
+    full = _fetch_moex_index_full()
+    if full and full.get('value') is not None:
+        price_f = full['value']
+        if price_f < 2500:
+            status = 'stress'
+        elif price_f < 3000:
+            status = 'warning'
+        else:
+            status = 'stable'
+        print(f"[Russia Stability] MOEX (Yahoo IMOEX.ME): {price_f:.0f} ({full['change_pct_24h']:+.2f}%, {status})")
+        return round(price_f, 0), status
     return None, 'unknown'
+
+
+def _fetch_moex_index_full():
+    """
+    Fetch full MOEX Russia Index payload (Yahoo IMOEX.ME) with sparkline.
+    Used by Financial Pulse Card. Returns dict or None on failure.
+    """
+    try:
+        data = _fetch_yahoo_chart_with_sparkline('IMOEX.ME', 'IMOEX.ME')
+        if data is None:
+            return None
+        return {
+            'value':          round(data['price'], 2),
+            'change_pct_24h': data['change_pct'],
+            'sparkline':      data['sparkline'],
+            'source':         'Yahoo Finance',
+            'timestamp':      datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        print(f"[Russia Stability] MOEX index full fetch error: {str(e)[:80]}")
+        return None
+
+
+def _fetch_moex_stock_full():
+    """
+    Fetch Moscow Exchange OPERATOR stock (MOEX.ME) with sparkline.
+
+    WHY THIS TILE (analytical justification for 4th tile):
+      MOEX-the-company benefits from trading volume on its platform regardless
+      of direction. Its revenue is (1) trading fees on every transaction,
+      (2) interest income on client float, (3) listing fees. So MOEX-stock
+      is a unique meta-signal of STRUCTURAL INTEGRITY:
+        - Up = financial machinery operating "normally" (volumes flowing)
+        - Down = capital flight, bank runs, exchange dysfunction
+      Independent signal from IMOEX-the-index (which is directional).
+    """
+    try:
+        data = _fetch_yahoo_chart_with_sparkline('MOEX.ME', 'MOEX.ME')
+        if data is None:
+            return None
+        return {
+            'value':          round(data['price'], 2),
+            'change_pct_24h': data['change_pct'],
+            'sparkline':      data['sparkline'],
+            'source':         'Yahoo Finance (exchange operator stock)',
+            'timestamp':      datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        print(f"[Russia Stability] MOEX.ME stock fetch error: {str(e)[:80]}")
+        return None
+
+
+def _fetch_ruble_usd_full():
+    """
+    Fetch USD/RUB with sparkline (Yahoo RUB=X) — for Financial Pulse.
+    NOTE: er-api.com (used by _fetch_ruble_usd) doesn't expose sparkline,
+    so we use Yahoo for the Financial Pulse tile. Returns dict or None.
+    """
+    try:
+        data = _fetch_yahoo_chart_with_sparkline('RUB=X', 'RUB%3DX')
+        if data is None:
+            return None
+        return {
+            'value':          round(data['price'], 2),
+            'change_pct_24h': data['change_pct'],
+            'sparkline':      data['sparkline'],
+            'source':         'Yahoo Finance',
+            'timestamp':      datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        print(f"[Russia Stability] USD/RUB full fetch error: {str(e)[:80]}")
+        return None
+
+
+def _fetch_brent_full():
+    """
+    Fetch Brent crude full payload with sparkline (Yahoo BZ=F).
+    Mirrors Saudi/Nigeria pattern. Used by Financial Pulse Card.
+    """
+    try:
+        data = _fetch_yahoo_chart_with_sparkline('BZ=F', 'BZ%3DF')
+        if data is None:
+            return None
+        return {
+            'value':          round(data['price'], 2),
+            'change_pct_24h': data['change_pct'],
+            'sparkline':      data['sparkline'],
+            'source':         'Yahoo Finance (ICE Brent)',
+            'timestamp':      datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        print(f"[Russia Stability] Brent full fetch error: {str(e)[:80]}")
+        return None
+
+
+# ============================================
+# FINANCIAL PULSE CARD ASSEMBLY (v1.2.0)
+# ============================================
+
+def _build_financial_pulse(ruble_full, brent_full, urals_est, urals_discount, moex_index_full, moex_stock_full):
+    """
+    Assemble the canonical Financial Pulse Card payload for Russia.
+
+    Four tiles:
+      1. IMOEX        — domestic equity sentiment under sanctions isolation
+      2. USD/RUB      — ruble FX stress / sanction effectiveness (INVERTED polarity)
+      3. Brent+Urals  — Russian state oil revenue baseline (Urals inline)
+      4. MOEX.ME      — structural integrity of capital market infrastructure
+
+    Each tile answers a DIFFERENT analytical question. None redundant.
+    """
+    moex_status   = _moex_market_status()
+    brent_status  = _brent_market_status()
+    fx_status     = _fx_market_status()
+    # MOEX.ME (stock) trades same hours as MOEX (index)
+    moex_stock_status = moex_status
+
+    tiles = {}
+
+    # ── Tile 1: IMOEX Index ──
+    if moex_index_full:
+        tiles['IMOEX'] = {
+            'name':            'MOEX Russia Index',
+            'ticker':          'IMOEX.ME',
+            'value':           moex_index_full.get('value'),
+            'change_pct_24h':  moex_index_full.get('change_pct_24h'),
+            'trend':           'rising' if (moex_index_full.get('change_pct_24h') or 0) > 0.3 else ('falling' if (moex_index_full.get('change_pct_24h') or 0) < -0.3 else 'flat'),
+            'tier':            _fp_tier(moex_index_full.get('change_pct_24h')),
+            'source':          moex_index_full.get('source'),
+            'market_status':   moex_status,
+            'timestamp':       moex_index_full.get('timestamp'),
+            'sparkline':       moex_index_full.get('sparkline', []),
+            'note':            'Domestic equity sentiment — sanctions-isolated market',
+        }
+    else:
+        tiles['IMOEX'] = _empty_tile('MOEX Russia Index', 'IMOEX.ME', moex_status, 'Domestic equity sentiment — sanctions-isolated market')
+
+    # ── Tile 2: USD/RUB (INVERTED polarity — rising = weaker ruble) ──
+    if ruble_full:
+        tiles['RUBUSD'] = {
+            'name':            'USD/RUB',
+            'ticker':          'RUB=X',
+            'value':           ruble_full.get('value'),
+            'change_pct_24h':  ruble_full.get('change_pct_24h'),
+            'trend':           'rising' if (ruble_full.get('change_pct_24h') or 0) > 0.3 else ('falling' if (ruble_full.get('change_pct_24h') or 0) < -0.3 else 'flat'),
+            'tier':            _fp_tier(ruble_full.get('change_pct_24h'), inverted=True),
+            'source':          ruble_full.get('source'),
+            'market_status':   fx_status,
+            'timestamp':       ruble_full.get('timestamp'),
+            'sparkline':       ruble_full.get('sparkline', []),
+            'note':            'INVERTED polarity: rising USD/RUB = weaker ruble = sanctions biting',
+        }
+    else:
+        tiles['RUBUSD'] = _empty_tile('USD/RUB', 'RUB=X', fx_status, 'Ruble FX stress')
+
+    # ── Tile 3: Brent Crude + Urals discount inline ──
+    if brent_full:
+        tiles['BRENT'] = {
+            'name':            'Brent Crude',
+            'ticker':          'BZ=F',
+            'value':           brent_full.get('value'),
+            'change_pct_24h':  brent_full.get('change_pct_24h'),
+            'trend':           'rising' if (brent_full.get('change_pct_24h') or 0) > 0.3 else ('falling' if (brent_full.get('change_pct_24h') or 0) < -0.3 else 'flat'),
+            'tier':            _fp_tier(brent_full.get('change_pct_24h')),
+            'source':          brent_full.get('source'),
+            'market_status':   brent_status,
+            'timestamp':       brent_full.get('timestamp'),
+            'sparkline':       brent_full.get('sparkline', []),
+            'note':            'Russian state oil revenue baseline',
+            # Urals discount inline — Russia-specific signature signal
+            'urals_est':           urals_est,
+            'urals_discount':      urals_discount,
+            'urals_discount_note': f'Urals discount to Brent: ~${urals_discount:.0f}/bbl · Argus Media est. Apr 2026' if urals_discount else None,
+        }
+    else:
+        tiles['BRENT'] = _empty_tile('Brent Crude', 'BZ=F', brent_status, 'Russian state oil revenue baseline')
+
+    # ── Tile 4: MOEX.ME (exchange operator stock) ──
+    if moex_stock_full:
+        tiles['MOEXSTOCK'] = {
+            'name':            'MOEX Exchange (Operator)',
+            'ticker':          'MOEX.ME',
+            'value':           moex_stock_full.get('value'),
+            'change_pct_24h':  moex_stock_full.get('change_pct_24h'),
+            'trend':           'rising' if (moex_stock_full.get('change_pct_24h') or 0) > 0.3 else ('falling' if (moex_stock_full.get('change_pct_24h') or 0) < -0.3 else 'flat'),
+            'tier':            _fp_tier(moex_stock_full.get('change_pct_24h')),
+            'source':          moex_stock_full.get('source'),
+            'market_status':   moex_stock_status,
+            'timestamp':       moex_stock_full.get('timestamp'),
+            'sparkline':       moex_stock_full.get('sparkline', []),
+            'note':            'Structural integrity of Russian capital market infrastructure',
+        }
+    else:
+        tiles['MOEXSTOCK'] = _empty_tile('MOEX Exchange (Operator)', 'MOEX.ME', moex_stock_status, 'Structural integrity signal')
+
+    agg_status = _aggregate_market_status([moex_status, fx_status, brent_status, moex_stock_status])
+
+    return {
+        'country':         'RU',
+        'card_label':      'Russia Financial Pulse',
+        'last_refreshed':  datetime.now(timezone.utc).isoformat(),
+        'market_status':   agg_status,
+        'tiles':           tiles,
+    }
+
+
+def _empty_tile(name, ticker, market_status, note):
+    """Shell tile when fetcher fails — keeps shape consistent."""
+    return {
+        'name':            name,
+        'ticker':          ticker,
+        'value':           None,
+        'change_pct_24h':  0,
+        'trend':           'unknown',
+        'tier':            'stable',
+        'source':          'Unavailable',
+        'market_status':   market_status,
+        'timestamp':       datetime.now(timezone.utc).isoformat(),
+        'sparkline':       [],
+        'note':            note,
+    }
 
 
 def _get_sanctions_economy_level(ruble_rate, ruble_status, brent_price, brent_status, moex_index, moex_status):
@@ -706,6 +1076,19 @@ def run_russia_stability_scan():
     urals_est, urals_discount, urals_note       = _fetch_urals_discount(brent_price)
     moex_index, moex_status                     = _fetch_moex_index()
 
+    # ── 1b. FINANCIAL PULSE DATA (v1.2.0) ──
+    # Additional full-payload fetchers with sparklines for the canonical
+    # Financial Pulse Card. These are separate from the scoring-vector
+    # fetchers above to avoid disturbing the analytical logic.
+    ruble_full      = _fetch_ruble_usd_full()
+    brent_full      = _fetch_brent_full()
+    moex_index_full = _fetch_moex_index_full()
+    moex_stock_full = _fetch_moex_stock_full()
+    financial_pulse = _build_financial_pulse(
+        ruble_full, brent_full, urals_est, urals_discount,
+        moex_index_full, moex_stock_full
+    )
+
     # ── 2. RHETORIC FINGERPRINT ──
     mil_level, nuclear_level, hybrid_level, arctic_level, ukraine_level = _read_rhetoric_fingerprint()
 
@@ -846,7 +1229,10 @@ def run_russia_stability_scan():
         'urals_discount':       urals_discount,
         'urals_note':           urals_note,
         'moex_index':           moex_index,
-        'moex_status':          moex_status,
+        'moex_status':           moex_status,
+
+        # v1.2.0 Financial Pulse Card payload (canonical 4-tile structure)
+        'financial_pulse':       financial_pulse,
 
         # Static reference data
         'static_economic':      STATIC_ECONOMIC,
@@ -863,7 +1249,7 @@ def run_russia_stability_scan():
         'scan_time_seconds':    scan_time,
         'scanned_at':           scanned_at,
         'from_cache':           False,
-        'version':              '1.1.0-russia-commodity-aware',
+        'version':              '1.2.0-russia-financial-pulse-upgrade',
     }
 
     # Cache to Redis
@@ -987,7 +1373,9 @@ def register_russia_stability_endpoints(app):
             'scanned_at':       cached.get('scanned_at', ''),
             # Phase 4 Gold Standard commodity exposure (always populated when proxy has data)
             'commodity_pressure': commodity_pressure_data,
-            'version':          '1.1.0-russia-commodity-aware',
+            # v1.2.0 Financial Pulse Card payload (4 tiles: IMOEX + USD/RUB + Brent+Urals + MOEX.ME)
+            'financial_pulse':  cached.get('financial_pulse'),
+            'version':          '1.2.0-russia-financial-pulse-upgrade',
         })
 
     @app.route('/api/stability/russia/history', methods=['GET'])
