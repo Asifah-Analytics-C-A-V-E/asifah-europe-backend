@@ -46,9 +46,11 @@ from flask import jsonify, request
 
 # 12 European/Central Asian capitals — MUST match WEATHER_CAPITALS in europe.html
 WEATHER_CAPITALS = {
+    'albania':      {'name': 'Tirana',    'lat': 41.33, 'lon':  19.82},
     'armenia':      {'name': 'Yerevan',   'lat': 40.19, 'lon':  44.52},
     'azerbaijan':   {'name': 'Baku',      'lat': 40.41, 'lon':  49.87},
     'belarus':      {'name': 'Minsk',     'lat': 53.90, 'lon':  27.57},
+    'belgium':      {'name': 'Brussels',  'lat': 50.85, 'lon':   4.35},
     'cyprus':       {'name': 'Nicosia',   'lat': 35.17, 'lon':  33.36},
     'greenland':    {'name': 'Nuuk',      'lat': 64.17, 'lon': -51.74},
     'hungary':      {'name': 'Budapest',  'lat': 47.49, 'lon':  19.04},
