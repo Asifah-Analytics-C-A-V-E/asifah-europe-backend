@@ -123,6 +123,39 @@ ESCALATION_LEVELS = {
 # ============================================================
 # ACTORS
 # ============================================================
+# ============================================================
+# SEVERITY LEXICONS (v1.1 calibration -- intensity, not volume)
+# ------------------------------------------------------------
+# Actor 'keywords' answer "is this article about this actor?" (relevance).
+# These lexicons answer "how hot is the language?" (intensity).
+# Multi-word phrases are used on purpose to avoid naive-substring false
+# positives (e.g. 'coup' inside 'couple', 'riot' inside 'patriot').
+#
+#   HIGH   = genuine unrest / violence           -> enables L4-L5
+#   MEDIUM = coercion / confrontation / rupture  -> enables L3-L4
+#   (neither present = ordinary politics         -> caps at L2)
+# ============================================================
+SEVERITY_HIGH = [
+    'civil war', 'martial law', 'state of emergency', 'military coup',
+    'coup attempt', 'coup d', 'violent clashes', 'deadly clashes',
+    'violent unrest', 'armed clashes', 'troops deployed', 'tanks deployed',
+    'opened fire', 'live fire', 'mass casualties', 'people killed',
+    'protesters killed', 'rioting', 'storming of parliament',
+    'stormed parliament', 'insurrection', 'assassination',
+]
+
+SEVERITY_MEDIUM = [
+    'constitutional crisis', 'political crisis', 'government collapse',
+    'cabinet collapse', 'vote of no confidence', 'no-confidence motion',
+    'no confidence motion', 'snap election', 'impeachment', 'ultimatum',
+    'recall ambassador', 'ambassador recalled', 'expels diplomats',
+    'expelled diplomats', 'sever ties', 'severs ties', 'cuts ties',
+    'suspends cooperation', 'emergency session', 'mass protest',
+    'mass demonstration', 'general strike', 'crackdown', 'standoff',
+    'closes border', 'border closure',
+]
+
+
 ACTORS = {
 
     # ── 1. HUNGARY GOVERNMENT (Tisza-led, post-April 2026) ────────
@@ -850,33 +883,62 @@ def _score_actor(actor_key, actor_cfg, articles):
         if tw_hits:
             tripwire_hits.extend(tw_hits)
 
+        # Intensity tags (severity, not volume) + source class
+        sev_high = any(term in text for term in SEVERITY_HIGH)
+        sev_med  = (not sev_high) and any(term in text for term in SEVERITY_MEDIUM)
+        feed_type = (art.get('feed_type') or '').lower()
+        src_name  = ((art.get('source') or {}).get('name') or '').lower()
+        is_social = (feed_type in ('telegram', 'bluesky')
+                     or 'telegram' in src_name or 'bluesky' in src_name)
+
         matched_keywords_seen.update(kw_hits)
         matched_articles.append({
             **art,
             '_matched_keywords': kw_hits[:5],
             '_tripwire_hits':    tw_hits[:3],
+            '_sev_high':         sev_high,
+            '_sev_med':          sev_med,
+            '_is_social':        is_social,
         })
 
     statement_count = len(matched_articles)
 
-    # Compute escalation level
-    # Baseline = baseline_per_week. Above baseline -> elevated levels.
+    # --- Severity-driven escalation level (v1.1 calibration) ---
+    # Language intensity sets the tier; article volume only moves the level
+    # WITHIN the ordinary-politics band (cap L2). Social-only signals
+    # (Telegram / Bluesky) can flag early warning but cap at L2 unless a
+    # non-social source corroborates.
+    high_all       = [a for a in matched_articles if a.get('_sev_high')]
+    med_all        = [a for a in matched_articles if a.get('_sev_med')]
+    high_nonsocial = [a for a in high_all if not a.get('_is_social')]
+    med_nonsocial  = [a for a in med_all  if not a.get('_is_social')]
+
     if statement_count == 0:
         level = 0
-    elif statement_count <= baseline * 0.5:
-        level = 1
-    elif statement_count <= baseline:
-        level = 2
-    elif statement_count <= baseline * 2:
-        level = 3
-    elif statement_count <= baseline * 3:
-        level = 4
-    else:
-        level = 5
+    elif high_all:                       # genuine unrest / violence
+        if not high_nonsocial:
+            level = 2                    # social-only early warning
+        elif len(high_nonsocial) >= 2:
+            level = 5                    # multiple corroborated reports
+        else:
+            level = 4                    # single corroborated report
+    elif med_all:                        # coercion / confrontation
+        if not med_nonsocial:
+            level = 2                    # social-only early warning
+        elif len(med_nonsocial) >= 3:
+            level = 4
+        else:
+            level = 3
+    else:                                # ordinary politics -> cap L2
+        if statement_count <= max(1, baseline * 0.5):
+            level = 1
+        else:
+            level = 2
 
-    # Tripwire breaches push level upward
-    if tripwire_hits:
-        level = min(5, level + 1)
+    # Tripwires are surfaced as event flags only (see tripwire_hits in the
+    # return); they no longer auto-raise the level. Many Hungary tripwires
+    # are de-escalatory realignment events, so the old +1 bump inflated the
+    # score. Directionality is handled by the signal interpreter.
 
     # Sort + top_articles for surface
     matched_articles.sort(
