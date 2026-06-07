@@ -505,6 +505,8 @@ def start_background_refresh():
 TRAVEL_ADVISORY_API = "https://cadataapi.state.gov/api/TravelAdvisories"
 
 TRAVEL_ADVISORY_CODES = {
+    'albania': ['AL'],
+    'belgium': ['BE'],
     'greenland': ['GL', 'DA'],
     'ukraine': ['UP'],
     'russia': ['RS'],
@@ -551,7 +553,9 @@ SOURCE_WEIGHTS = {
             'The Barents Observer', 'High North News',
             'Daily Sabah', 'Hurriyet Daily News', 'TRT World',
             'Cyprus Mail', 'In-Cyprus', 'Kathimerini',
-            'Ukrinform', 'Defence24', 'Notes from Poland'
+            'Ukrinform', 'Defence24', 'Notes from Poland',
+            'Exit.al', 'Tirana Times', 'Euronews Albania',
+            'The Brussels Times', 'VRT', 'RTBF', 'Le Soir'
         ],
         'weight': 0.85
     },
@@ -795,6 +799,35 @@ TARGET_BASELINES = {
 # TARGET KEYWORDS — EUROPE
 # ========================================
 TARGET_KEYWORDS = {
+    'albania': {
+        'keywords': [
+            'albania', 'albanian', 'tirana', 'edi rama', 'rama government',
+            'albania protest', 'albania protests', 'flamingo revolution',
+            'albania is not for sale', 'kushner albania', 'jared kushner albania',
+            'affinity partners', 'sazan island', 'sazan', 'vjosa', 'narta',
+            'vjosa-narta', 'zvernec', 'vlora', 'albania resort', 'luxury resort albania',
+            'albania riot police', 'albania water cannon', 'albania rally',
+            'albania demonstrations', 'albania eu accession', 'albania eu membership',
+            'rama resign', 'albania corruption'
+        ],
+        'reddit_keywords': [
+            'Albania', 'Tirana', 'Rama', 'Kushner', 'protest',
+            'Flamingo Revolution', 'Sazan', 'Vjosa', 'resort', 'EU accession'
+        ]
+    },
+    'belgium': {
+        'keywords': [
+            'belgium', 'belgian', 'brussels', 'antwerp', 'belgium government',
+            'belgium coalition', 'belgium election', 'belgium parliament',
+            'belgium nato', 'belgium eu', 'brussels eu summit', 'belgium defense',
+            'belgium strike', 'belgium protest', 'belgium security alert',
+            'belgium terror', 'antwerp diamond', 'belgium diamond', 'belgium energy'
+        ],
+        'reddit_keywords': [
+            'Belgium', 'Brussels', 'Antwerp', 'NATO', 'EU',
+            'strike', 'election', 'diamond', 'security'
+        ]
+    },
     'greenland': {
         'keywords': [
             'greenland', 'grønland', 'kalaallit nunaat',
@@ -1271,6 +1304,18 @@ ESCALATION_KEYWORDS = [
 # EUROPEAN NOTAM MONITORING
 # ========================================
 NOTAM_REGIONS = {
+    'albania': {
+        'fir_codes': ['LAAA'],
+        'icao_codes': ['LATI'],
+        'display_name': 'Albania',
+        'flag': '🇦🇱'
+    },
+    'belgium': {
+        'fir_codes': ['EBBU'],
+        'icao_codes': ['EBBR', 'EBAW', 'EBCI', 'EBLG', 'EBOS'],
+        'display_name': 'Belgium',
+        'flag': '🇧🇪'
+    },
     'ukraine': {
         'fir_codes': ['UKBV', 'UKDV', 'UKLV', 'UKFV', 'UKOV'],
         'icao_codes': ['UKBB', 'UKKK', 'UKLL', 'UKOO', 'UKDD', 'UKFF'],
