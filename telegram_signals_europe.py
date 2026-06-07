@@ -72,6 +72,7 @@ EUROPE_CHANNELS = [
     # ── European / NATO ───────────────────────────────────────────
     'eurointegration',     # European integration news (Ukraine-EU)
     'bbcrussian',          # BBC Russian service
+    'HMIntelligence',      # HM Intelligence -- Ukraine/Russia OSINT + Albania coverage
 ]
 
 # Extended channels — Baltic, Arctic, Poland (v1.2.0 audit)
@@ -184,6 +185,7 @@ RUSSIA_CHANNELS = [
     'NorwayMFA',           # Norwegian MFA — Arctic/NATO flank
     # ── Cross-theater (ME-Russia links) ───────────────────────────
     'MiddleEastSpectator', # ME-Russia axis signals
+    'HMIntelligence',      # HM Intelligence -- Russia/Ukraine OSINT
 ]
 
 # ── Belarus-specific channel list (v1.0.0 — Apr 29 2026) ──
@@ -284,6 +286,7 @@ UKRAINE_CHANNELS = [
     'EUvsDisinfo',             # Russian disinformation tracking
     # ── Cross-theater (Iran-Russia-Ukraine axis) ────────────────
     'MiddleEastSpectator',     # ME-Russia-Iran axis (Iranian drone supply context)
+    'HMIntelligence',      # HM Intelligence -- heavy Ukraine war signaling
 ]
 
 
