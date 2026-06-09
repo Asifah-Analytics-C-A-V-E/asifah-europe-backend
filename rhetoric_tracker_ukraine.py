@@ -637,9 +637,15 @@ def _fetch_all_articles():
 # ============================================================
 
 def _score_article_for_actor(article, actor_def):
+    # v1.1 (Jun 2026): also scan content + URL slug. Slugs encode the full
+    # headline (hyphens -> spaces) -- critical for GDELT articles, which carry
+    # an empty description.
+    _url = (article.get('url') or article.get('link') or '').lower()
     text = ' '.join([
         (article.get('title') or '').lower(),
         (article.get('description') or '').lower(),
+        (article.get('content') or '').lower(),
+        _url.replace('-', ' ').replace('_', ' ').replace('/', ' '),
     ])
     if not text.strip():
         return 0
@@ -651,17 +657,33 @@ def _score_article_for_actor(article, actor_def):
 
 
 def _classify_articles(articles):
+    # v1.1 (Jun 2026): multi-actor co-crediting. Winner-take-all swallowed
+    # cross-actor stories -- e.g. "Zelensky positive call with US envoys" went
+    # 100% to ukrainian_government and the US Government card showed nothing.
+    # Now: the best-match actor gets PRIMARY credit (counts toward theatre
+    # score); any OTHER actor matching >= 2 keywords gets a CO-CREDIT copy
+    # (visible on its card, flagged co_credit=True, EXCLUDED from theatre
+    # score so nothing double-counts).
+    CO_CREDIT_MIN = 2
     by_actor = {k: [] for k in ACTORS}
     for art in articles:
-        best_actor, best_score = None, 0
+        scores = {}
         for actor_key, actor_def in ACTORS.items():
             s = _score_article_for_actor(art, actor_def)
-            if s > best_score:
-                best_score, best_actor = s, actor_key
-        if best_actor and best_score >= 1:
-            art_copy = dict(art)
-            art_copy['actor_score'] = best_score
-            by_actor[best_actor].append(art_copy)
+            if s >= 1:
+                scores[actor_key] = s
+        if not scores:
+            continue
+        best_actor = max(scores, key=lambda k: scores[k])
+        art_copy = dict(art)
+        art_copy['actor_score'] = scores[best_actor]
+        by_actor[best_actor].append(art_copy)
+        for actor_key, s in scores.items():
+            if actor_key != best_actor and s >= CO_CREDIT_MIN:
+                cc = dict(art)
+                cc['actor_score'] = s
+                cc['co_credit'] = True
+                by_actor[actor_key].append(cc)
     return by_actor
 
 
@@ -684,7 +706,10 @@ def _compute_theatre_score(by_actor, articles):
     score = BASELINE
     for actor_key, articles_list in by_actor.items():
         weight = actor_weights.get(actor_key, 0.7)
-        actor_contribution = min(25, sum(a.get('weight', 0.7) for a in articles_list) * weight)
+        # Co-credit copies are display-only -- exclude from score (v1.1).
+        actor_contribution = min(25, sum(
+            a.get('weight', 0.7) for a in articles_list
+            if not a.get('co_credit')) * weight)
         score += actor_contribution
     return max(0, min(100, int(score)))
 
