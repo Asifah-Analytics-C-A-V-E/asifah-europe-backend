@@ -1,7 +1,7 @@
 """
 ═══════════════════════════════════════════════════════════════════════
   ASIFAH ANALYTICS — UKRAINE SIGNAL INTERPRETER
-  v2 - June 2026
+  v1.0.0 (Apr 30 2026)
 ═══════════════════════════════════════════════════════════════════════
 
 Analytical layer for the Ukraine rhetoric tracker. Reads scan_data
@@ -733,12 +733,42 @@ CEASEFIRE_TRIGGERS = [
 ]
 
 
-def _score_diplomatic_track(scan_data, green_lines_triggered):
-    matches = _check_keywords(scan_data, CEASEFIRE_TRIGGERS)
-    active_gls = [g for g in green_lines_triggered if g['status'] == 'ACTIVE']
-    diplomatic_score = matches + (len(active_gls) * 2)
+# Stance guard (v1.3, Jun 2026): phrases where peace is being REJECTED or is
+# COLLAPSING. These are NOT de-escalation -- they net against positive ceasefire
+# matches so "Moscow rejects peace" cannot read as a warming diplomatic track.
+CEASEFIRE_NEGATORS = [
+    'rejects peace', 'rejected peace', 'reject peace',
+    'rejects ceasefire', 'rejected ceasefire', 'rejects the ceasefire',
+    'rules out ceasefire', 'rules out talks', 'rules out negotiations',
+    'refuses negotiations', 'refuses to negotiate', 'refuses ceasefire',
+    'no ceasefire', 'no peace deal', 'no negotiations',
+    'peace talks collapse', 'peace talks collapsed', 'talks collapse',
+    'talks collapsed', 'negotiations collapse', 'ceasefire collapse',
+    'peace talks fail', 'peace talks failed', 'breaks off talks',
+    'walks away from talks', 'moscow rejects', 'kremlin rejects',
+    'putin rejects', 'russia rejects peace',
+]
 
-    if diplomatic_score >= 6:
+
+def _score_diplomatic_track(scan_data, green_lines_triggered):
+    matches  = _check_keywords(scan_data, CEASEFIRE_TRIGGERS)
+    negators = _check_keywords(scan_data, CEASEFIRE_NEGATORS)
+    # Stance guard: net negative-stance hits against positive matches (floored
+    # at 0) so peace being rejected/collapsing does not count as de-escalation.
+    net_matches = max(0, matches - negators)
+
+    active_gls = [g for g in green_lines_triggered if g['status'] == 'ACTIVE']
+    diplomatic_score = net_matches + (len(active_gls) * 2)
+
+    # Gate (v1.3, Jun 2026): "Active Ceasefire Track" (-10) requires the
+    # ceasefire FRAMEWORK green line to be ACTIVE -- framework-grade evidence
+    # (named venue, line-of-contact talks, signed framework), NOT a high count
+    # of loose keyword matches. Conversations are not negotiations.
+    framework_active = any(
+        g.get('id') == 'ceasefire_framework_active' for g in active_gls
+    )
+
+    if diplomatic_score >= 6 and framework_active:
         scenario = 'Active Ceasefire Track'
         modifier = -10
     elif diplomatic_score >= 3:
@@ -756,6 +786,8 @@ def _score_diplomatic_track(scan_data, green_lines_triggered):
         'scenario':        scenario,
         'modifier':        modifier,
         'active_green_lines_count': len(active_gls),
+        'framework_active': framework_active,
+        'negator_hits':    negators,
     }
 
 
