@@ -1,7 +1,7 @@
 """
 ═══════════════════════════════════════════════════════════════════════
   ASIFAH ANALYTICS — UKRAINE SIGNAL INTERPRETER
-  v1.0.0 (Apr 30 2026)
+  v2 - June 2026
 ═══════════════════════════════════════════════════════════════════════
 
 Analytical layer for the Ukraine rhetoric tracker. Reads scan_data
