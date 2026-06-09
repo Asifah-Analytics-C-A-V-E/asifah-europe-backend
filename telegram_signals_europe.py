@@ -1,6 +1,6 @@
 """
 Telegram Signal Source for Europe Conflict Dashboard
-v1.0.0 — March 2026
+v2 - June 2026
 
 Bridges Telethon (async) with Flask (sync) to pull messages
 from monitored Telegram channels and feed them into the
