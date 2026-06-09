@@ -244,7 +244,21 @@ def _normalize_tracker_data(theatre, raw_data):
 
     # ---- TOP SIGNALS (v2.0+ self-emitted if present; else synthesize) ----
     if 'top_signals' in raw_data and isinstance(raw_data['top_signals'], list):
-        top_signals = list(raw_data['top_signals'])
+        # v3.3 (Jun 2026): country-tag self-emitted signals. Trackers write
+        # short_text for their OWN page ("Diplomatic Track: ..."), but at the
+        # regional altitude an untagged signal is ambiguous. Prefix
+        # "{flag} {DISPLAY}: " unless the country name is already present
+        # (copies, not mutation -- raw_data is re-embedded under 'raw').
+        _disp = THEATRE_DISPLAY.get(theatre, theatre.upper())
+        top_signals = []
+        for _s in raw_data['top_signals']:
+            if not isinstance(_s, dict):
+                continue
+            _c = dict(_s)
+            _st = _c.get('short_text') or ''
+            if _st and _disp not in _st.upper():
+                _c['short_text'] = f"{flag} {_disp}: {_st}"
+            top_signals.append(_c)
     else:
         top_signals = _synthesize_top_signals_legacy(
             theatre, raw_data, threat_int, score, so_what, red_lines, green_lines
