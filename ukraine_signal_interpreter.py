@@ -369,6 +369,11 @@ GREEN_LINES = [
         'triggers_signaled': [
             'ceasefire talks', 'negotiation possibility',
             'diplomatic opening ukraine',
+            # v1.2 (Jun 2026) -- looser real-headline phrasings + Kushner
+            'kushner', 'jared kushner', 'us envoys', 'us envoys ukraine',
+            'peace efforts', 'peace efforts ukraine', 'positive call',
+            'zelensky us envoys', 'zelensky peace efforts', 'zelensky witkoff',
+            'zelensky kushner', 'moscow intentions', 'white house ukraine peace',
             # ── v1.1 — early-trend / soft / chatter signals ──
             'trump ukraine peace', 'trump push ukraine peace',
             'trump pressures zelensky', 'trump pressures ukraine',
@@ -517,6 +522,12 @@ def _check_keywords(scan_data, keywords):
             corpus_parts.append((art.get('title') or '').lower())
             corpus_parts.append((art.get('description') or '').lower())
             corpus_parts.append((art.get('summary') or '').lower())
+            corpus_parts.append((art.get('content') or '').lower())
+            # URL slugs encode the full headline (e.g. ".../zelensky-peace-efforts-us-envoys").
+            # Slugify so hyphen/underscore-joined words match multi-word keywords.
+            _url = (art.get('url') or art.get('link') or '').lower()
+            if _url:
+                corpus_parts.append(_url.replace('-', ' ').replace('_', ' ').replace('/', ' '))
     for key in ('telegram_messages', 'bluesky_signals', 'reddit_signals'):
         for sig in (scan_data.get(key) or []):
             corpus_parts.append((sig.get('text') or sig.get('title') or '').lower())
@@ -681,6 +692,19 @@ def _fetch_commodity_signal():
 # ============================================================
 
 CEASEFIRE_TRIGGERS = [
+    # ── v1.2 (Jun 2026) — looser headline/lede/URL-slug phrasings + Kushner ──
+    # The narrow contiguous phrases below miss real headline wording such as
+    # "peace efforts in positive call with US envoys". These match the words
+    # actually used in titles, ledes, and URL slugs.
+    'kushner', 'jared kushner', 'kushner ukraine', 'kushner zelensky',
+    'witkoff', 'steve witkoff', 'us envoys', 'us envoy', 'special envoy ukraine',
+    'us envoys ukraine', 'zelensky us envoys', 'zelensky envoys', 'envoys ukraine',
+    'zelensky witkoff', 'zelensky kushner', 'zelensky discusses peace',
+    'peace efforts', 'peace effort ukraine', 'peace efforts ukraine', 'peace push',
+    'positive call', 'positive talks', 'constructive call', 'constructive talks',
+    'moscow intentions', 'moscows intentions', 'russia intentions ukraine',
+    'peace negotiations', 'peace process ukraine', 'diplomatic push ukraine',
+    'white house ukraine peace', 'trump envoy ukraine', 'ceasefire discussions',
     # ── Concrete-framework signals (original) ──
     'ceasefire negotiation', 'witkoff zelensky', 'istanbul format',
     'minsk format revived', 'envoy ukraine russia',
