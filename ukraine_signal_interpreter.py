@@ -795,6 +795,110 @@ def _score_diplomatic_track(scan_data, green_lines_triggered):
 # SO WHAT BUILDER
 # ============================================================
 
+def _build_so_what_narrative(red_lines_triggered, green_lines_triggered,
+                             diplomatic, commodity_signal):
+    """Multi-dimensional 'peace So-What' (v1.4): weaves four threads into one
+    analyst read -- peace trajectory, the Russia-Ukraine kinetic axis, American
+    leverage, and the grain-corridor corollary. CONVERGENCE FRAMING ONLY:
+    describes signals present, never predicts action. Returns a list of
+    {label, text, tone} threads for structured frontend rendering."""
+    def _rl(rid):
+        return next((r for r in red_lines_triggered if r.get('id') == rid), {})
+    def _gl(gid):
+        return next((g for g in green_lines_triggered if g.get('id') == gid), {})
+    def _st(d):
+        return (d.get('status') or 'INACTIVE').upper()
+
+    threads = []
+
+    # 1) PEACE TRAJECTORY -- from the gated diplomatic track
+    scen = diplomatic.get('scenario', 'No Active Track')
+    fw   = diplomatic.get('framework_active')
+    negs = diplomatic.get('negator_hits', 0)
+    if scen == 'Active Ceasefire Track' and fw:
+        p_text = ("A ceasefire framework is active -- framework-grade evidence "
+                  "(named venue / line-of-contact talks). This is terms, not talk.")
+        p_tone = 'calm'
+    elif scen == 'Tentative Diplomatic Signals':
+        p_text = ("Peace conversations are live -- envoy contact and leader-level "
+                  "messaging -- but no signed framework. Treat as talk, not terms.")
+        p_tone = 'watch'
+    elif scen == 'Limited De-escalation Indicators':
+        p_text = ("Scattered de-escalation chatter; no structured negotiating "
+                  "track yet.")
+        p_tone = 'watch'
+    else:
+        p_text = "No diplomatic off-ramp detected in the current scan."
+        p_tone = 'alert'
+    if negs:
+        p_text += (" Counter-signal present: language consistent with Moscow "
+                   "rejecting terms is also in the corpus.")
+    threads.append({'label': 'PEACE TRAJECTORY', 'text': p_text, 'tone': p_tone})
+
+    # 2) RUSSIA-UKRAINE AXIS -- kinetic picture from red lines
+    kyiv  = _rl('kyiv_strike_significant')
+    grid  = _rl('energy_grid_collapse')
+    front = _rl('frontline_collapse')
+    nuke  = _rl('tactical_nuclear_signaling')
+    warn  = _rl('pre_strike_warning_issued')
+    bits = []
+    if _st(kyiv) in ('APPROACHING', 'BREACHED'):
+        bits.append("significant strikes on Kyiv")
+    if _st(warn) in ('APPROACHING', 'BREACHED'):
+        bits.append("an active pre-strike warning")
+    if _st(grid) in ('WATCHING', 'APPROACHING', 'BREACHED'):
+        bits.append("energy-grid pressure (" + _st(grid).lower() + ")")
+    if _st(front) in ('APPROACHING', 'BREACHED'):
+        bits.append("frontline-collapse indicators")
+    nuke_clause = ("; nuclear signaling inactive" if _st(nuke) == 'INACTIVE'
+                   else "; nuclear signaling " + _st(nuke).lower())
+    if bits:
+        a_text = "Kinetic picture: " + ", ".join(bits) + nuke_clause + "."
+        a_tone = ('elevated'
+                  if any(_st(x) in ('APPROACHING', 'BREACHED')
+                         for x in (kyiv, front, nuke))
+                  else 'watch')
+    else:
+        a_text = ("Kinetic picture: routine strike tempo, no red-line breach"
+                  + nuke_clause + ".")
+        a_tone = 'calm'
+    threads.append({'label': 'RUSSIA-UKRAINE AXIS', 'text': a_text, 'tone': a_tone})
+
+    # 3) AMERICAN LEVERAGE -- the decisive variable for war sustainability
+    aid_susp = _rl('us_aid_suspension_total')
+    if _st(aid_susp) in ('APPROACHING', 'BREACHED'):
+        l_text = ("US aid pipeline under stress (" + _st(aid_susp).lower()
+                  + ") -- the decisive variable for Ukrainian war sustainability "
+                  "is wobbling.")
+        l_tone = 'alert'
+    else:
+        eng = (" and engaged on the envoy track"
+               if diplomatic.get('score', 0) > 0 else "")
+        l_text = ("US aid pipeline shows no suspension signal" + eng
+                  + ". Washington's posture remains the decisive variable.")
+        l_tone = 'calm'
+    threads.append({'label': 'AMERICAN LEVERAGE', 'text': l_text, 'tone': l_tone})
+
+    # 4) GRAIN COROLLARY -- commodity pressure = news-signal VOLUME, not price
+    alert = (commodity_signal or {}).get('alert', 'normal')
+    if commodity_signal and alert and alert != 'normal':
+        corridor = _rl('grain_corridor_disruption')
+        corr_clause = (" Black Sea corridor disruption indicator "
+                       + _st(corridor).lower() + "." if corridor else "")
+        g_text = ("Commodity pressure at " + alert.upper()
+                  + " on news-signal volume (not price); wheat / grain corridor "
+                  "the lead exposure." + corr_clause
+                  + " Ripples toward MENA food-security signals.")
+        g_tone = 'elevated' if alert in ('surge', 'critical', 'high') else 'watch'
+    else:
+        g_text = ("Commodity pressure normal; grain corridor and defense-export "
+                  "vectors quiet.")
+        g_tone = 'calm'
+    threads.append({'label': 'GRAIN COROLLARY', 'text': g_text, 'tone': g_tone})
+
+    return threads
+
+
 def _build_so_what(scan_data, red_lines_triggered, green_lines_triggered,
                    diplomatic, commodity_signal):
     breached    = [r for r in red_lines_triggered if r['status'] == 'BREACHED']
@@ -881,6 +985,9 @@ def _build_so_what(scan_data, red_lines_triggered, green_lines_triggered,
         'scenario':            scenario,
         'priority':            priority,
         'assessment':          ' '.join(assessment_parts),
+        'narrative':           _build_so_what_narrative(
+                                   red_lines_triggered, green_lines_triggered,
+                                   diplomatic, commodity_signal),
         'breached_count':      len(breached),
         'approaching_count':   len(approaching),
         'active_green_count':  len(active_gl),
