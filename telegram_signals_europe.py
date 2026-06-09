@@ -287,6 +287,7 @@ UKRAINE_CHANNELS = [
     # ── Cross-theater (Iran-Russia-Ukraine axis) ────────────────
     'MiddleEastSpectator',     # ME-Russia-Iran axis (Iranian drone supply context)
     'HMIntelligence',      # HM Intelligence -- heavy Ukraine war signaling
+    'RageIntel',           # RageIntel -- Ukraine combat OSINT (added Jun 2026; verify exact handle)
 ]
 
 
