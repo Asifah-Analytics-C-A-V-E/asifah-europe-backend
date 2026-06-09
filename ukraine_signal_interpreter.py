@@ -936,12 +936,25 @@ def _build_top_signals(red_lines_triggered, green_lines_triggered,
         signals.append(commodity_signal['band'])
 
     if diplomatic['score'] >= 3:
+        # Scenario-driven level (v1.3): headline-grade in roll-ups (rhetoric-index,
+        # regional BLUF) instead of stuck at 'normal'. Gate already ensures only a
+        # framework-grade track earns 'Active Ceasefire Track'.
+        _dip_level = {
+            'Active Ceasefire Track':           'high',
+            'Tentative Diplomatic Signals':     'elevated',
+            'Limited De-escalation Indicators': 'normal',
+        }.get(diplomatic['scenario'], 'normal')
+        _sig_n = diplomatic['score']
+        _sig_word = 'signal' if _sig_n == 1 else 'signals'
+        _fw_note = ('Framework-grade evidence present (active ceasefire track).'
+                    if diplomatic.get('framework_active')
+                    else 'Signals only -- conversations, not a signed framework.')
         signals.append({
             'category':    'diplomatic',
-            'level':       'normal',
+            'level':       _dip_level,
             'short_text':  f"Diplomatic Track: {diplomatic['scenario']}",
-            'long_text':   f"Diplomatic score: {diplomatic['score']}. "
-                           f"Active green lines: {diplomatic['active_green_lines_count']}.",
+            'long_text':   (f"{diplomatic['scenario']} ({_sig_n} {_sig_word}). "
+                            f"{_fw_note}"),
             'icon':        '🤝',
             'source_link': '/rhetoric-ukraine.html#diplomatic',
         })
