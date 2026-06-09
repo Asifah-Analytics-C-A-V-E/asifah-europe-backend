@@ -227,6 +227,8 @@ ACTORS = {
         ),
         'keywords': [
             'trump ukraine', 'trump zelensky', 'witkoff',
+            'kushner', 'jared kushner', 'us envoys', 'us envoys ukraine',
+            'peace efforts', 'positive call', 'zelensky us envoys',
             'us aid ukraine', 'us military aid ukraine',
             'congressional aid ukraine', 'state department ukraine',
             'pentagon ukraine', 'us weapons ukraine',
