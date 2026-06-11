@@ -101,6 +101,23 @@ except ImportError as e:
     UKRAINE_RHETORIC_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Ukraine rhetoric tracker not available: {e}")
 
+# Turkey rhetoric tracker + signals interpreter (v1.0 -- Jun 11, 2026)
+# First Asifah SWING-STATE tracker: dual alignment indices (NATO-anchor vs
+# strategic-autonomy), Lebanon-vector playbook ladder, mirror-imaging
+# friction index. Emits cross-theater fingerprints: turkey_lebanon_vector,
+# turkey_israel_friction, turkey_nato_divergence, turkey_east_alignment.
+try:
+    from rhetoric_tracker_turkey import (
+        register_turkey_rhetoric_endpoints,
+        start_background_refresh as start_turkey_rhetoric_refresh,
+    )
+    from turkey_signal_interpreter import interpret_signals as turkey_interpret_signals
+    TURKEY_RHETORIC_AVAILABLE = True
+    print("[Europe Backend] ✅ Turkey rhetoric tracker loaded")
+except ImportError as e:
+    TURKEY_RHETORIC_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Turkey rhetoric tracker not available: {e}")
+
 # Hungary rhetoric tracker + signals interpreter (v1.0 -- May 17, 2026)
 # First Asifah tracker for a country undergoing axis reversal (post-Apr 2026 Tisza
 # landslide). Emits cross-theater fingerprints: hungary_axis_reversal_active,
@@ -4213,6 +4230,12 @@ if UKRAINE_RHETORIC_AVAILABLE:
     register_ukraine_rhetoric_endpoints(app)
     start_ukraine_rhetoric_refresh()
     print("[Europe Backend] ✅ Ukraine rhetoric routes registered + refresh started")
+
+# Register Turkey rhetoric tracker (v1.0 -- Jun 11, 2026)
+if TURKEY_RHETORIC_AVAILABLE:
+    register_turkey_rhetoric_endpoints(app)
+    start_turkey_rhetoric_refresh()
+    print("[Europe Backend] ✅ Turkey rhetoric routes registered + refresh started")
 
 # Register Hungary rhetoric tracker (v1.0 -- May 17, 2026)
 if HUNGARY_RHETORIC_AVAILABLE:
