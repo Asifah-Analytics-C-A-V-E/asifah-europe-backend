@@ -626,6 +626,59 @@ def _write_cross_theater_fingerprints(fingerprints):
             pass
 
 
+CROSSTHEATER_KEY = 'rhetoric:crosstheater:fingerprints'  # ME-backend shared dict
+
+
+def _write_crosstheater_dict_entry(score, alert, interpretation):
+    """DUAL-WRITE (the India precedent, Jun 11 2026): the ME backend
+    reads a SHARED DICT at rhetoric:crosstheater:fingerprints (Lebanon /
+    Israel / Syria / Iran convention), while Europe uses per-key
+    fingerprint:turkey:* entries. Turkey straddles theaters, so it
+    writes BOTH. Merge-write preserving the 8h TTL convention.
+
+    NOTE for ME readers: Turkey is NOT an Iran-axis theater -- it must
+    never feed the Israel threat-convergence index. Readers consume the
+    turkey entry in its own lane (friction / vector / divergence)."""
+    if not (UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN):
+        return False
+    try:
+        existing = _redis_get(CROSSTHEATER_KEY) or {}
+        fp = interpretation.get('cross_theater_fingerprints') or {}
+        alignment = interpretation.get('alignment') or {}
+        lebanon_vector = interpretation.get('lebanon_vector') or {}
+        level_map = {'normal': 1, 'elevated': 2, 'high': 3, 'critical': 4}
+        existing['turkey'] = {
+            'ts':                   datetime.now(timezone.utc).isoformat(),
+            'theatre':              'Turkey',
+            'tracker_class':        'swing_state',
+            'level':                level_map.get(alert, 1),
+            'score':                score,
+            'theatre_score':        score,
+            'lebanon_vector':       fp.get('turkey_lebanon_vector', 'dormant'),
+            'lebanon_vector_stage': lebanon_vector.get('stage', 0),
+            'israel_friction':      fp.get('turkey_israel_friction', 'normal'),
+            'nato_divergence':      fp.get('turkey_nato_divergence', 'anchored'),
+            'east_alignment':       fp.get('turkey_east_alignment', 'baseline'),
+            'syria_escalation':     fp.get('turkey_syria_escalation', 'normal'),
+            'straits_leverage':     fp.get('turkey_straits_leverage', False),
+            'mediation_active':     fp.get('turkey_mediation_active', False),
+            'nato_anchor_index':    alignment.get('nato_anchor_index', 0),
+            'strategic_autonomy_index': alignment.get('strategic_autonomy_index', 0),
+        }
+        r = requests.post(
+            UPSTASH_REDIS_URL,
+            headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'},
+            json=['SET', CROSSTHEATER_KEY, json.dumps(existing), 'EX', '28800'],
+            timeout=10
+        )
+        if r.status_code == 200:
+            print('[Turkey Rhetoric] Cross-theater dict entry written (ME dialect)')
+        return r.status_code == 200
+    except Exception as e:
+        print(f'[Turkey Rhetoric] Cross-theater dict write error: {str(e)[:80]}')
+        return False
+
+
 # ============================================================
 # MAIN SCAN
 # ============================================================
@@ -708,6 +761,7 @@ def run_turkey_rhetoric_scan(force=False):
     _write_cross_theater_fingerprints(
         interpretation.get('cross_theater_fingerprints') or {}
     )
+    _write_crosstheater_dict_entry(score, alert, interpretation)
 
     elapsed = round(time.time() - started, 1)
     result = {
