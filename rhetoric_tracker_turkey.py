@@ -390,8 +390,17 @@ def _fetch_rss(url, source_name, weight=0.85, max_items=20):
     return articles
 
 
+# GDELT circuit breaker (canonical pattern): after the first failure,
+# short-circuit all remaining GDELT queries for 10 minutes. Eight
+# consecutive read-timeouts cost ~40s of scan time for zero articles.
+_GDELT_BREAKER = {'tripped_at': 0.0}
+_GDELT_BREAKER_COOLDOWN_SEC = 600
+
+
 def _fetch_gdelt(query, language='eng', days=7, max_records=25):
     articles = []
+    if time.time() - _GDELT_BREAKER['tripped_at'] < _GDELT_BREAKER_COOLDOWN_SEC:
+        return articles  # breaker open -- skip silently
     try:
         params = {
             'query':         f'{query} sourcelang:{language}',
@@ -401,7 +410,7 @@ def _fetch_gdelt(query, language='eng', days=7, max_records=25):
             'format':        'json',
             'sort':          'datedesc',
         }
-        r = requests.get(GDELT_BASE_URL, params=params, timeout=(5, 15))
+        r = requests.get(GDELT_BASE_URL, params=params, timeout=(5, 8))
         if r.status_code == 200:
             for item in (r.json().get('articles') or []):
                 articles.append({
@@ -415,7 +424,9 @@ def _fetch_gdelt(query, language='eng', days=7, max_records=25):
                     'published':   item.get('seendate'),
                 })
     except Exception as e:
-        print(f'[Turkey Rhetoric] GDELT error ({query}): {str(e)[:80]}')
+        _GDELT_BREAKER['tripped_at'] = time.time()
+        print(f'[Turkey Rhetoric] GDELT error ({query}): {str(e)[:80]} '
+              f'-- breaker OPEN, skipping remaining GDELT queries for 10 min')
     return articles
 
 
@@ -489,21 +500,26 @@ def _fetch_reddit():
     """Reddit signals. The Lebanon vector surfaces in r/lebanon before
     it makes wire copy (the RUMINT lesson: r/forbiddenbromance surfaced
     the South Lebanon economic zone six months early)."""
-    subs = ['Turkey', 'lebanon', 'syriancivilwar', 'Israel', 'geopolitics']
+    # r/Turkey is the HOME sub: posts there are about Turkey by
+    # definition and rarely say "turkey" in the title -- exempt from the
+    # topic gate. Cross-subs (r/lebanon etc.) keep the keyword filter.
+    subs = [('Turkey', False), ('lebanon', True), ('syriancivilwar', True),
+            ('Israel', True), ('geopolitics', True)]
     signals = []
     headers = {'User-Agent': 'AsifahAnalytics/1.0'}
-    for sub in subs:
+    for sub, gate in subs:
         try:
             r = requests.get(
                 f'https://www.reddit.com/r/{sub}/hot.json?limit=20',
                 headers=headers, timeout=10
             )
             if r.status_code != 200:
+                print(f'[Turkey Rhetoric] Reddit r/{sub} HTTP {r.status_code}')
                 continue
             for child in (r.json().get('data', {}).get('children') or []):
                 post = child.get('data', {})
                 title = (post.get('title') or '').lower()
-                if not any(kw in title for kw in TURKEY_TOPIC_KEYWORDS):
+                if gate and not any(kw in title for kw in TURKEY_TOPIC_KEYWORDS):
                     continue
                 signals.append({
                     'title':     post.get('title', ''),
