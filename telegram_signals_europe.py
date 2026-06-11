@@ -328,6 +328,48 @@ def fetch_ukraine_telegram_signals(hours_back=72):
         print(f"[Telegram Ukraine] ❌ fetch error: {str(e)[:200]}")
         return []
 
+TURKEY_CHANNELS = [
+    'ClashReport',          # Turkish-origin OSINT -- the anchor source
+    'MiddleEastSpectator',  # Cross-theater ME-Russia links
+    'OSINTdefender',        # High-signal English OSINT
+    'intelslava',           # Aggregator -- catches Turkey-Russia threads
+    'disclosetv',           # Breaking conflict news
+]
+
+def fetch_turkey_telegram_signals(hours_back=96):
+    """
+    Fetch Telegram signals for the Turkey swing-state tracker.
+    96h window -- Turkey rhetoric moves slower than Ukraine (no active
+    war) but faster than Belarus (live Levant friction).
+
+    Key signals to watch:
+      - Buffer-zone / safe-zone framing (signature pre-operation tell)
+      - Turkey-Israel friction in Syria (deconfliction strain)
+      - Lebanon-vector chatter (ports, trainers, Diyanet/TIKA)
+      - Straits / Montreux leverage signaling
+      - S-400 / SCO / BRICS autonomy-track moves
+    """
+    if not _telegram_available():
+        print("[Telegram Turkey] Signals unavailable — skipping")
+        return []
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, _async_fetch_messages(TURKEY_CHANNELS, hours_back))
+                return future.result(timeout=120)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(_async_fetch_messages(TURKEY_CHANNELS, hours_back))
+            finally:
+                loop.close()
+    except Exception as e:
+        print(f"[Telegram Turkey] ❌ fetch error: {str(e)[:200]}")
+        return []
+
 def fetch_hungary_telegram_signals(hours_back=120):
     """
     Fetch Telegram signals for Hungary stability tracker.
