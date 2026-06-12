@@ -1,7 +1,7 @@
 """
 europe_regional_bluf.py
 Asifah Analytics -- Europe Backend Module
-v1.0.0 -- April 2026
+v3.4.0 -- June 2026
 
 Europe Regional BLUF (Bottom Line Up Front) Engine.
 
@@ -14,12 +14,24 @@ Architecture mirrors me_regional_bluf.py v2.0 + asia_regional_bluf.py v2.1
 Currently active trackers:
   - Russia    (rhetoric:russia:latest)    -- 5-vector model + green/diplomatic
   - Greenland (rhetoric:greenland:latest) -- inverted-rhetoric arctic tracker
+  - Ukraine   (rhetoric:ukraine:latest)   -- frontline + diplomatic track
+  - Belarus   (rhetoric:belarus:latest)   -- pressure tracker
+  - Hungary   (rhetoric:hungary:latest)   -- axis-reversal tracker
+  - Turkey    (rhetoric:turkey:latest)    -- swing-state tracker (alignment divergence)
 
 Roadmap (slot in via TRACKER_KEYS as they come online):
-  - Ukraine
-  - Hungary
   - Poland
   - Baltic states (LT/LV/EE composite or separate)
+
+v3.4.0 (Jun 2026) prose rewrite:
+- BLUF prose now NAMES every live country, highest pressure first, pairing
+  the dial reading (level + score) with the driver (lead signal in plain
+  language) in estimative voice per platform analytical doctrine.
+- Turkey is swing-state framed: alignment divergence is its indicator, so
+  it is always named even at L0.
+- New methodology_note payload field: plain-language explanation of what
+  the scores measure (rhetoric-signal composites, not event counts, not
+  probabilities). Frontends render it under the BLUF prose.
 
 v1.0.0 design choices:
 - Trackers use ME pattern: result['interpretation'] wraps so_what / red_lines.
@@ -55,6 +67,7 @@ TRACKER_KEYS = {
     'ukraine':   'rhetoric:ukraine:latest',
     'belarus':   'rhetoric:belarus:latest',
     'hungary':   'rhetoric:hungary:latest',   # v1.0 May 17 2026 -- axis reversal tracker
+    'turkey':    'rhetoric:turkey:latest',    # v1.0 Jun 11 2026 -- swing-state tracker (alignment divergence)
     # Future Europe trackers slot in here:
     # 'poland':   'rhetoric:poland:latest',
     # 'baltics':  'rhetoric:baltics:latest',
@@ -66,6 +79,7 @@ THEATRE_FLAGS = {
     'ukraine':   '\U0001f1fa\U0001f1e6',  # 🇺🇦
     'belarus':   '\U0001f1e7\U0001f1fe',  # 🇧🇾
     'hungary':   '\U0001f1ed\U0001f1fa',  # 🇭🇺
+    'turkey':    '\U0001f1f9\U0001f1f7',  # 🇹🇷
     'poland':    '\U0001f1f5\U0001f1f1',  # 🇵🇱
     'baltics':   '\U0001f1ea\U0001f1fa',  # 🇪🇺 fallback
 }
@@ -76,6 +90,7 @@ THEATRE_DISPLAY = {
     'ukraine':   'UKRAINE',
     'belarus':   'BELARUS',
     'hungary':   'HUNGARY',
+    'turkey':    'TURKEY',
     'poland':    'POLAND',
     'baltics':   'BALTICS',
 }
@@ -497,7 +512,7 @@ def _read_all_trackers():
     for theatre, redis_key in TRACKER_KEYS.items():
         raw = _redis_get(redis_key)
         # DIAGNOSTIC: dump what BLUF actually reads for Belarus + Ukraine
-        if theatre in ('belarus', 'ukraine'):
+        if theatre in ('belarus', 'ukraine', 'turkey'):
             if raw:
                 top_keys = list(raw.keys())[:15] if isinstance(raw, dict) else 'NOT A DICT'
                 print(f'[Europe BLUF DIAG] {theatre} raw type={type(raw).__name__} top_keys={top_keys}')
@@ -584,72 +599,197 @@ def _determine_regional_posture(trackers):
 # BLUF PROSE
 # ============================================================
 def _build_bluf_prose(posture, trackers):
-    """Generate regional prose paragraph. 2-4 sentences."""
+    """
+    Generate the regional prose paragraph -- country-named, estimative voice.
+
+    v3.4.0 prose rewrite (Jun 2026):
+      - Every live tracker is NAMED, highest pressure first. Countries at
+        true baseline roll into one closing sentence to keep it readable.
+      - Each country sentence pairs the dial reading (level + score) with
+        the driver (that country's lead signal, in plain language) so the
+        reader knows WHY the dial reads what it reads.
+      - Estimative voice per platform analytical doctrine: 'consistent
+        with', 'historically precedes', 'likely indicates'. Never
+        probabilities, never dates, never 'will'.
+      - Turkey is swing-state framed: its indicator is alignment
+        divergence, not the threat ladder, so it is always named even
+        at L0.
+    """
     date_str = datetime.now(timezone.utc).strftime('%b %d, %Y')
     parts = [f"Europe Rhetoric Monitor ({date_str}):"]
 
     n_live = len(trackers)
     parts.append(
-        f"Regional posture at {posture['label']} -- peak escalation L{posture['peak_level']} "
+        f"Regional posture {posture['label']} -- peak escalation L{posture['peak_level']} "
         f"across {n_live} live tracker{'s' if n_live != 1 else ''}."
     )
 
-    russia_data = trackers.get('russia')
+    def _display_name(theatre):
+        return THEATRE_DISPLAY.get(theatre, theatre.upper()).title()
+
+    def _lead_signal_plain(theatre, data):
+        """First top signal, stripped of its own country prefix."""
+        sigs = data.get('top_signals') or []
+        if not sigs or not isinstance(sigs[0], dict):
+            return ''
+        text = (sigs[0].get('short_text') or '').strip()
+        if not text:
+            return ''
+        disp = THEATRE_DISPLAY.get(theatre, theatre.upper())
+        # The shim prefixes signals with '{flag} {DISPLAY}: ' at this
+        # altitude -- redundant inside a sentence that already names the
+        # country, so strip it back out for prose use.
+        if ':' in text:
+            head, tail = text.split(':', 1)
+            if disp in head.upper():
+                text = tail.strip()
+        return text
+
+    # Estimative tail by level: what this band has meant historically.
+    # Plain language -- says what the reading is consistent with, never
+    # what 'will' happen. The reader completes the inference.
+    estimative_tails = {
+        5: 'a reading consistent with active-conflict dynamics',
+        4: 'a reading consistent with incident-driven escalation',
+        3: 'language of a kind that has historically preceded escalatory cycles',
+        2: 'sustained friction language -- elevated, not yet escalatory',
+    }
+
+    # Order countries highest dominant level first; collect true-baseline
+    # countries for a single closing roll-up sentence.
+    ordered = sorted(
+        trackers.items(),
+        key=lambda kv: kv[1]['levels'].get('dominant_level', 0),
+        reverse=True,
+    )
+    baseline_names = []
+
+    for theatre, data in ordered:
+        threat = data['levels'].get('threat', 0)
+        score  = data.get('score', 0)
+        label  = ESCALATION_LABELS.get(threat, 'Monitoring')
+        name   = _display_name(theatre)
+        lead   = _lead_signal_plain(theatre, data)
+        raw    = data.get('raw', {}) or {}
+
+        # ---- Turkey: swing-state framing, always named ----
+        if theatre == 'turkey':
+            sentence = (
+                f"Turkey (swing-state watch) at L{threat} {label.lower()}, "
+                f"score {score}/100"
+            )
+            if lead:
+                sentence += f" -- lead signal: {lead}"
+            sentence += (
+                ". The indicator that matters here is alignment divergence -- "
+                "the spread between NATO-anchor and strategic-autonomy "
+                "signaling -- rather than the threat ladder; a widening "
+                "spread has historically preceded hedging behavior, not "
+                "necessarily confrontation."
+            )
+            parts.append(sentence)
+            continue
+
+        # ---- Russia: vector-enriched callout (preserved from v1.0) ----
+        if theatre == 'russia':
+            nuclear = _safe_int(raw.get('nuclear_level'))
+            ground  = _safe_int(raw.get('ground_ops_level'))
+            nato    = _safe_int(raw.get('nato_flank_level'))
+            arctic  = _safe_int(raw.get('arctic_level'))
+            if threat >= 1 or nuclear >= 3 or nato >= 3:
+                sentence = f"Russia composite L{threat} ({label}, score {score}/100)"
+                vector_phrases = []
+                if nuclear >= 3:
+                    vector_phrases.append(f"nuclear signaling L{nuclear}")
+                if ground >= 3:
+                    vector_phrases.append(f"ground operations L{ground}")
+                if nato >= 3:
+                    vector_phrases.append(f"NATO-flank pressure L{nato}")
+                if arctic >= 3:
+                    vector_phrases.append(f"Arctic posture L{arctic}")
+                if vector_phrases:
+                    sentence += " -- driven by " + ", ".join(vector_phrases)
+                elif lead:
+                    sentence += f" -- lead signal: {lead}"
+                tail = estimative_tails.get(threat)
+                if tail:
+                    sentence += f"; {tail}"
+                parts.append(sentence + ".")
+            else:
+                baseline_names.append(name)
+            continue
+
+        # ---- Greenland: inbound-pressure framing (preserved) ----
+        if theatre == 'greenland':
+            us_lvl = _safe_int(raw.get('us_pressure_level'))
+            if threat >= 1 or us_lvl >= 3:
+                sentence = f"Greenland sovereignty L{threat} ({label}, score {score}/100)"
+                if us_lvl >= 3:
+                    sentence += (
+                        f" -- inbound US pressure L{us_lvl}, a pattern "
+                        f"consistent with alliance-cohesion stress on the "
+                        f"Denmark track"
+                    )
+                elif lead:
+                    sentence += f" -- lead signal: {lead}"
+                parts.append(sentence + ".")
+            else:
+                baseline_names.append(name)
+            continue
+
+        # ---- Generic named sentence (Ukraine, Belarus, Hungary, future) ----
+        if threat >= 1:
+            sentence = f"{name} L{threat} ({label}, score {score}/100)"
+            if lead:
+                sentence += f" -- lead signal: {lead}"
+            # If the LEAD signal is diplomatic, the escalation tail would
+            # read as calling peace talks a war indicator. Swap in a
+            # diplomatic-appropriate estimative read instead.
+            sigs = data.get('top_signals') or []
+            lead_is_diplomatic = bool(
+                sigs and isinstance(sigs[0], dict) and (
+                    sigs[0].get('pressure_type') == 'diplomatic'
+                    or 'diplomatic' in (sigs[0].get('category') or '')
+                )
+            )
+            if lead_is_diplomatic:
+                sentence += (
+                    "; an active off-ramp track that tempers the "
+                    "escalation read at this level"
+                )
+            else:
+                tail = estimative_tails.get(threat)
+                if tail:
+                    sentence += f"; {tail}"
+            parts.append(sentence + ".")
+        else:
+            baseline_names.append(name)
+
+    if baseline_names:
+        if len(baseline_names) == 1:
+            parts.append(f"{baseline_names[0]} reads baseline this cycle.")
+        else:
+            parts.append("At baseline this cycle: " + ", ".join(baseline_names) + ".")
+
+    # Cross-theater convergence (Russia arctic + Greenland sovereignty)
+    russia_data    = trackers.get('russia')
     greenland_data = trackers.get('greenland')
-
-    # Russia callout
-    if russia_data:
-        threat = russia_data['levels']['threat']
-        score  = russia_data.get('score', 0)
-        raw    = russia_data.get('raw', {})
-        nuclear = _safe_int(raw.get('nuclear_level'))
-        ground  = _safe_int(raw.get('ground_ops_level'))
-        nato    = _safe_int(raw.get('nato_flank_level'))
-        arctic  = _safe_int(raw.get('arctic_level'))
-        if threat >= 2 or nuclear >= 3 or nato >= 3:
-            russia_desc = f"Russia composite L{threat} (score {score}/100)"
-            vector_phrases = []
-            if nuclear >= 3:
-                vector_phrases.append(f"nuclear signaling L{nuclear}")
-            if ground >= 3:
-                vector_phrases.append(f"ground ops L{ground}")
-            if nato >= 3:
-                vector_phrases.append(f"NATO flank L{nato}")
-            if arctic >= 3:
-                vector_phrases.append(f"arctic L{arctic}")
-            if vector_phrases:
-                russia_desc += " — " + ", ".join(vector_phrases) + "."
-            else:
-                russia_desc += " — multi-vector pressure elevated."
-            parts.append(russia_desc)
-
-    # Greenland callout
-    if greenland_data:
-        threat = greenland_data['levels']['threat']
-        raw    = greenland_data.get('raw', {})
-        us_lvl = _safe_int(raw.get('us_pressure_level'))
-        if threat >= 2 or us_lvl >= 3:
-            green_desc = f"Greenland sovereignty L{threat}"
-            if us_lvl >= 3:
-                green_desc += f" — inbound US pressure L{us_lvl}; alliance cohesion under stress."
-            else:
-                green_desc += " — sovereignty signals elevated."
-            parts.append(green_desc)
-
-    # Cross-theater convergence (Russia arctic + Greenland sovereignty crisis)
     if russia_data and greenland_data:
-        russia_arctic = _safe_int(russia_data.get('raw', {}).get('arctic_level'))
+        russia_arctic    = _safe_int(russia_data.get('raw', {}).get('arctic_level'))
         greenland_threat = greenland_data['levels']['threat']
         if russia_arctic >= 3 and greenland_threat >= 3:
             parts.append(
-                f"⚠️ Arctic convergence: Russia arctic L{russia_arctic} simultaneous with "
-                f"Greenland sovereignty L{greenland_threat} -- Russia exploiting US-Denmark friction."
+                f"Arctic convergence: Russia Arctic posture L{russia_arctic} "
+                f"simultaneous with Greenland sovereignty L{greenland_threat} -- "
+                f"a pairing consistent with Russia exploiting US-Denmark "
+                f"friction in the GIUK approaches."
             )
 
     if posture['nuclear_elevated']:
         parts.append(
-            "☢️ Russian nuclear signaling at coercion threshold -- highest-stakes signal in theater. "
-            "Watch for doctrinal language shifts."
+            "Russian nuclear signaling is at the coercion threshold -- the "
+            "highest-stakes signal in theater; doctrinal language shifts are "
+            "the lead indicator to watch."
         )
 
     return ' '.join(parts)
@@ -889,7 +1029,7 @@ def build_regional_bluf(force=False):
             except Exception:
                 pass
 
-    print('[Europe BLUF v1.0] Building regional BLUF from all Europe tracker caches...')
+    print('[Europe BLUF v3.4] Building regional BLUF from all Europe tracker caches...')
 
     try:
         trackers = _read_all_trackers()
@@ -958,13 +1098,20 @@ def build_regional_bluf(force=False):
             'trackers_total':     len(TRACKER_KEYS),
             'theatre_summary':    theatre_summary,
             'generated_at':       datetime.now(timezone.utc).isoformat(),
-            'version':            '1.0.0',
+            'version':            '3.4.0',
+            'methodology_note':   (
+                'How to read this: country scores are rhetoric-signal '
+                'composites -- weighted volume and severity of classified '
+                'statements from officials, state media, and OSINT channels '
+                '-- not battlefield event counts and not probabilities of '
+                'action. Convergence, not prediction.'
+            ),
             'region':             'europe',
             'top_signals_count':  len(top_signals),
         }
 
         _redis_set(BLUF_CACHE_KEY, result)
-        print(f"[Europe BLUF v1.0] Built: posture={posture['label']}, "
+        print(f"[Europe BLUF v3.4] Built: posture={posture['label']}, "
               f"max_level=L{posture['peak_level']}, "
               f"breached={posture['breached_count']}, "
               f"signals={len(top_signals)}, "
