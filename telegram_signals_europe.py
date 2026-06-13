@@ -334,6 +334,11 @@ TURKEY_CHANNELS = [
     'OSINTdefender',        # High-signal English OSINT
     'intelslava',           # Aggregator -- catches Turkey-Russia threads
     'disclosetv',           # Breaking conflict news
+    # ── Turkish-language / state-adjacent (regime narrative voice) ──
+    'trtworld',             # ⚠️ verify handle -- TRT World (state media)
+    'dailysabah',           # ⚠️ verify handle -- Daily Sabah (pro-gov daily)
+    # ── Hebrew-language / Israeli OSINT (Turkey-as-threat framing) ──
+    'abualiexpress',        # ⚠️ verify handle -- Abu Ali Express (HE+EN, heavy regional)
 ]
 
 def fetch_turkey_telegram_signals(hours_back=96):
