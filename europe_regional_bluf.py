@@ -598,6 +598,108 @@ def _determine_regional_posture(trackers):
 # ============================================================
 # BLUF PROSE
 # ============================================================
+# ── Multi-axis tagging + structured BLUF blocks (Jun 13 2026, approach B) ──
+_REGIONAL_AXIS_SETS = {
+    'kinetic_pressure': ['kinetic'], 'red_line_breached': ['kinetic'],
+    'theatre_high': ['kinetic'], 'theatre_active': ['kinetic'],
+    'nuclear_signaling': ['kinetic'], 'ground_ops': ['kinetic'],
+    'nato_flank': ['kinetic'], 'arctic_convergence': ['kinetic', 'diplomatic'],
+    'arctic_posture': ['kinetic'], 'sovereignty': ['kinetic', 'diplomatic'],
+    'us_pressure': ['diplomatic'], 'alignment_divergence': ['diplomatic'],
+    'commodity': ['economic'], 'economic_stress': ['economic'],
+    'energy': ['economic'], 'sanctions': ['economic', 'diplomatic'],
+    'green_line_active': ['diplomatic'], 'diplomatic_track_active': ['diplomatic'],
+    'diplomatic_active': ['diplomatic'], 'mediation': ['diplomatic'],
+    'humanitarian': ['humanitarian'], 'displacement': ['humanitarian'],
+    'migration': ['humanitarian'],
+}
+_AXIS_KEYWORD_HINTS = [
+    ('economic', ['economic', 'energy', 'gas', 'pipeline', 'commodity', 'sanction', 'currency', 'trade']),
+    ('humanitarian', ['humanitarian', 'displace', 'refugee', 'migration', 'famine']),
+    ('diplomatic', ['diplomatic', 'mediation', 'negotiat', 'off-ramp', 'alignment', 'nato-anchor', 'autonomy', 'sovereignty']),
+]
+
+def _axes_for_signal(sig):
+    """Ordered axis list for a regional signal. category map > pressure_type >
+    keyword hint > kinetic default."""
+    sig = _safe_dict(sig)
+    pt = sig.get('pressure_type')
+    cat = _safe_str(sig.get('category')).lower()
+    if cat in _REGIONAL_AXIS_SETS:
+        axes = list(_REGIONAL_AXIS_SETS[cat])
+        # If the signal already declares a pressure_type, ensure it leads.
+        if pt and pt in ('kinetic','economic','diplomatic','humanitarian') and pt not in axes:
+            axes.insert(0, pt)
+        return axes
+    if pt and pt in ('kinetic','economic','diplomatic','humanitarian'):
+        return [pt]
+    blob = (cat + ' ' + _safe_str(sig.get('short_text')) + ' ' + _safe_str(sig.get('long_text'))).lower()
+    for axis, kws in _AXIS_KEYWORD_HINTS:
+        if any(k in blob for k in kws):
+            return [axis]
+    return ['kinetic']
+
+def _tag_signal_axes(signals):
+    out = []
+    for s in _safe_list(signals):
+        s2 = dict(s)
+        axes = _axes_for_signal(s2)
+        s2['axes'] = axes
+        s2.setdefault('pressure_type', axes[0])
+        out.append(s2)
+    return out
+
+def _build_bluf_blocks(posture, trackers):
+    """Structured paragraph blocks for the front-end (approach B). Mirrors the
+    prose builder's structure: header / Regional Posture / Theatre Reads /
+    convergence closers. Reuses _build_bluf_prose then splits on the known
+    sentence seams so the two never drift."""
+    date_str = datetime.now(timezone.utc).strftime('%b %d, %Y')
+    full = _build_bluf_prose(posture, trackers)
+    # The prose begins with 'Europe Rhetoric Monitor (date): Regional posture ...'
+    blocks = [{'label': f'Europe Rhetoric Monitor ({date_str})', 'text': ''}]
+
+    # Strip the header sentence; everything after is posture + country reads.
+    body = full
+    hdr = f"Europe Rhetoric Monitor ({date_str}):"
+    if body.startswith(hdr):
+        body = body[len(hdr):].strip()
+
+    # Posture sentence is the first sentence ('Regional posture ... live tracker(s).')
+    posture_txt = ''
+    m_idx = body.find('Regional posture')
+    if m_idx == 0:
+        end = body.find('.', 0)
+        # find end of the posture sentence (it ends '... live tracker(s).')
+        # the posture sentence may contain no other period before that.
+        if end != -1:
+            posture_txt = body[:end+1].strip()
+            body = body[end+1:].strip()
+    if posture_txt:
+        # drop the leading 'Regional posture ' label since we relabel it
+        ptxt = posture_txt
+        if ptxt.lower().startswith('regional posture'):
+            ptxt = ptxt[len('Regional posture'):].strip()
+        blocks.append({'label': 'Regional Posture', 'text': ptxt})
+
+    # Convergence closers: Arctic convergence / nuclear-threshold sentences sit
+    # at the end. Peel them off into their own block if present.
+    closer_markers = ['Arctic convergence:', 'Russian nuclear signaling is at the coercion threshold']
+    closer_txt = ''
+    for marker in closer_markers:
+        mi = body.find(marker)
+        if mi != -1:
+            closer_txt = (closer_txt + ' ' + body[mi:]).strip()
+            body = body[:mi].strip()
+    # Whatever remains is the per-country Theatre Reads block.
+    if body:
+        blocks.append({'label': 'Theatre Reads', 'text': body})
+    if closer_txt:
+        blocks.append({'label': 'Convergence Watch', 'text': closer_txt})
+
+    return blocks
+
+
 def _build_bluf_prose(posture, trackers):
     """
     Generate the regional prose paragraph -- country-named, estimative voice.
@@ -1048,7 +1150,9 @@ def build_regional_bluf(force=False):
         posture     = _determine_regional_posture(trackers)
         bluf        = _build_bluf_prose(posture, trackers)
         all_signals = _build_signals(posture, trackers)            # v2.3.0: full pool
+        all_signals = _tag_signal_axes(all_signals)                # Jun 13 2026: multi-axis pills
         top_signals = all_signals[:TOP_SIGNALS_COUNT]                # v2.3.0: capped for display
+        bluf_blocks = _build_bluf_blocks(posture, trackers)         # approach B structured blocks
 
         trackers_live = len(trackers)
 
@@ -1082,6 +1186,7 @@ def build_regional_bluf(force=False):
             'success':            True,
             'from_cache':         False,
             'bluf':               bluf,
+            'bluf_v2':            bluf_blocks,               # Jun 13 2026: structured paragraph blocks (approach B)
             'signals':            all_signals,               # v2.3.0: FULL signal pool — for GPI axis aggregation
             'top_signals':        top_signals,                # v2.3.0: capped — for display + prose synthesis
             'posture_label':      posture['label'],
