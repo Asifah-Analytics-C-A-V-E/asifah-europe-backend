@@ -868,6 +868,7 @@ def run_turkey_rhetoric_scan(force=False):
         'lebanon_vector':    interpretation.get('lebanon_vector'),
         'mirror_friction':   interpretation.get('mirror_friction'),
         'election_clock':    interpretation.get('election_clock'),
+        'rumint':            interpretation.get('rumint'),
         'cross_theater_fingerprints': interpretation.get('cross_theater_fingerprints'),
         'composite_modifier': interpretation.get('composite_modifier', 0),
         'interpreter_version': interpretation.get('interpreter_version'),
