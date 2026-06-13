@@ -102,6 +102,12 @@ MAX_PER_THEATRE   = 3       # v2.4.0 May 21 2026 — per-tracker quota during se
 # Synthesis cache
 BLUF_CACHE_KEY    = 'rhetoric:europe:regional_bluf'
 BLUF_CACHE_TTL    = 14 * 3600    # 14h
+BLUF_LASTGOOD_TTL   = 7 * 24 * 3600   # 7d ceiling for held last-known-good tracker snapshots (C)
+BLUF_INCOMPLETE_TTL = 30 * 60         # 30min cache when the picture is incomplete (A: don't freeze gaps)
+
+def _lastgood_key(theatre):
+    """Durable last-known-good snapshot key for a tracker (C)."""
+    return 'rhetoric:' + str(theatre) + ':lastgood'
 
 
 # ============================================================
@@ -507,11 +513,21 @@ def _synthesize_top_signals_legacy(theatre, raw_data, threat_int, score, so_what
 # TRACKER READERS
 # ============================================================
 def _read_all_trackers():
-    """Read all Europe tracker caches and normalize via shim."""
+    """Read all Europe tracker caches and normalize via shim.
+
+    Cold-start resilience (Jun 13 2026 -- A/B/C):
+      C: when a tracker's live cache is missing, fall back to a durable
+         last-known-good snapshot (rhetoric:<x>:lastgood, 7d ceiling) so the
+         country is HELD in the rollup rather than silently dropped.
+      B: report which trackers are live / stale-fallback / fully absent.
+    Returns (trackers, missing, stale).
+    """
     trackers = {}
+    missing  = []   # no live AND no last-known-good -> truly absent (honest)
+    stale    = []   # served from last-known-good fallback
     for theatre, redis_key in TRACKER_KEYS.items():
         raw = _redis_get(redis_key)
-        # DIAGNOSTIC: dump what BLUF actually reads for Belarus + Ukraine
+        # DIAGNOSTIC: dump what BLUF actually reads for Belarus + Ukraine + Turkey
         if theatre in ('belarus', 'ukraine', 'turkey'):
             if raw:
                 top_keys = list(raw.keys())[:15] if isinstance(raw, dict) else 'NOT A DICT'
@@ -523,14 +539,29 @@ def _read_all_trackers():
         if raw:
             normalized = _normalize_tracker_data(theatre, raw)
             if normalized:
+                normalized['freshness'] = 'live'
                 trackers[theatre] = normalized
+                # C: refresh durable last-known-good snapshot
+                _redis_set(_lastgood_key(theatre), raw, ttl=BLUF_LASTGOOD_TTL)
                 lvls = normalized['levels']
                 axis_str = (f"T{lvls['threat']}" +
                             (f"/I{lvls['influence']}" if lvls['influence'] is not None else ''))
                 print(f'[Europe BLUF] {theatre}: loaded ({axis_str}, score={normalized["score"]})')
-        else:
-            print(f'[Europe BLUF] {theatre}: no cache available')
-    return trackers
+                continue
+        # Live cache missing/unparseable -> last-known-good fallback (C)
+        lg = _redis_get(_lastgood_key(theatre))
+        if lg:
+            normalized = _normalize_tracker_data(theatre, lg)
+            if normalized:
+                normalized['freshness'] = 'stale'
+                trackers[theatre] = normalized
+                stale.append(theatre)
+                print(f'[Europe BLUF] {theatre}: STALE fallback (last-known-good held)')
+                continue
+        # Truly absent: no live, no last-known-good
+        missing.append(theatre)
+        print(f'[Europe BLUF] {theatre}: no cache available (absent from rollup)')
+    return trackers, missing, stale
 
 
 # ============================================================
@@ -598,108 +629,6 @@ def _determine_regional_posture(trackers):
 # ============================================================
 # BLUF PROSE
 # ============================================================
-# ── Multi-axis tagging + structured BLUF blocks (Jun 13 2026, approach B) ──
-_REGIONAL_AXIS_SETS = {
-    'kinetic_pressure': ['kinetic'], 'red_line_breached': ['kinetic'],
-    'theatre_high': ['kinetic'], 'theatre_active': ['kinetic'],
-    'nuclear_signaling': ['kinetic'], 'ground_ops': ['kinetic'],
-    'nato_flank': ['kinetic'], 'arctic_convergence': ['kinetic', 'diplomatic'],
-    'arctic_posture': ['kinetic'], 'sovereignty': ['kinetic', 'diplomatic'],
-    'us_pressure': ['diplomatic'], 'alignment_divergence': ['diplomatic'],
-    'commodity': ['economic'], 'economic_stress': ['economic'],
-    'energy': ['economic'], 'sanctions': ['economic', 'diplomatic'],
-    'green_line_active': ['diplomatic'], 'diplomatic_track_active': ['diplomatic'],
-    'diplomatic_active': ['diplomatic'], 'mediation': ['diplomatic'],
-    'humanitarian': ['humanitarian'], 'displacement': ['humanitarian'],
-    'migration': ['humanitarian'],
-}
-_AXIS_KEYWORD_HINTS = [
-    ('economic', ['economic', 'energy', 'gas', 'pipeline', 'commodity', 'sanction', 'currency', 'trade']),
-    ('humanitarian', ['humanitarian', 'displace', 'refugee', 'migration', 'famine']),
-    ('diplomatic', ['diplomatic', 'mediation', 'negotiat', 'off-ramp', 'alignment', 'nato-anchor', 'autonomy', 'sovereignty']),
-]
-
-def _axes_for_signal(sig):
-    """Ordered axis list for a regional signal. category map > pressure_type >
-    keyword hint > kinetic default."""
-    sig = _safe_dict(sig)
-    pt = sig.get('pressure_type')
-    cat = _safe_str(sig.get('category')).lower()
-    if cat in _REGIONAL_AXIS_SETS:
-        axes = list(_REGIONAL_AXIS_SETS[cat])
-        # If the signal already declares a pressure_type, ensure it leads.
-        if pt and pt in ('kinetic','economic','diplomatic','humanitarian') and pt not in axes:
-            axes.insert(0, pt)
-        return axes
-    if pt and pt in ('kinetic','economic','diplomatic','humanitarian'):
-        return [pt]
-    blob = (cat + ' ' + _safe_str(sig.get('short_text')) + ' ' + _safe_str(sig.get('long_text'))).lower()
-    for axis, kws in _AXIS_KEYWORD_HINTS:
-        if any(k in blob for k in kws):
-            return [axis]
-    return ['kinetic']
-
-def _tag_signal_axes(signals):
-    out = []
-    for s in _safe_list(signals):
-        s2 = dict(s)
-        axes = _axes_for_signal(s2)
-        s2['axes'] = axes
-        s2.setdefault('pressure_type', axes[0])
-        out.append(s2)
-    return out
-
-def _build_bluf_blocks(posture, trackers):
-    """Structured paragraph blocks for the front-end (approach B). Mirrors the
-    prose builder's structure: header / Regional Posture / Theatre Reads /
-    convergence closers. Reuses _build_bluf_prose then splits on the known
-    sentence seams so the two never drift."""
-    date_str = datetime.now(timezone.utc).strftime('%b %d, %Y')
-    full = _build_bluf_prose(posture, trackers)
-    # The prose begins with 'Europe Rhetoric Monitor (date): Regional posture ...'
-    blocks = [{'label': f'Europe Rhetoric Monitor ({date_str})', 'text': ''}]
-
-    # Strip the header sentence; everything after is posture + country reads.
-    body = full
-    hdr = f"Europe Rhetoric Monitor ({date_str}):"
-    if body.startswith(hdr):
-        body = body[len(hdr):].strip()
-
-    # Posture sentence is the first sentence ('Regional posture ... live tracker(s).')
-    posture_txt = ''
-    m_idx = body.find('Regional posture')
-    if m_idx == 0:
-        end = body.find('.', 0)
-        # find end of the posture sentence (it ends '... live tracker(s).')
-        # the posture sentence may contain no other period before that.
-        if end != -1:
-            posture_txt = body[:end+1].strip()
-            body = body[end+1:].strip()
-    if posture_txt:
-        # drop the leading 'Regional posture ' label since we relabel it
-        ptxt = posture_txt
-        if ptxt.lower().startswith('regional posture'):
-            ptxt = ptxt[len('Regional posture'):].strip()
-        blocks.append({'label': 'Regional Posture', 'text': ptxt})
-
-    # Convergence closers: Arctic convergence / nuclear-threshold sentences sit
-    # at the end. Peel them off into their own block if present.
-    closer_markers = ['Arctic convergence:', 'Russian nuclear signaling is at the coercion threshold']
-    closer_txt = ''
-    for marker in closer_markers:
-        mi = body.find(marker)
-        if mi != -1:
-            closer_txt = (closer_txt + ' ' + body[mi:]).strip()
-            body = body[:mi].strip()
-    # Whatever remains is the per-country Theatre Reads block.
-    if body:
-        blocks.append({'label': 'Theatre Reads', 'text': body})
-    if closer_txt:
-        blocks.append({'label': 'Convergence Watch', 'text': closer_txt})
-
-    return blocks
-
-
 def _build_bluf_prose(posture, trackers):
     """
     Generate the regional prose paragraph -- country-named, estimative voice.
@@ -1134,7 +1063,7 @@ def build_regional_bluf(force=False):
     print('[Europe BLUF v3.4] Building regional BLUF from all Europe tracker caches...')
 
     try:
-        trackers = _read_all_trackers()
+        trackers, trackers_missing, trackers_stale = _read_all_trackers()
 
         if not trackers:
             return {
@@ -1150,9 +1079,7 @@ def build_regional_bluf(force=False):
         posture     = _determine_regional_posture(trackers)
         bluf        = _build_bluf_prose(posture, trackers)
         all_signals = _build_signals(posture, trackers)            # v2.3.0: full pool
-        all_signals = _tag_signal_axes(all_signals)                # Jun 13 2026: multi-axis pills
         top_signals = all_signals[:TOP_SIGNALS_COUNT]                # v2.3.0: capped for display
-        bluf_blocks = _build_bluf_blocks(posture, trackers)         # approach B structured blocks
 
         trackers_live = len(trackers)
 
@@ -1186,7 +1113,6 @@ def build_regional_bluf(force=False):
             'success':            True,
             'from_cache':         False,
             'bluf':               bluf,
-            'bluf_v2':            bluf_blocks,               # Jun 13 2026: structured paragraph blocks (approach B)
             'signals':            all_signals,               # v2.3.0: FULL signal pool — for GPI axis aggregation
             'top_signals':        top_signals,                # v2.3.0: capped — for display + prose synthesis
             'posture_label':      posture['label'],
@@ -1201,6 +1127,9 @@ def build_regional_bluf(force=False):
             'theatres_live':      trackers_live,
             'theatres_at_l3plus': posture['theatres_at_l3plus'],
             'trackers_total':     len(TRACKER_KEYS),
+            'trackers_stale':     trackers_stale,    # B: served from last-known-good
+            'trackers_missing':   trackers_missing,  # B: no live AND no last-known-good
+            'picture_complete':   (len(trackers_missing) == 0),
             'theatre_summary':    theatre_summary,
             'generated_at':       datetime.now(timezone.utc).isoformat(),
             'version':            '3.4.0',
@@ -1215,7 +1144,8 @@ def build_regional_bluf(force=False):
             'top_signals_count':  len(top_signals),
         }
 
-        _redis_set(BLUF_CACHE_KEY, result)
+        _bluf_ttl = BLUF_INCOMPLETE_TTL if (trackers_missing or trackers_stale) else BLUF_CACHE_TTL
+        _redis_set(BLUF_CACHE_KEY, result, ttl=_bluf_ttl)
         print(f"[Europe BLUF v3.4] Built: posture={posture['label']}, "
               f"max_level=L{posture['peak_level']}, "
               f"breached={posture['breached_count']}, "
