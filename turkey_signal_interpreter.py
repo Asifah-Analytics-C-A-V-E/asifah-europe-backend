@@ -65,6 +65,125 @@ CONVERGENCE_DISCLAIMER = (
 
 
 # ============================================================
+# RUMINT -- concept-seeding / posture-probing detection
+# ------------------------------------------------------------
+# A lightweight read that rides ALONGSIDE the threat band and never
+# inflates it. Detects trial-balloon behavior: expansionist framing
+# floated to gauge regional reception, as a possible precursor to a
+# posture shift. Bands on an escalating-OBSERVABLE ladder --
+#   Watch -> Active -> Corroborated
+# -- where each rung is gated by a NEW present-tense signal, not a
+# forecast. 'off' = no pill (absence stays honest).
+#
+# PORTABILITY: only the COUNTRY-SPECIFIC constants below change per
+# country (Greenland, Cuba, ...). _band_rumint() / _score_rumint() /
+# _count_terms_in_reception() are generic and clone as-is.
+# ============================================================
+
+# --- COUNTRY-SPECIFIC (Turkey: Ottoman-restoration framing) ---
+RUMINT_SUBJECT = 'Ottoman-restoration framing'
+RUMINT_EXPANSION_KEYWORDS = [
+    # EN
+    'neo-ottoman', 'neo ottoman', 'neo-ottomanism', 'ottomanism',
+    'ottoman revival', 'restore the ottoman', 'ottoman empire',
+    'ottoman heritage', 'mavi vatan', 'blue homeland', 'misak-i milli',
+    'national pact', 'caliphate', 'ummah leader',
+    'leader of the muslim world', 'protector of jerusalem',
+    'guardian of jerusalem', 'defender of al-quds',
+    'turkish sphere of influence', 'turkish expansionism',
+    'turkey expansionism', 'turkey regional power', 'turkey imperial',
+    # TR
+    'osmanli', 'osmanlı', 'yeni osmanli', 'yeni osmanlı',
+    'osmanli mirasi', 'misak-ı millî', 'halifelik', 'hilafet',
+    # HE / AR (native script -- functional match against native titles)
+    'עות׳מאני',
+    'התפשטות טורקית',
+    'العثمانية الجديدة',
+    'عثماني',
+    'التوسع التركي',
+    'النفوذ التركي',
+]
+RUMINT_TARGETS = [
+    'lebanon', 'syria', 'aleppo', 'idlib', 'mosul', 'kirkuk', 'iraq',
+    'jerusalem', 'al-aqsa', 'al aqsa', 'gaza',
+    'lubnan', 'lübnan', 'suriye', 'gazze',
+    'לבנון', 'סוריה',
+    'لبنان', 'سوريا',
+    'حلب', 'الموصل',
+]
+RUMINT_CORROBORATION_KEYWORDS = [
+    'buffer zone', 'safe zone', 'guvenli bolge', 'güvenli bölge',
+    'tampon bolge', 'turkish operation', 'turkish military operation',
+    'turkish forces', 'turkish troops', 'cross-border operation',
+    'tsk operation', 'deconfliction',
+]
+RUMINT_RECEPTION_VENUES = ['r/lebanon', 'r/syria', 'r/forbiddenbromance']
+RUMINT_FRAMING_FLOOR = 3   # distinct expansion terms below which we stay silent
+
+
+# --- GENERIC (portable: identical across all RUMINT-enabled countries) ---
+def _band_rumint(framing, specificity, reception, corroboration, subject):
+    """Band the RUMINT read on the escalating-observable ladder. Each rung
+    is gated by a NEW present-tense signal, never a forecast. 'off' returns
+    an inactive payload so the frontend shows no pill (absence stays honest)."""
+    if framing < RUMINT_FRAMING_FLOOR:
+        return {'active': False, 'band': 'off', 'label': '', 'driver': '',
+                'framing': framing, 'specificity': specificity,
+                'reception': reception, 'corroboration': corroboration}
+    if specificity >= 1 and corroboration >= 1:
+        band, label = 'corroborated', 'Corroborated'
+        driver = (subject + ' is target-specific and now matched by independent '
+                  'posture/operational signals -- the lonely rhetoric has company. '
+                  'Consistent with concept-seeding that historically precedes a '
+                  'posture shift; reader completes the inference.')
+    elif specificity >= 1 or reception >= 1:
+        band, label = 'active', 'Active'
+        echo = ' and echoing in regional venues' if reception >= 1 else ''
+        driver = (subject + ' is target-specific' + echo + ' -- concept-seeding '
+                  'underway. Consistent with trial-balloon behavior; reader '
+                  'completes the inference.')
+    else:
+        band, label = 'watch', 'Watch'
+        driver = (subject + ' is present but not yet target-specific. Baseline '
+                  'concept-seeding; watching for specificity drift.')
+    return {'active': True, 'band': band, 'label': label, 'driver': driver,
+            'framing': framing, 'specificity': specificity,
+            'reception': reception, 'corroboration': corroboration}
+
+
+def _count_terms_in_reception(scan_data, keywords, venues):
+    """Distinct keyword count restricted to reddit signals whose source is a
+    reception venue -- the 'is the target audience reacting?' read."""
+    if not keywords:
+        return 0
+    parts = []
+    for sig in (scan_data.get('reddit_signals') or []):
+        if (sig.get('source') or '') in venues:
+            parts.append((sig.get('text') or sig.get('title') or '').lower())
+    corpus = ' | '.join(parts)
+    if not corpus:
+        return 0
+    return sum(1 for kw in keywords if kw.lower() in corpus)
+
+
+def _score_rumint(scan_data):
+    """Compute the RUMINT read from the captured corpus. Framing / specificity /
+    corroboration use the full corpus (_check_keywords); reception is venue-
+    filtered. Counts are distinct-term counts -- a volume proxy, never a
+    probability. Short-circuits when framing is below the floor."""
+    framing = _check_keywords(scan_data, RUMINT_EXPANSION_KEYWORDS)
+    if framing < RUMINT_FRAMING_FLOOR:
+        return _band_rumint(framing, 0, 0, 0, RUMINT_SUBJECT)
+    specificity   = _check_keywords(scan_data, RUMINT_TARGETS)
+    corroboration = _check_keywords(scan_data, RUMINT_CORROBORATION_KEYWORDS)
+    reception     = _count_terms_in_reception(
+        scan_data, RUMINT_EXPANSION_KEYWORDS + RUMINT_TARGETS,
+        RUMINT_RECEPTION_VENUES)
+    return _band_rumint(framing, specificity, reception, corroboration,
+                        RUMINT_SUBJECT)
+
+
+# ============================================================
 # RED LINES -- escalation / divergence tripwires
 # ============================================================
 
@@ -988,6 +1107,7 @@ def interpret_signals(scan_data):
         lebanon_vector = _score_lebanon_vector(scan_data)
         mirror         = _score_mirror_friction(scan_data)
         election_clock = _election_clock_multiplier(scan_data, red_lines)
+        rumint         = _score_rumint(scan_data)
         so_what        = _build_so_what(scan_data, red_lines, green_lines,
                                         diplomatic, alignment, lebanon_vector,
                                         mirror, election_clock)
@@ -1032,6 +1152,7 @@ def interpret_signals(scan_data):
             'lebanon_vector':             lebanon_vector,
             'mirror_friction':            mirror,
             'election_clock':             election_clock,
+            'rumint':                     rumint,
             'cross_theater_fingerprints': fingerprints,
             'composite_modifier':         composite_modifier,
             'interpreter_version':        INTERPRETER_VERSION,
@@ -1064,6 +1185,9 @@ def interpret_signals(scan_data):
                                            'israel_claims_turkey': 0, 'turkey_claims_israel': 0,
                                            'synchronized': False},
             'election_clock':             {'active': False, 'multiplier': 0.0},
+            'rumint':                     {'active': False, 'band': 'off', 'label': '',
+                                           'driver': '', 'framing': 0, 'specificity': 0,
+                                           'reception': 0, 'corroboration': 0},
             'cross_theater_fingerprints': {},
             'composite_modifier':         0,
             'interpreter_version':        INTERPRETER_VERSION,
