@@ -322,17 +322,22 @@ def _redis_get(key):
 
 
 def _redis_set(key, value):
+    # Canonical Upstash REST write: POST the BASE url with a command array
+    # ["SET", key, value]. (The previous /set/{key} + {'value': body} form
+    # wrapped the payload as {"value": "<json>"}, so nothing read back cleanly --
+    # blank tracker, "Unavailable" BLUF, re-scan every visit.) No TTL: the key
+    # persists until the next scan overwrites it, so there is ALWAYS something
+    # for the interpreter, the regional BLUF, and the analyst to read.
     if not (UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN):
         return False
     try:
-        body = json.dumps(value, default=str)
         r = requests.post(
-            f'{UPSTASH_REDIS_URL}/set/{key}',
+            UPSTASH_REDIS_URL,
             headers={
                 'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}',
                 'Content-Type': 'application/json',
             },
-            json={'value': body},
+            json=['SET', key, json.dumps(value, default=str)],
             timeout=10
         )
         return r.status_code == 200
@@ -346,19 +351,22 @@ def _redis_lpush_trim(key, value, max_len=120):
     if not (UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN):
         return False
     try:
-        body = json.dumps(value, default=str)
         requests.post(
-            f'{UPSTASH_REDIS_URL}/lpush/{key}',
+            UPSTASH_REDIS_URL,
             headers={
                 'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}',
                 'Content-Type': 'application/json',
             },
-            json={'value': body},
+            json=['LPUSH', key, json.dumps(value, default=str)],
             timeout=10
         )
         requests.post(
-            f'{UPSTASH_REDIS_URL}/ltrim/{key}/0/{max_len-1}',
-            headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'},
+            UPSTASH_REDIS_URL,
+            headers={
+                'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}',
+                'Content-Type': 'application/json',
+            },
+            json=['LTRIM', key, 0, max_len - 1],
             timeout=5
         )
         return True
@@ -674,14 +682,20 @@ def run_belarus_rhetoric_scan(force=False):
     if not force:
         cached = _redis_get(REDIS_KEY_LATEST)
         if cached and cached.get('cached_at'):
+            # Serve cached data ALWAYS -- fresh or stale. Never block a page load
+            # on a 5-minute scan; the background thread refreshes on schedule and
+            # the "Refresh Scan" button (force=true) forces a fresh run. Stale is
+            # flagged so the UI / BLUF can show freshness, but it is still served
+            # so the analyst always has a read. Only a true cold start (no cache)
+            # falls through to the one-time synchronous scan below.
             try:
                 cached_at = datetime.fromisoformat(cached['cached_at'])
                 age = (datetime.now(timezone.utc) - cached_at).total_seconds()
-                if age < REFRESH_INTERVAL_SEC:
-                    cached['cache_status'] = 'hit'
-                    return cached
+                cached['cache_status'] = 'hit' if age < REFRESH_INTERVAL_SEC else 'stale'
+                cached['cache_age_sec'] = int(age)
             except Exception:
-                pass
+                cached['cache_status'] = 'hit'
+            return cached
 
     print('[Belarus Rhetoric] Starting fresh scan...')
     started = time.time()
