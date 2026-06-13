@@ -859,9 +859,11 @@ def _build_so_what_narrative(red_lines_triggered, green_lines_triggered,
                          for x in (kyiv, front, nuke))
                   else 'watch')
     else:
-        a_text = ("Kinetic picture: routine strike tempo, no red-line breach"
-                  + nuke_clause + ".")
-        a_tone = 'calm'
+        a_text = ("Kinetic picture: active war continues -- sustained strike "
+                  "tempo across both axes (Russian missile/Shahed campaigns; "
+                  "Ukrainian deep strikes on Russian energy, Crimea, and Black "
+                  "Sea targets)" + nuke_clause + ". No red-line breach this scan.")
+        a_tone = 'watch'
     threads.append({'label': 'RUSSIA-UKRAINE AXIS', 'text': a_text, 'tone': a_tone})
 
     # 3) AMERICAN LEVERAGE -- the decisive variable for war sustainability
@@ -920,8 +922,11 @@ def _build_so_what(scan_data, red_lines_triggered, green_lines_triggered,
         scenario = 'WATCH: Early Warning Indicators Active'
         priority = 'watch'
     else:
-        scenario = 'NORMAL: Baseline Monitoring'
-        priority = 'normal'
+        # Active-war floor: absent a red-line breach, Ukraine is NOT 'normal' --
+        # it is at sustained war. The page headlines the war; escalation above
+        # this floor is what moves it to ELEVATED/HIGH/CRITICAL.
+        scenario = 'ACTIVE WAR: Sustained Kinetic Tempo'
+        priority = 'elevated'
 
     assessment_parts = []
 
