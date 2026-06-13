@@ -166,6 +166,19 @@ ACTORS = {
             'kyrylo budanov', 'sbu', 'ukrainian special forces',
             'ukrainian counter-offensive', 'ukrainian operation',
             'atacms strike', 'storm shadow ukraine',
+            # -- Ukrainian deep-strike / long-range campaign (Jun 2026) --
+            # The offensive tempo: drone/missile strikes on Russian energy,
+            # Crimea, and Black Sea targets -- headline war activity the
+            # AFU-command keywords alone were missing.
+            'ukrainian drone strike', 'ukraine deep strike',
+            'ukraine long-range strike', 'ukraine strikes russian',
+            'ukrainian drones russia', 'ukraine targets russian energy',
+            'russian refinery strike', 'russian oil depot',
+            'russian energy strike', 'crimea strike', 'crimea bridge',
+            'kerch bridge', 'ukraine hits crimea', 'ukraine strikes crimea',
+            'black sea fleet', 'naval drone', 'sea drone', 'magura',
+            'novorossiysk', 'temryuk', 'ukraine sabotage russia',
+            'drone strike russia', 'ukrainian long-range drones',
             'всу', 'генштаб украины', 'буданов',
         ],
     },
@@ -715,14 +728,17 @@ def _compute_theatre_score(by_actor, articles):
 
 
 def _alert_level_from_score(score):
-    if score >= 80:
-        return 'critical'
-    elif score >= 60:
-        return 'high'
-    elif score >= 40:
-        return 'elevated'
+    """Active-war theatre: war is the FLOOR. Baseline never reads 'normal' --
+    the analytical question is escalation ABOVE the hot floor, not the
+    presence/absence of conflict. Enum (elevated/high/critical) preserved so
+    the Europe BLUF + GPI rollup stay schema-compatible (and Ukraine stops
+    under-weighting the GPI as a false 'normal')."""
+    if score >= 70:
+        return 'critical'   # major escalation (mass strikes / red-line breach)
+    elif score >= 50:
+        return 'high'       # escalating above the war floor
     else:
-        return 'normal'
+        return 'elevated'   # WAR FLOOR -- sustained active-war tempo
 
 
 def _write_cross_theater_fingerprints(fingerprints):
