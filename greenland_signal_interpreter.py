@@ -764,6 +764,173 @@ def _build_so_what(scan_data, red_lines_triggered, historical_matches):
 # PUBLIC ENTRY POINT
 # ============================================================
 
+# ============================================================
+# RUMINT -- concept-seeding / posture-probing detection
+# ------------------------------------------------------------
+# A lightweight read that rides ALONGSIDE the theatre level and never inflates
+# it. Detects trial-balloon behavior: US Greenland-acquisition signaling floated
+# as a possible precursor to a move. Bands on an escalating-OBSERVABLE ladder --
+#   Watch -> Active -> Corroborated
+# -- where each rung is gated by a NEW present-tense signal, not a forecast.
+# 'off' = no pill (absence stays honest).
+#
+# PORTABILITY: cloned from turkey_signal_interpreter.py. Greenland is the
+# INVERTED case -- every article names the subject (Greenland), so "specificity"
+# is repurposed from "names a target" to "names a concrete MOVE-RUMOR" (leaked
+# talks / principal visit / military signaling), and "Corroborated" gates on the
+# announcement layer alone (an announcement is definitive; it needs no prior
+# move-rumor in the same scan).
+# ============================================================
+
+# --- COUNTRY-SPECIFIC (Greenland: US-acquisition signaling) ---
+RUMINT_SUBJECT = 'US Greenland-acquisition signaling'
+
+# WATCH layer -- US INTEREST / intent framing (the rumor that the US wants it)
+RUMINT_EXPANSION_KEYWORDS = [
+    'buy greenland', 'purchase greenland', 'acquire greenland',
+    'acquisition of greenland', 'greenland acquisition', 'take over greenland',
+    'taking greenland', 'take greenland', 'get greenland', 'own greenland',
+    'control greenland', 'us control of greenland', 'american greenland',
+    'greenland will be ours', 'greenland part of the united states',
+    'greenland part of the us', 'make greenland american',
+    'annex greenland', 'greenland annexation', 'we need greenland',
+    'we want greenland', 'greenland national security',
+    'greenland for national security', 'greenland deal',
+    'trump greenland', 'trump wants greenland', 'white house greenland',
+    'manifest destiny',
+]
+
+# ACTIVE layer -- concrete MOVE-RUMORS (a step past interest, still pre-fact)
+RUMINT_TARGETS = [
+    'leaked greenland', 'leaked talks greenland', 'secret greenland talks',
+    'secret negotiations greenland', 'us denmark talks', 'us-denmark talks',
+    'us nuuk talks', 'nuuk washington', 'washington nuuk', 'nuuk talks',
+    'backchannel greenland', 'back-channel greenland', 'back channel greenland',
+    'vance greenland', 'jd vance greenland', 'vance visit greenland',
+    'vance to visit greenland', 'us delegation greenland',
+    'us military greenland', 'us troops greenland', 'us forces greenland',
+    'pentagon greenland', 'pituffik buildup', 'thule buildup',
+    'military buildup greenland', 'us base greenland', 'us military buildup',
+    'sell greenland', 'selling greenland', 'denmark sell greenland',
+    'greenland sale', 'greenland for sale', 'us offer greenland',
+    'greenland offer', 'greenland referendum', 'greenland independence vote',
+]
+
+# CORROBORATED layer -- announcement-grade fact-claims
+RUMINT_CORROBORATION_KEYWORDS = [
+    'greenland joins united states', 'greenland joins the us',
+    'greenland to join the united states', 'greenland becomes us territory',
+    'greenland becomes american', 'greenland statehood', 'greenland accession',
+    'denmark sells greenland', 'denmark agrees to sell greenland',
+    'denmark cedes greenland', 'greenland sold to', 'greenland sold to us',
+    'us annexes greenland', 'annexation of greenland announced',
+    'us attacks greenland', 'us invades greenland', 'us seizes greenland',
+    'us military deploys to greenland', 'us troops land in greenland',
+    'greenland votes to join', 'greenland sovereignty transfer',
+    'greenland referendum passes', 'greenland referendum result',
+]
+
+RUMINT_RECEPTION_VENUES = ['r/greenland', 'r/denmark', 'r/geopolitics', 'r/arctic']
+RUMINT_FRAMING_FLOOR = 2   # distinct interest-framing terms below which we stay silent
+
+
+# --- GENERIC (portable across RUMINT-enabled countries; gate tuned for inverted model) ---
+def _check_keywords(scan_data, keywords):
+    """Match keywords against the RUMINT corpus (articles + telegram + reddit).
+    Greenland articles carry a pre-lowercased 'body' (title+desc). URL slugs are
+    de-hyphenated so multi-word keywords match headline slugs."""
+    if not keywords:
+        return 0
+    corpus_parts = []
+    for art in (scan_data.get('rumint_articles') or []):
+        corpus_parts.append((art.get('body') or '').lower())
+        corpus_parts.append((art.get('title') or '').lower())
+        _url = (art.get('url') or art.get('link') or '').lower()
+        if _url:
+            corpus_parts.append(_url.replace('-', ' ').replace('_', ' ').replace('/', ' '))
+    for msg in (scan_data.get('rumint_telegram') or []):
+        corpus_parts.append((msg.get('title') or msg.get('text') or msg.get('message') or '').lower())
+    for sig in (scan_data.get('rumint_reddit') or []):
+        corpus_parts.append((sig.get('text') or sig.get('title') or '').lower())
+    corpus = ' | '.join(corpus_parts)
+    if not corpus:
+        return 0
+    return sum(1 for kw in keywords if kw.lower() in corpus)
+
+
+def _count_terms_in_reception(scan_data, keywords, venues):
+    """Distinct keyword count restricted to reddit signals whose source is a
+    reception venue -- the 'is the public reacting?' read. (Greenland does not
+    yet fetch reddit, so this returns 0 today and lights up when reddit is wired.)"""
+    if not keywords:
+        return 0
+    parts = []
+    for sig in (scan_data.get('rumint_reddit') or []):
+        if (sig.get('source') or '') in venues:
+            parts.append((sig.get('text') or sig.get('title') or '').lower())
+    corpus = ' | '.join(parts)
+    if not corpus:
+        return 0
+    return sum(1 for kw in keywords if kw.lower() in corpus)
+
+
+def _band_rumint(framing, specificity, reception, corroboration, subject):
+    """Band the RUMINT read on the escalating-observable ladder. Each rung is
+    gated by a NEW present-tense signal, never a forecast. 'off' returns an
+    inactive payload so the frontend shows no pill (absence stays honest).
+    Announcement-grade language is self-justifying -- Corroborated fires even
+    when interest-framing is below the floor."""
+    if corroboration >= 1:
+        band, label = 'corroborated', 'Corroborated'
+        driver = (subject + ' has reached announcement-grade language in the corpus '
+                  '(accession / sale / military-action claims) -- the trial balloon '
+                  'has hardened into reported fact-claims. Consistent with concept-'
+                  'seeding that has crystallized; verify against primary sources, and '
+                  'the reader completes the inference.')
+        return {'active': True, 'band': band, 'label': label, 'driver': driver,
+                'framing': framing, 'specificity': specificity,
+                'reception': reception, 'corroboration': corroboration}
+    # Active: a concrete move-rumor (or public echo), read as RUMINT only when at
+    # least some acquisition-interest framing is also present -- so the STANDING
+    # US presence at Pituffik/Thule does not false-positive on its own.
+    if framing >= 1 and (specificity >= 1 or reception >= 1):
+        band, label = 'active', 'Active'
+        echo = ' and echoing in public forums' if reception >= 1 else ''
+        driver = (subject + ' has moved past interest to concrete move-rumors '
+                  '(leaked talks, principal visits, or military signaling)' + echo
+                  + ' -- a trial balloon in flight. Consistent with behavior that '
+                  'historically precedes a posture shift; reader completes the inference.')
+        return {'active': True, 'band': band, 'label': label, 'driver': driver,
+                'framing': framing, 'specificity': specificity,
+                'reception': reception, 'corroboration': corroboration}
+    # Watch: interest-framing density, no concrete move yet.
+    if framing >= RUMINT_FRAMING_FLOOR:
+        band, label = 'watch', 'Watch'
+        driver = (subject + ' is present as interest / intent rhetoric but no concrete '
+                  'move-rumor yet. Baseline concept-seeding; watching for escalation to '
+                  'leaked talks, principal visits, or military signaling.')
+        return {'active': True, 'band': band, 'label': label, 'driver': driver,
+                'framing': framing, 'specificity': specificity,
+                'reception': reception, 'corroboration': corroboration}
+    return {'active': False, 'band': 'off', 'label': '', 'driver': '',
+            'framing': framing, 'specificity': specificity,
+            'reception': reception, 'corroboration': corroboration}
+
+
+def _score_rumint(scan_data):
+    """Compute the RUMINT read from the captured corpus. Framing / specificity /
+    corroboration use the full corpus; reception is venue-filtered. Counts are
+    distinct-term counts -- a volume proxy, never a probability. Short-circuits
+    when interest-framing is below the floor."""
+    framing       = _check_keywords(scan_data, RUMINT_EXPANSION_KEYWORDS)
+    corroboration = _check_keywords(scan_data, RUMINT_CORROBORATION_KEYWORDS)
+    specificity   = _check_keywords(scan_data, RUMINT_TARGETS)
+    reception     = _count_terms_in_reception(
+        scan_data, RUMINT_EXPANSION_KEYWORDS + RUMINT_TARGETS,
+        RUMINT_RECEPTION_VENUES)
+    return _band_rumint(framing, specificity, reception, corroboration, RUMINT_SUBJECT)
+
+
 def interpret_signals(scan_data):
     """
     Main entry point. Called from rhetoric_tracker_greenland.py with full scan_data.
@@ -774,6 +941,7 @@ def interpret_signals(scan_data):
         red_lines  = _score_red_lines(scan_data)
         historical = _match_historical(scan_data)
         so_what    = _build_so_what(scan_data, red_lines, historical)
+        rumint     = _score_rumint(scan_data)
 
         breached    = [r for r in red_lines if r['status'] == 'BREACHED']
         approaching = [r for r in red_lines if r['status'] == 'APPROACHING']
@@ -787,6 +955,7 @@ def interpret_signals(scan_data):
                 'highest_severity':  max((r['severity'] for r in red_lines), default=0),
             },
             'historical_matches':  historical,
+            'rumint':              rumint,
             'interpreter_version': '1.0.0',
             'interpreted_at':      datetime.now(timezone.utc).isoformat(),
         }
@@ -797,6 +966,9 @@ def interpret_signals(scan_data):
             'so_what':            {'scenario': 'Interpreter error', 'assessment': str(e)[:200]},
             'red_lines':          {'triggered': [], 'breached_count': 0, 'approaching_count': 0, 'highest_severity': 0},
             'historical_matches': [],
+            'rumint':             {'active': False, 'band': 'off', 'label': '',
+                                   'driver': '', 'framing': 0, 'specificity': 0,
+                                   'reception': 0, 'corroboration': 0},
             'interpreter_version': '1.0.0',
             'error':              str(e)[:200],
         }
