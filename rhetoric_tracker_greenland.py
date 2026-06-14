@@ -833,7 +833,17 @@ def run_greenland_rhetoric_scan(days=5):
     # Signal interpretation -- So What, Red Lines, Historical Patterns
     if INTERPRETER_AVAILABLE:
         try:
+            # Attach raw corpus for the RUMINT read, then pop it after so the
+            # cached payload is not bloated. Greenland articles carry a pre-
+            # lowercased 'body' (title+desc); telegram msgs carry 'title'.
+            result['rumint_articles'] = articles
+            result['rumint_telegram'] = telegram_msgs
+            result['rumint_reddit']   = []   # reddit not yet wired for Greenland
             result['interpretation'] = greenland_interpret_signals(result)
+            for _k in ('rumint_articles', 'rumint_telegram', 'rumint_reddit'):
+                result.pop(_k, None)
+            # Hand the RUMINT read up to the top level for the frontend pill.
+            result['rumint'] = (result['interpretation'] or {}).get('rumint')
             breached = result['interpretation']['red_lines']['breached_count']
             scenario = result['interpretation']['so_what'].get('scenario', 'N/A')
             print(f'[Greenland Rhetoric] Interpreter: {breached} red lines breached | {scenario}')
