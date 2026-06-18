@@ -256,6 +256,42 @@ RED_LINES = [
         ],
     },
     {
+        'id':       'ukraine_strike_russia_significant',
+        'category': 'Strategic Strike',
+        'title':    'Significant Ukrainian Strike on Russia',
+        'severity': 4,
+        'description':
+            'Major Ukrainian deep strike against Moscow, the Russian capital, '
+            'or strategic Russian energy infrastructure -- record-scale drone '
+            'barrages on Moscow, refinery fires, capital airport closures. The '
+            'OUTBOUND mirror of a significant strike on Kyiv: a record strike '
+            'is a record strike. v1.2 (Jun 18 2026): built for the largest '
+            'Ukrainian drone attack on Moscow of the war (4 airports closed, '
+            'Moscow refinery ablaze).',
+        'triggers_breached': [
+            'barrage on moscow', 'drone barrage on moscow', 'ukrainian drone barrage',
+            'attack on moscow', 'strike on moscow', 'strikes on moscow',
+            'attack on the russian capital', 'strike on the russian capital',
+            'on the russian capital', 'largest drone attack on moscow',
+            'record drone attack on moscow', 'massive drone attack moscow',
+            'mass drone attack moscow', 'moscow under attack',
+            'ukraine strikes moscow', 'ukraine hits moscow', 'ukrainian drones hit moscow',
+            'moscow refinery ablaze', 'moscow oil refinery', 'moscow refinery struck',
+            'moscow refinery on fire', 'russian refinery ablaze', 'russian refinery on fire',
+            'struck russian refinery', 'moscow airports closed', 'moscow airports shut',
+            'moscow airport closed', 'airports closed moscow',
+        ],
+        'triggers_approaching': [
+            'drones over moscow', 'drones approaching moscow', 'air alert moscow',
+            'air raid moscow', 'air defense moscow', 'moscow air defense',
+            'moscow region drone', 'moscow oblast drone', 'explosions near moscow',
+            'explosions moscow', 'fire near moscow', 'drones downed moscow',
+            'drones intercepted moscow', 'russia downs drones', 'moscow will burn',
+            'russian fuel shortage', 'russian gasoline shortage', 'russia fuel rationing',
+            'ukraine threatens moscow', 'ukraine vows strikes russia',
+        ],
+    },
+    {
         'id':       'drone_advisor_export_disclosed',
         'category': 'Defense Industry',
         'title':    'Ukrainian Drone Advisor Export Operations Disclosed',
