@@ -179,6 +179,19 @@ ACTORS = {
             'black sea fleet', 'naval drone', 'sea drone', 'magura',
             'novorossiysk', 'temryuk', 'ukraine sabotage russia',
             'drone strike russia', 'ukrainian long-range drones',
+            # -- v1.2 (Jun 18 2026): Ukraine -> Russia OUTBOUND (Moscow / capital / refineries) --
+            # Mirror of the inbound Kyiv coverage. Strike-directional only (NOT bare
+            # 'moscow') so diplomatic 'Moscow says...' stories don't mis-credit the AFU.
+            'barrage on moscow', 'drone barrage on moscow', 'drone attack on moscow',
+            'attack on moscow', 'strike on moscow', 'strikes on moscow',
+            'drones on moscow', 'moscow drone attack', 'moscow under attack',
+            'attack on the russian capital', 'strike on the russian capital',
+            'on the russian capital', 'russian capital attack', 'drones russian capital',
+            'ukraine strikes moscow', 'ukrainian drones moscow', 'ukrainian drone barrage',
+            'largest drone attack', 'biggest drone attack', 'record drone attack',
+            'moscow refinery', 'moscow oil refinery', 'russian refinery ablaze',
+            'russian refinery fire', 'struck russian refinery', 'moscow airports closed',
+            'moscow airport closed', 'airports closed moscow',
             'всу', 'генштаб украины', 'буданов',
         ],
     },
@@ -343,6 +356,10 @@ GDELT_QUERIES = {
         '"ukraine" AND ("drone" OR "shahed" OR "magura")',
         '"ukraine" AND ("ceasefire" OR "negotiation" OR "diplomatic")',
         '"ukrainian advisors" OR "ukrainian drone training"',
+        # -- v1.2 (Jun 18 2026): OUTBOUND lane -- Ukraine striking Russia/Moscow --
+        '"moscow" AND ("drone" OR "strike" OR "refinery" OR "attack")',
+        '"ukraine" AND ("moscow" OR "russian refinery" OR "russian capital")',
+        '"russian refinery" OR "moscow drone attack" OR "strike on moscow"',
     ],
     'ukr': [
         '"україна" AND ("зеленський" OR "київ")',
@@ -362,6 +379,8 @@ UKRAINE_TOPIC_KEYWORDS = [
     'ukraine', 'ukrainian', 'kyiv', 'kiev', 'zelensky', 'zelenskyy',
     'kharkiv', 'odesa', 'odessa', 'donbas', 'mariupol', 'crimea',
     'kherson', 'sumy', 'zaporizhzhia',
+    # -- v1.2 (Jun 18 2026): outbound targets (specific; watch for noise) --
+    'moscow', 'russian capital', 'russian refinery',
     'україна', 'украина', 'киев', 'київ',
 ]
 
