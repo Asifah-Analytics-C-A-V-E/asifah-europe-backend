@@ -850,6 +850,35 @@ def run_ukraine_rhetoric_scan(force=False):
         interpretation.get('cross_theater_fingerprints') or {}
     )
 
+    # -- v1.2 (Jun 18 2026): strategic-strike BREACH band floor -----------------
+    # A record strike is a record strike -- on the BAND, not just the signal.
+    # theatre_score is pure article volume, so a BREACHED Strategic-Strike red
+    # line (the record Moscow attack, or a major strike on Kyiv) can sit on the
+    # war-floor 'elevated' band on volume alone -- which buries it in the GPI
+    # priority rollup (the GPI ranks signals by their region's ambient level).
+    # Floor the band so a genuine strategic-strike breach reads at least 'high'
+    # (and 'critical' when two or more stack). Convergence-safe: re-bands an
+    # ALREADY-breached red line; invents no signal. Floors only, never lowers.
+    _rl_triggered = (interpretation.get('red_lines') or {}).get('triggered') or []
+    _strategic_breaches = sum(
+        1 for _rl in _rl_triggered
+        if _rl.get('status') == 'BREACHED'
+        and _rl.get('category') == 'Strategic Strike'
+        and _rl.get('severity', 0) >= 4
+    )
+    _BAND_RANK = {'normal': 0, 'elevated': 1, 'high': 2, 'critical': 3}
+    if _strategic_breaches >= 2:
+        score = max(score, 70)
+        if _BAND_RANK['critical'] > _BAND_RANK.get(alert, 0):
+            alert = 'critical'
+    elif _strategic_breaches >= 1:
+        score = max(score, 55)
+        if _BAND_RANK['high'] > _BAND_RANK.get(alert, 0):
+            alert = 'high'
+    if _strategic_breaches >= 1:
+        print(f'[Ukraine Rhetoric] Strategic-strike BREACH floor applied: '
+              f'{_strategic_breaches} breach(es) -> band {alert}, score {score}')
+
     elapsed = round(time.time() - started, 1)
     result = {
         'theatre':           'ukraine',
