@@ -879,6 +879,33 @@ def run_ukraine_rhetoric_scan(force=False):
         print(f'[Ukraine Rhetoric] Strategic-strike BREACH floor applied: '
               f'{_strategic_breaches} breach(es) -> band {alert}, score {score}')
 
+    # -- Off-ramp fingerprint (Slice 4, Jun 18 2026) --
+    # Translate the interpreter's gated diplomatic-track scenario into the Iran
+    # off-ramp schema (de_escalation_maturity / contradiction_active /
+    # diplomatic_max_raw) so the conflict-repricing detector and the GPI read
+    # Ukraine the same way they read Iran. Convergence framing: reports that an
+    # off-ramp is present and how mature it is -- never predicts the war ends.
+    _dt = interpretation.get('diplomatic_track') or {}
+    _scenario = _dt.get('scenario', 'No Active Track')
+    _MATURITY_BY_SCENARIO = {
+        'No Active Track':                  'none',
+        'Limited De-escalation Indicators': 'none',
+        'Tentative Diplomatic Signals':     'framework',   # talk, not terms
+        'Active Ceasefire Track':           'signed',      # terms, not talk
+    }
+    _offramp_maturity = _MATURITY_BY_SCENARIO.get(_scenario, 'none')
+    _negator_hits = _dt.get('negator_hits', 0)
+    # Contradiction: an off-ramp is present AND the tape is fighting it -- either
+    # an explicit ceasefire rejection (negators) or a live strategic-strike
+    # breach (e.g. the record Moscow strike) continuing through the track.
+    _contradiction_flags = []
+    if _offramp_maturity != 'none':
+        if _strategic_breaches >= 1:
+            _contradiction_flags.append('active_strategic_strikes')
+        if _negator_hits >= 1:
+            _contradiction_flags.append('ceasefire_rejected')
+    _contradiction_active = bool(_contradiction_flags)
+
     elapsed = round(time.time() - started, 1)
     result = {
         'theatre':           'ukraine',
@@ -910,6 +937,11 @@ def run_ukraine_rhetoric_scan(force=False):
         'red_lines':         interpretation.get('red_lines'),
         'green_lines':       interpretation.get('green_lines'),
         'diplomatic_track':  interpretation.get('diplomatic_track'),
+        # Off-ramp fingerprint (Slice 4) -- read by conflict_repricing_detector
+        'de_escalation_maturity': _offramp_maturity,
+        'contradiction_active':   _contradiction_active,
+        'contradiction_flags':    _contradiction_flags,
+        'diplomatic_max_raw':     _dt.get('score', 0),
         'commodity_signal':  interpretation.get('commodity_signal'),
         'cross_theater_fingerprints': interpretation.get('cross_theater_fingerprints'),
         'composite_modifier': interpretation.get('composite_modifier', 0),
