@@ -697,8 +697,196 @@ def _write_cross_theater_fingerprints(fingerprints):
 
 CROSSTHEATER_KEY = 'rhetoric:crosstheater:fingerprints'  # ME-backend shared dict
 
+# ============================================================
+# ERDOGAN PROJECTION NODE (Slice 3) -- "what is Erdogan up to?"
+# ============================================================
+# Mirrors Iran's command-node read, inverted: theater trackers that carry
+# Turkey as an actor WRITE turkey:theater_footprints[<theater>] (Libya is
+# spoke #1); this tracker READS them across theaters. Iran commands proxies;
+# Turkey projects influence ecosystems -- hence "Projection", not "Command".
+# Sits ON TOP of the swing-state alignment index: alignment says which way
+# Ankara leans; projection says whether it is ACTING on it across theaters.
+TURKEY_FOOTPRINTS_KEY        = 'turkey:theater_footprints'
+THEATER_PROJECTION_FRESH_HRS = 30   # generous: theater scans run ~12h cycles
 
-def _write_crosstheater_dict_entry(score, alert, interpretation):
+PROJECTION_DISCLAIMER = (
+    'This is a CONVERGENCE indicator, NOT a probability of action. Active '
+    'signals indicate Turkish projection conditions are present across '
+    'theaters; they do not predict whether or when Ankara will act.'
+)
+
+# Objective tags emitted by theater trackers -> human-readable labels.
+PROJECTION_OBJECTIVE_LABELS = {
+    'gnu_backing':          'government backing',
+    'drone_export':         'drone deployment',
+    'naval_mou':            'maritime/EEZ claims',
+    'energy_claim_eastmed': 'East-Med energy positioning',
+    'mercenary_flow':       'proxy-fighter movement',
+    'base_access':          'military basing',
+    'safe_zone':            'buffer-zone operations',
+    'anti_pkk_sdf':         'anti-SDF/PKK operations',
+    'mediator_track':       'mediation',
+}
+
+# index -> (band, color). Non-linear: 3+ theaters is the node threshold.
+PROJECTION_BANDS = {
+    0: ('dormant',    '#6b7280'),
+    1: ('monitoring', '#3b82f6'),
+    2: ('active',     '#f59e0b'),
+    4: ('elevated',   '#f97316'),
+    5: ('node',       '#dc2626'),
+}
+
+
+def _band_for_projection_index(index):
+    return PROJECTION_BANDS.get(index, ('dormant', '#6b7280'))
+
+
+def _compute_theater_projection_index():
+    """
+    Count theaters where Turkey's footprint is lit (level>=2), reading the
+    shared turkey:theater_footprints key. Non-linear curve (mirrors Iran's
+    proxy-activation index) -- a coordinated multi-theater push is qualitatively
+    different from one active theater.
+      1 theater = 1 | 2 = 2 | 3 = 4 (non-linear) | 4+ = 5
+    Returns (index, detail). CONVERGENCE indicator -- never a forecast.
+    """
+    try:
+        footprints = _redis_get(TURKEY_FOOTPRINTS_KEY) or {}
+        if not footprints:
+            return 0, {'reason': 'No theater footprints available yet', 'detail': {},
+                       'lit_theaters': [], 'lit_count': 0}
+        now = datetime.now(timezone.utc)
+        fresh = {}
+        for theater, fp in footprints.items():
+            if not isinstance(fp, dict):
+                continue
+            try:
+                age = (now - datetime.fromisoformat(fp['ts'])).total_seconds() / 3600
+                if age <= THEATER_PROJECTION_FRESH_HRS:
+                    fresh[theater] = fp
+            except Exception:
+                continue
+        lit = {t: fp for t, fp in fresh.items() if fp.get('level', 0) >= 2}
+        n = len(lit)
+        index = {0: 0, 1: 1, 2: 2, 3: 4}.get(n, 5 if n >= 4 else 0)
+        detail = {t: {'level': fp.get('level', 0),
+                      'mode': fp.get('mode', 'dormant'),
+                      'objective_tags': fp.get('objective_tags', []),
+                      'top_phrases': fp.get('top_phrases', [])}
+                  for t, fp in fresh.items()}
+        return index, {'index': index, 'lit_theaters': sorted(lit.keys()),
+                       'lit_count': n, 'all_fresh_theaters': sorted(fresh.keys()),
+                       'detail': detail}
+    except Exception as e:
+        print(f'[Turkey Projection] index error: {str(e)[:100]}')
+        return 0, {'reason': 'error', 'detail': {}, 'lit_theaters': [], 'lit_count': 0}
+
+
+def _compute_objective_convergence(fresh_detail):
+    """
+    Playbook detector (Unity-of-Fronts analog). When 2+ theaters share the SAME
+    objective_tag (e.g. drone_export in Libya AND Syria), that is a coherent
+    projection playbook -- not theater-local opportunism. Returns
+    (convergent_objectives, reading_word).
+    """
+    tag_supporters = {}
+    for theater, d in fresh_detail.items():
+        if d.get('level', 0) < 2:
+            continue
+        for tag in d.get('objective_tags', []):
+            tag_supporters.setdefault(tag, []).append(theater)
+    convergent = {tag: sorted(ts) for tag, ts in tag_supporters.items() if len(ts) >= 2}
+    lit_n = sum(1 for d in fresh_detail.values() if d.get('level', 0) >= 2)
+    if convergent:
+        reading = 'playbook'
+    elif lit_n >= 2:
+        reading = 'opportunism'
+    elif lit_n == 1:
+        reading = 'single_theater'
+    else:
+        reading = 'quiet'
+    return convergent, reading
+
+
+def _projection_bluf(index, lit, convergent, reading, dominant_mode, is_node):
+    """Estimative 'what is Erdogan up to?' synthesis. Convergence, not prediction."""
+    if index == 0 or not lit:
+        return ''
+    theaters = ', '.join(t.title() for t in lit)
+    # Mediation dominant -> frame diplomatically, never as escalation.
+    if dominant_mode == 'diplomatic' and reading != 'playbook':
+        return (f'Turkish activity in {theaters} reads as diplomatic/backing posture; '
+                f'no hard-power projection pattern present this cycle.')
+    if index == 1:
+        return (f'Turkish projection is active in a single theater ({theaters}); '
+                f'no multi-theater pattern present.')
+    if index == 2:
+        if convergent:
+            objs = ', '.join(PROJECTION_OBJECTIVE_LABELS.get(t, t) for t in convergent)
+            return (f'Turkish footprint is co-active across {theaters}, converging on '
+                    f'{objs} -- an emerging projection pattern.')
+        return (f'Turkish footprint is co-active across {theaters}, but on distinct '
+                f'objectives -- reads as theater-local activity, not a coordinated push.')
+    # index >= 4 -> node
+    if convergent:
+        objs = ', '.join(PROJECTION_OBJECTIVE_LABELS.get(t, t) for t in convergent)
+        return (f'What is Erdogan up to? Turkish signals are co-elevated across '
+                f'{len(lit)} theaters ({theaters}), converging on {objs} -- a footprint '
+                f'consistent with a coordinated {dominant_mode.replace("_"," ")} '
+                f'projection, not theater-local opportunism.')
+    return (f'What is Erdogan up to? Turkish signals are co-elevated across '
+            f'{len(lit)} theaters ({theaters}) on distinct objectives -- consistent '
+            f'with vacuum-filling opportunism rather than a single coordinated playbook.')
+
+
+def _build_projection_node():
+    """
+    Erdogan Projection Node synthesis. Reads Turkey's footprint across theaters,
+    scores the projection index, detects objective convergence (playbook vs
+    opportunism), and -- at 3+ lit theaters -- flags is_projection_node with the
+    estimative BLUF. CONVERGENCE indicator, never a forecast.
+    """
+    index, idx_detail = _compute_theater_projection_index()
+    fresh_detail = idx_detail.get('detail', {})
+    lit = idx_detail.get('lit_theaters', [])
+    convergent, reading = _compute_objective_convergence(fresh_detail)
+    is_node = index >= 4
+
+    modes = {}
+    for t in lit:
+        m = fresh_detail.get(t, {}).get('mode', 'dormant')
+        modes[m] = modes.get(m, 0) + 1
+    # hard_power dominates economic dominates diplomatic when tied
+    if modes:
+        dominant_mode = max(modes, key=lambda m: (modes[m],
+                            {'hard_power': 3, 'economic': 2, 'diplomatic': 1}.get(m, 0)))
+    else:
+        dominant_mode = 'dormant'
+
+    band, color = _band_for_projection_index(index)
+    bluf = _projection_bluf(index, lit, convergent, reading, dominant_mode, is_node)
+
+    return {
+        'index':                 index,
+        'band':                  band,
+        'color':                 color,
+        'is_projection_node':    is_node,
+        'lit_theaters':          lit,
+        'lit_count':             len(lit),
+        'convergent_objectives': convergent,
+        'reading':               reading,
+        'dominant_mode':         dominant_mode,
+        'mode_distribution':     modes,
+        'theater_detail':        fresh_detail,
+        'bluf':                  bluf,
+        'disclaimer':            PROJECTION_DISCLAIMER,
+        'computed_at':           datetime.now(timezone.utc).isoformat(),
+    }
+
+
+
+def _write_crosstheater_dict_entry(score, alert, interpretation, projection=None):
     """DUAL-WRITE (the India precedent, Jun 11 2026): the ME backend
     reads a SHARED DICT at rhetoric:crosstheater:fingerprints (Lebanon /
     Israel / Syria / Iran convention), while Europe uses per-key
@@ -733,6 +921,12 @@ def _write_crosstheater_dict_entry(score, alert, interpretation):
             'mediation_active':     fp.get('turkey_mediation_active', False),
             'nato_anchor_index':    alignment.get('nato_anchor_index', 0),
             'strategic_autonomy_index': alignment.get('strategic_autonomy_index', 0),
+            # -- Erdogan Projection Node (Slice 3) --
+            'is_projection_node':   (projection or {}).get('is_projection_node', False),
+            'projection_index':     (projection or {}).get('index', 0),
+            'projection_band':      (projection or {}).get('band', 'dormant'),
+            'projection_reading':   (projection or {}).get('reading', 'quiet'),
+            'projection_lit_theaters': (projection or {}).get('lit_theaters', []),
         }
         r = requests.post(
             UPSTASH_REDIS_URL,
@@ -827,10 +1021,11 @@ def run_turkey_rhetoric_scan(force=False):
     }
 
     interpretation = interpret_signals(scan_data)
+    projection = _build_projection_node()   # Slice 3: Erdogan Projection Node
     _write_cross_theater_fingerprints(
         interpretation.get('cross_theater_fingerprints') or {}
     )
-    _write_crosstheater_dict_entry(score, alert, interpretation)
+    _write_crosstheater_dict_entry(score, alert, interpretation, projection)
 
     elapsed = round(time.time() - started, 1)
     result = {
@@ -871,6 +1066,7 @@ def run_turkey_rhetoric_scan(force=False):
         'rumint':            interpretation.get('rumint'),
         'cross_theater_fingerprints': interpretation.get('cross_theater_fingerprints'),
         'composite_modifier': interpretation.get('composite_modifier', 0),
+        'projection_node':    projection,   # Slice 3: cross-theater "what is Erdogan up to?"
         'interpreter_version': interpretation.get('interpreter_version'),
         'disclaimer':        interpretation.get('disclaimer'),
     }
