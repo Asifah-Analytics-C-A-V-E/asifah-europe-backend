@@ -107,14 +107,26 @@ BLUESKY_ACCOUNTS_EUROPE = [
         'Sviatlana Tsikhanouskaya (if native) — Belarusian opposition leader in exile'),
 
     # ── govmirrors fallbacks for X-only accounts ──────────────
-    ('realdonaldtrump.govmirrors.com', 1.2, ['greenland', 'ukraine', 'russia', 'poland', 'hungary', 'belarus'],
+    ('realdonaldtrump.govmirrors.com', 1.2, ['greenland', 'ukraine', 'russia', 'poland', 'hungary', 'belarus', 'greece', 'cyprus', 'azerbaijan'],
         'Trump (X mirror) — Greenland/Ukraine/NATO/Belarus statements'),
-    ('secrubio.govmirrors.com',        1.1, ['greenland', 'ukraine', 'russia', 'poland', 'hungary', 'belarus'],
+    ('secrubio.govmirrors.com',        1.1, ['greenland', 'ukraine', 'russia', 'poland', 'hungary', 'belarus', 'greece', 'cyprus', 'azerbaijan'],
         'US SecState Rubio (X mirror) -- Europe/Arctic/Belarus/Hungary policy'),
     ('modrussia.govmirrors.com',       1.1, ['russia', 'ukraine', 'belarus'],
         'Russian MoD (X mirror) — official claims; Belarus deployment relevant'),
     ('mfarussia.govmirrors.com',       1.0, ['russia', 'ukraine', 'belarus'],
         'Russian MFA (X mirror) — diplomatic signaling; Union State commentary'),
+
+    # -- Eastern Mediterranean / Caucasus spoke (Greece, Cyprus, Azerbaijan) --
+    # Turkey-spoke + Iran-spoke expansion (Jun 2026). The '*' accounts above
+    # (State Dept, NATO) plus the now-extended Rubio/Trump mirrors already give
+    # these trackers real coverage. The country-specific MFA handles below are
+    # unverified candidates and 404 harmlessly (graceful degradation pattern).
+    ('greekmfa.bsky.social',          1.0, ['greece', 'cyprus'],
+        'Greek MFA (if native, unverified) -- Aegean/Greece-Turkey/Cyprus signals'),
+    ('cyprusmfa.bsky.social',         1.0, ['cyprus', 'greece'],
+        'Cyprus MFA (if native, unverified) -- Eastern Med, buffer zone, hydrocarbons'),
+    ('azerbaijanmfa.bsky.social',     0.9, ['azerbaijan'],
+        'Azerbaijan MFA (if native, unverified) -- Caucasus, Iran-border, Karabakh'),
 ]
 
 
@@ -316,5 +328,30 @@ def fetch_russia_bluesky_signals(days=7, max_posts_per_account=20):
 def fetch_greenland_bluesky_signals(days=7, max_posts_per_account=20):
     """Bluesky posts relevant to Greenland tracker (for future use)."""
     return fetch_bluesky_for_target('greenland',
+                                    days=days,
+                                    max_posts_per_account=max_posts_per_account)
+
+
+def fetch_greece_bluesky_signals(days=7, max_posts_per_account=20):
+    """Bluesky posts relevant to the Greece tracker (Aegean/Greece-Turkey,
+    Eastern Med). Surfaced via '*' accounts (State Dept, NATO) + Rubio/Trump
+    mirrors; native greekmfa handle activates if/when verified live."""
+    return fetch_bluesky_for_target('greece',
+                                    days=days,
+                                    max_posts_per_account=max_posts_per_account)
+
+
+def fetch_cyprus_bluesky_signals(days=7, max_posts_per_account=20):
+    """Bluesky posts relevant to the Cyprus tracker (SBA/Akrotiri, buffer
+    zone, Eastern-Med hydrocarbons, Greece deployments)."""
+    return fetch_bluesky_for_target('cyprus',
+                                    days=days,
+                                    max_posts_per_account=max_posts_per_account)
+
+
+def fetch_azerbaijan_bluesky_signals(days=7, max_posts_per_account=20):
+    """Bluesky posts relevant to the Azerbaijan tracker (Iran-border/
+    Nakhchivan, Karabakh/Zangezur, Israel ties, BTC pipeline)."""
+    return fetch_bluesky_for_target('azerbaijan',
                                     days=days,
                                     max_posts_per_account=max_posts_per_account)
