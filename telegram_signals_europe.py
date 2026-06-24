@@ -375,6 +375,122 @@ def fetch_turkey_telegram_signals(hours_back=96):
         print(f"[Telegram Turkey] ❌ fetch error: {str(e)[:200]}")
         return []
 
+# ====================================================================
+# EASTERN MED / CAUCASUS SPOKE -- Greece, Cyprus, Azerbaijan (Jun 2026)
+# Turkey-spoke + Iran-spoke expansion. Each list leads with proven anchor
+# OSINT (ClashReport/OSINTdefender/intelslava/disclosetv -- confirmed live,
+# region-wide) so there is real signal immediately. Country-specific handles
+# tagged "verify" are best-candidate guesses; _async_fetch_messages skips dead
+# usernames gracefully, so unverified entries cost nothing until confirmed.
+# ====================================================================
+
+GREECE_CHANNELS = [
+    'ClashReport',          # anchor OSINT -- Aegean / Greece-Turkey threads
+    'OSINTdefender',        # anchor OSINT -- English, high signal
+    'intelslava',           # aggregator -- catches Greece-Turkey items
+    'disclosetv',           # breaking conflict news
+    # -- Greek-specific (verify handles are live) --
+    'GreekCityTimes',       # ⚠️ verify -- Greek City Times (EN)
+    'doureios',             # ⚠️ verify -- Doureios (Greek defense)
+    'pentapostagma',        # ⚠️ verify -- Pentapostagma (Greek news/defense)
+]
+
+def fetch_greece_telegram_signals(hours_back=96):
+    """Telegram signals for the Greece tracker -- Aegean / Greece-Turkey / Evros / Eastern-Med deployments.
+    96h window matches the Turkey-spoke cadence."""
+    if not _telegram_available():
+        print("[Telegram Greece] Signals unavailable -- skipping")
+        return []
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, _async_fetch_messages(GREECE_CHANNELS, hours_back))
+                return future.result(timeout=120)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(_async_fetch_messages(GREECE_CHANNELS, hours_back))
+            finally:
+                loop.close()
+    except Exception as e:
+        print(f"[Telegram Greece] ❌ fetch error: {str(e)[:200]}")
+        return []
+
+
+CYPRUS_CHANNELS = [
+    'ClashReport',          # anchor OSINT
+    'OSINTdefender',        # anchor OSINT
+    'intelslava',           # aggregator
+    'disclosetv',           # breaking conflict news
+    # -- Cyprus-specific (verify handles are live) --
+    'CyprusMail',           # ⚠️ verify -- Cyprus Mail (EN daily)
+    'incyprus',             # ⚠️ verify -- In-Cyprus
+]
+
+def fetch_cyprus_telegram_signals(hours_back=96):
+    """Telegram signals for the Cyprus tracker -- SBA/Akrotiri, buffer zone, Eastern-Med hydrocarbons, Greece deployments.
+    96h window matches the Turkey-spoke cadence."""
+    if not _telegram_available():
+        print("[Telegram Cyprus] Signals unavailable -- skipping")
+        return []
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, _async_fetch_messages(CYPRUS_CHANNELS, hours_back))
+                return future.result(timeout=120)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(_async_fetch_messages(CYPRUS_CHANNELS, hours_back))
+            finally:
+                loop.close()
+    except Exception as e:
+        print(f"[Telegram Cyprus] ❌ fetch error: {str(e)[:200]}")
+        return []
+
+
+AZERBAIJAN_CHANNELS = [
+    'ClashReport',          # anchor OSINT
+    'OSINTdefender',        # anchor OSINT
+    'intelslava',           # aggregator
+    'disclosetv',           # breaking conflict news
+    'MiddleEastSpectator',  # Iran-Azerbaijan friction threads
+    # -- Azerbaijan-specific (verify handles are live) --
+    'caliberaz',            # ⚠️ verify -- Caliber.Az (state-adjacent defense)
+    'apa_az',               # ⚠️ verify -- APA news agency
+    'trendnewsagency',      # ⚠️ verify -- Trend News Agency
+]
+
+def fetch_azerbaijan_telegram_signals(hours_back=96):
+    """Telegram signals for the Azerbaijan tracker -- Iran-border/Nakhchivan, Karabakh/Zangezur, Israel ties, BTC pipeline.
+    96h window matches the Turkey-spoke cadence."""
+    if not _telegram_available():
+        print("[Telegram Azerbaijan] Signals unavailable -- skipping")
+        return []
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, _async_fetch_messages(AZERBAIJAN_CHANNELS, hours_back))
+                return future.result(timeout=120)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(_async_fetch_messages(AZERBAIJAN_CHANNELS, hours_back))
+            finally:
+                loop.close()
+    except Exception as e:
+        print(f"[Telegram Azerbaijan] ❌ fetch error: {str(e)[:200]}")
+        return []
+
 def fetch_hungary_telegram_signals(hours_back=120):
     """
     Fetch Telegram signals for Hungary stability tracker.
