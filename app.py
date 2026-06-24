@@ -1,6 +1,6 @@
 """
-Asifah Analytics — Europe Backend v1.1.0
-February 22, 2026
+Asifah Analytics — Europe Backend v2
+JUne 24, 2026
 
 European Conflict Probability Dashboard Backend
 Targets: Greenland, Ukraine, Russia, Poland
@@ -530,6 +530,7 @@ TRAVEL_ADVISORY_CODES = {
     'poland': ['PL'],
     'turkey': ['TU'],
     'cyprus': ['CY'],
+    'greece': ['GR'],
     'azerbaijan': ['AJ'],
     'armenia': ['AM'],
     'hungary': ['HU'],
@@ -570,6 +571,7 @@ SOURCE_WEIGHTS = {
             'The Barents Observer', 'High North News',
             'Daily Sabah', 'Hurriyet Daily News', 'TRT World',
             'Cyprus Mail', 'In-Cyprus', 'Kathimerini',
+            'Ekathimerini', 'ANA-MPA', 'Greek City Times', 'Naftemporiki', 'To Vima',
             'Ukrinform', 'Defence24', 'Notes from Poland',
             'Exit.al', 'Tirana Times', 'Euronews Albania',
             'The Brussels Times', 'VRT', 'RTBF', 'Le Soir'
@@ -785,6 +787,10 @@ TARGET_BASELINES = {
     'cyprus': {
         'base_adjustment': +10,
         'description': 'Active Iranian drone strikes on RAF Akrotiri; European reinforcements deploying; US evacuation'
+    },
+    'greece': {
+        'base_adjustment': +5,
+        'description': 'NATO member; Aegean/Greece-Turkey friction; Souda Bay (Crete) US naval hub; Eastern-Med projection + Cyprus reinforcement role'
     },
     'azerbaijan': {
         'base_adjustment': +8,
@@ -1009,6 +1015,39 @@ TARGET_KEYWORDS = {
             'evacuation', 'Nicosia', 'Limassol', 'NATO',
             'British forces', 'Mediterranean', 'Turkey Cyprus',
             'intercept', 'drone', 'attack', 'missile', 'Greek F-16'
+        ]
+    },
+    'greece': {
+        'keywords': [
+            'greece', 'greek', 'hellenic', 'athens', 'thessaloniki',
+            'greece military', 'greek armed forces', 'hellenic army',
+            'hellenic navy', 'hellenic air force', 'greek defense', 'greek defence',
+            # Aegean / Greece-Turkey
+            'greece turkey', 'greece turkey tensions', 'aegean', 'aegean dispute',
+            'aegean airspace', 'turkish overflight', 'greek airspace violation',
+            'greek f-16', 'greek rafale', 'greek mirage', 'dogfight aegean',
+            'casus belli', 'kastellorizo', 'imia', 'greek islands militarization',
+            # Evros border
+            'evros', 'evros border', 'greece turkey border', 'greek border guards',
+            'evros migrants', 'greece pushback',
+            # Air defense / hardware
+            'greek s-300', 's-300 crete', 'belharra frigate', 'greek navy frigate',
+            # Bases
+            'souda bay', 'souda crete', 'larissa air base', 'alexandroupoli',
+            # Cyprus / Eastern Med projection
+            'greece cyprus', 'greek jets cyprus', 'greece deploys cyprus',
+            'eastern mediterranean', 'greece eez', 'greece libya maritime',
+            'greece egypt', 'greece france defense', 'greece nato', 'greece israel',
+            'greece energy', 'east med gas',
+            # Greek-language
+            'Ελλάδα', 'ελληνικός στρατός',
+            'πολεμική αεροπορία', 'αιγαίο',
+            'ελληνοτουρκικά', 'Έβρος',
+        ],
+        'reddit_keywords': [
+            'Greece', 'Greek', 'Aegean', 'Turkey Greece', 'Hellenic',
+            'Evros', 'Souda', 'F-16', 'Cyprus', 'Eastern Mediterranean',
+            'NATO', 'geopolitics'
         ]
     },
     'azerbaijan': {
@@ -1260,6 +1299,7 @@ REDDIT_SUBREDDITS = {
     'poland': ['poland', 'Polska', 'europe', 'geopolitics', 'worldnews'],
     'turkey': ['Turkey', 'turkish', 'europe', 'geopolitics', 'worldnews', 'syriancivilwar'],
     'cyprus': ['cyprus', 'europe', 'geopolitics', 'worldnews', 'unitedkingdom'],
+    'greece': ['greece', 'europe', 'geopolitics', 'worldnews', 'CredibleDefense'],
     'azerbaijan': ['azerbaijan', 'europe', 'geopolitics', 'worldnews', 'CredibleDefense'],
     'armenia': ['armenia', 'europe', 'geopolitics', 'worldnews', 'CredibleDefense', 'ArmeniaAzerbaijan'],
     'hungary': ['hungary', 'europe', 'geopolitics', 'worldnews', 'europeanunion'],
@@ -1386,6 +1426,12 @@ NOTAM_REGIONS = {
         'icao_codes': ['LTBA', 'LTAC', 'LTAI', 'LTBJ', 'LTFE'],
         'display_name': 'Turkey',
         'flag': '🇹🇷'
+    },
+    'greece': {
+        'fir_codes': ['LGGG'],
+        'icao_codes': ['LGAV', 'LGTS', 'LGIR', 'LGSA', 'LGKR'],
+        'display_name': 'Greece',
+        'flag': '🇬🇷'
     },
     'cyprus': {
         'fir_codes': ['LCCC'],
@@ -3044,7 +3090,8 @@ def scan_european_flight_disruptions(all_articles):
                 'kaliningrad', 'crimea', 'kyiv', 'moscow', 'warsaw',
                 'nato', 'arctic',
                 'turkey', 'istanbul', 'ankara', 'incirlik',
-                'cyprus', 'nicosia', 'larnaca', 'akrotiri', 'paphos'
+                'cyprus', 'nicosia', 'larnaca', 'akrotiri', 'paphos',
+                'greece', 'athens', 'thessaloniki', 'aegean', 'crete', 'souda'
             ])
 
             if has_flight_context and has_disruption and has_europe_context:
@@ -3356,6 +3403,25 @@ def _run_threat_scan(target, days=7):
             except Exception as e:
                 print(f"Cyprus GDELT error: {e}")
 
+    if target == 'greece':
+        try:
+            rss_articles.extend(fetch_google_news_rss('Greece military OR Aegean OR Hellenic OR Evros OR "Greece Turkey"', 'Greece News'))
+        except Exception as e:
+            print(f"Greece Google News error: {e}")
+        greece_queries = [
+            ('Greece Turkey Aegean tensions', 'eng'),
+            ('Greek F-16 intercept Turkish jets Aegean', 'eng'),
+            ('Greece Evros border militarization', 'eng'),
+            ('Souda Bay Crete US Navy NATO', 'eng'),
+            ('Greece Cyprus deployment Eastern Mediterranean', 'eng'),
+        ]
+        for query, lang in greece_queries:
+            try:
+                articles = fetch_gdelt_articles(query, days, lang)
+                rss_articles.extend(articles)
+            except Exception as e:
+                print(f"Greece GDELT error: {e}")
+
     if target == 'hungary':
         try:
             rss_articles.extend(fetch_google_news_rss(
@@ -3473,6 +3539,15 @@ def _run_threat_scan(target, days=7):
             elif target == 'russia':
                 from telegram_signals_europe import fetch_russia_telegram_signals
                 telegram_msgs = fetch_russia_telegram_signals(hours_back=days*24)
+            elif target == 'greece':
+                from telegram_signals_europe import fetch_greece_telegram_signals
+                telegram_msgs = fetch_greece_telegram_signals(hours_back=days*24)
+            elif target == 'cyprus':
+                from telegram_signals_europe import fetch_cyprus_telegram_signals
+                telegram_msgs = fetch_cyprus_telegram_signals(hours_back=days*24)
+            elif target == 'azerbaijan':
+                from telegram_signals_europe import fetch_azerbaijan_telegram_signals
+                telegram_msgs = fetch_azerbaijan_telegram_signals(hours_back=days*24)
             else:
                 telegram_msgs = fetch_europe_telegram_signals(hours_back=days*24, include_extended=True)
             if telegram_msgs:
