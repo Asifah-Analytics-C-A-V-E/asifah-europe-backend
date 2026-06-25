@@ -3390,27 +3390,38 @@ def _run_threat_scan(target, days=7):
                 print(f"Turkey GDELT ({lang}) error: {e}")
 
     if target == 'cyprus':
-        # Cyprus RSS feeds (v1.3.0)
+        # Cyprus RSS feeds (v1.4.0 - broadened from the Iran-war framing to the full
+        # stability picture: division/Green Line, EEZ/Turkey, the Estia evacuation
+        # hub, the Greece-Cyprus axis, settlement track. Google News = no key/quota.)
         try:
-            rss_articles.extend(fetch_google_news_rss('Cyprus military OR Akrotiri OR drone OR attack OR evacuation', 'Cyprus News'))
+            rss_articles.extend(fetch_google_news_rss(
+                'Cyprus OR Nicosia OR "Green Line" OR UNFICYP OR Akrotiri OR "Cyprus EEZ" OR "Cyprus Turkey"',
+                'Cyprus News'))
         except Exception as e:
             print(f"Cyprus Google News error: {e}")
+        try:
+            rss_articles.extend(fetch_google_news_rss(
+                'Cyprus Estia evacuation OR Cyprus Lebanon evacuation OR Cyprus settlement talks OR Cyprus drilling Turkey OR Cyprus Greece Israel',
+                'Cyprus Regional News'))
+        except Exception as e:
+            print(f"Cyprus Regional Google News error: {e}")
 
-        # Fetch Cyprus-specific war GDELT queries
-        cyprus_war_queries = [
-            ('Cyprus Akrotiri drone attack Iran', 'eng'),
-            ('Cyprus airspace closed war', 'eng'),
-            ('RAF Akrotiri strike Iran drone', 'eng'),
-            ('Cyprus evacuation UK forces', 'eng'),
-            ('Greek F-16 intercept drone Cyprus', 'eng'),
-            ('Cyprus UK base Iranian attack', 'eng'),
+        # Cyprus stability GDELT queries - division, EEZ/Turkey, TRNC, the Estia
+        # evacuation hub, the Greece-Cyprus axis, and the UK Sovereign Base Areas.
+        cyprus_queries = [
+            ('Cyprus Green Line UNFICYP buffer zone settlement talks', 'eng'),
+            ('Cyprus Turkey EEZ gas drilling Eastern Mediterranean', 'eng'),
+            ('Cyprus TRNC two-state Turkish occupation north', 'eng'),
+            ('Cyprus Estia evacuation hub Lebanon Israel reception', 'eng'),
+            ('Cyprus Greece Israel Egypt defense energy trilateral', 'eng'),
+            ('Cyprus Akrotiri UK base Middle East operations', 'eng'),
         ]
-        for query, lang in cyprus_war_queries:
+        for query, lang in cyprus_queries:
             try:
                 articles = fetch_gdelt_articles(query, days, lang)
                 rss_articles.extend(articles)
             except Exception as e:
-                print(f"Cyprus GDELT error: {e}")
+                print(f"Cyprus GDELT ({lang}) error: {e}")
 
     if target == 'greece':
         try:
