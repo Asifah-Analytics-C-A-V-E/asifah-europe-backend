@@ -143,6 +143,15 @@ except ImportError as e:
     RUSSIA_STABILITY_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Russia stability not available: {e}")
 
+# Azerbaijan financial pulse
+try:
+    from azerbaijan_financial_pulse import register_azerbaijan_financial_endpoints
+    AZERBAIJAN_PULSE_AVAILABLE = True
+    print("[Europe Backend] ✅ Azerbaijan financial pulse module loaded")
+except ImportError as e:
+    AZERBAIJAN_PULSE_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Azerbaijan financial pulse not available: {e}")
+
 # v1.0: Europe Regional BLUF Engine
 # Synthesizes top_signals[] across Russia + Greenland (and future Ukraine/Hungary/Poland trackers).
 # Required for Global Pressure Index downstream consumption.
@@ -4322,6 +4331,11 @@ if HUNGARY_RHETORIC_AVAILABLE:
 if RUSSIA_STABILITY_AVAILABLE:
     register_russia_stability_endpoints(app)
     print("[Europe Backend] ✅ Russia stability routes registered")
+
+# Register Azerbaijan financial pulse
+if AZERBAIJAN_PULSE_AVAILABLE:
+    register_azerbaijan_financial_endpoints(app)
+    print("[Europe Backend] ✅ Azerbaijan financial pulse routes registered")
 
 # Register Europe Regional BLUF (synthesizes Russia + Greenland for GPI consumption)
 if EUROPE_BLUF_AVAILABLE:
