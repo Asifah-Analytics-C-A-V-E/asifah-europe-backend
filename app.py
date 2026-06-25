@@ -3569,6 +3569,43 @@ def _run_threat_scan(target, days=7):
             except Exception as e:
                 print(f"Azerbaijan GDELT ({lang}) error: {e}")
 
+    if target == 'armenia':
+        # Google News RSS (no key, no quota) - reliable English baseline.
+        # Same starvation fix as Azerbaijan; mirrors the Belarus pattern.
+        try:
+            rss_articles.extend(fetch_google_news_rss(
+                'Armenia OR Yerevan OR Pashinyan OR Artsakh OR Syunik OR CSTO',
+                'Armenia News'))
+        except Exception as e:
+            print(f"Armenia Google News error: {e}")
+        try:
+            rss_articles.extend(fetch_google_news_rss(
+                'Armenia Azerbaijan peace OR Armenia Russia CSTO OR Armenia EU OR Armenia Iran OR Zangezur corridor',
+                'Armenia Diplomacy News'))
+        except Exception as e:
+            print(f"Armenia Diplomacy Google News error: {e}")
+
+        # Armenia-specific GDELT queries - peace process / TRIPP, the Russia/CSTO
+        # -> EU/West pivot, Iran lifeline, Karabakh aftermath, domestic politics.
+        # English + Russian (South Caucasus coverage runs heavily in Russian).
+        armenia_queries = [
+            ('Armenia Azerbaijan peace treaty TRIPP Zangezur Syunik', 'eng'),
+            ('Armenia Russia CSTO withdrawal EU Western pivot', 'eng'),
+            ('Armenia Iran border cooperation corridor', 'eng'),
+            ('Armenia Pashinyan government opposition protest', 'eng'),
+            ('Armenia Artsakh Karabakh refugees displaced', 'eng'),
+            ('Армения Азербайджан мир Зангезур', 'rus'),
+            ('Армения Россия ОДКБ ЕС', 'rus'),
+            ('Армения Пашинян оппозиция', 'rus'),
+            ('Армения Иран граница', 'rus'),
+        ]
+        for query, lang in armenia_queries:
+            try:
+                articles = fetch_gdelt_articles(query, days, lang)
+                rss_articles.extend(articles)
+            except Exception as e:
+                print(f"Armenia GDELT ({lang}) error: {e}")
+
     telegram_articles = []
     if TELEGRAM_AVAILABLE:
         try:
