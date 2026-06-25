@@ -3531,6 +3531,44 @@ def _run_threat_scan(target, days=7):
             except Exception as e:
                 print(f"Belarus GDELT ({lang}) error: {e}")
 
+    if target == 'azerbaijan':
+        # Google News RSS (no key, no quota) - reliable English baseline.
+        # Mirrors the Poland/Greece/Belarus pattern; guarantees the feed is
+        # populated even when NewsAPI quota is spent or GDELT is rate-limited.
+        try:
+            rss_articles.extend(fetch_google_news_rss(
+                'Azerbaijan OR Baku OR Aliyev OR Karabakh OR Zangezur OR Nakhchivan',
+                'Azerbaijan News'))
+        except Exception as e:
+            print(f"Azerbaijan Google News error: {e}")
+        try:
+            rss_articles.extend(fetch_google_news_rss(
+                'Azerbaijan energy OR SOCAR OR Shah Deniz OR "BTC pipeline" OR Azerbaijan Israel OR Azerbaijan Iran',
+                'Azerbaijan Energy News'))
+        except Exception as e:
+            print(f"Azerbaijan Energy Google News error: {e}")
+
+        # Azerbaijan-specific GDELT queries - peace process / TRIPP corridor,
+        # Iran border, Israel defense, SOCAR energy spine, Karabakh.
+        # English + Russian (South Caucasus coverage runs heavily in Russian).
+        azerbaijan_queries = [
+            ('Azerbaijan Armenia peace treaty TRIPP Zangezur corridor', 'eng'),
+            ('Azerbaijan Iran border tension Nakhchivan', 'eng'),
+            ('Azerbaijan Israel oil weapons defense', 'eng'),
+            ('Azerbaijan SOCAR gas Shah Deniz Southern Gas Corridor', 'eng'),
+            ('Azerbaijan Aliyev Karabakh reintegration', 'eng'),
+            ('Азербайджан Армения мир Зангезур коридор', 'rus'),
+            ('Азербайджан Иран граница Нахичевань', 'rus'),
+            ('Азербайджан Алиев Карабах', 'rus'),
+            ('Азербайджан газ SOCAR нефть', 'rus'),
+        ]
+        for query, lang in azerbaijan_queries:
+            try:
+                articles = fetch_gdelt_articles(query, days, lang)
+                rss_articles.extend(articles)
+            except Exception as e:
+                print(f"Azerbaijan GDELT ({lang}) error: {e}")
+
     telegram_articles = []
     if TELEGRAM_AVAILABLE:
         try:
