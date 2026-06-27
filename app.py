@@ -62,6 +62,17 @@ except ImportError:
     GREENLAND_RHETORIC_AVAILABLE = False
     print("[Europe Backend] ⚠️ Greenland rhetoric tracker not available")
 
+# Cyprus division-pressure rhetoric tracker (Dial 2 - inverted, vectored: turkey_posture,
+# trnc_politics, green_line, eez_maritime, settlement_track). Emits spoke:turkey:cyprus
+# fingerprint for the Turkey hub-and-spoke layer.
+try:
+    from rhetoric_tracker_cyprus import register_cyprus_rhetoric_endpoints
+    CYPRUS_RHETORIC_AVAILABLE = True
+    print("[Europe Backend] ✅ Cyprus rhetoric tracker loaded")
+except ImportError as e:
+    CYPRUS_RHETORIC_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Cyprus rhetoric tracker not available: {e}")
+
 # Russia rhetoric tracker + signals interpreter
 try:
     from rhetoric_tracker_russia import (
@@ -4382,6 +4393,11 @@ if UKRAINE_HUMANITARIAN_AVAILABLE:
 if GREENLAND_RHETORIC_AVAILABLE:
     register_greenland_rhetoric_routes(app)
     print("[Europe Backend] ✅ Greenland rhetoric routes registered")
+
+# Register Cyprus rhetoric tracker (v1.0 -- Jun 25, 2026 -- Dial 2 inverted/vectored)
+if CYPRUS_RHETORIC_AVAILABLE:
+    register_cyprus_rhetoric_endpoints(app)
+    print("[Europe Backend] ✅ Cyprus rhetoric routes registered + scan thread started")
 
 # Register Russia rhetoric tracker
 if RUSSIA_RHETORIC_AVAILABLE:
