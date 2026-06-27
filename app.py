@@ -73,6 +73,15 @@ except ImportError as e:
     CYPRUS_RHETORIC_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Cyprus rhetoric tracker not available: {e}")
 
+# Greece migration pressure (sensor) -- UNHCR ODP arrivals + static fallback
+try:
+    from greece_migration import register_greece_migration_endpoints
+    GREECE_MIGRATION_AVAILABLE = True
+    print("[Europe Backend] ✅ Greece migration module loaded")
+except ImportError as e:
+    GREECE_MIGRATION_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Greece migration module not available: {e}")
+
 # Russia rhetoric tracker + signals interpreter
 try:
     from rhetoric_tracker_russia import (
@@ -4398,6 +4407,10 @@ if GREENLAND_RHETORIC_AVAILABLE:
 if CYPRUS_RHETORIC_AVAILABLE:
     register_cyprus_rhetoric_endpoints(app)
     print("[Europe Backend] ✅ Cyprus rhetoric routes registered + scan thread started")
+
+# Register Greece migration sensor (v1.0 -- Jun 27, 2026 -- UNHCR ODP arrivals)
+if GREECE_MIGRATION_AVAILABLE:
+    register_greece_migration_endpoints(app)
 
 # Register Russia rhetoric tracker
 if RUSSIA_RHETORIC_AVAILABLE:
