@@ -144,6 +144,33 @@ def _wheel_levels(scan_data):
     }
 
 
+LADDER_WORD = {0: 'Baseline', 1: 'Rhetoric', 2: 'Maneuvering',
+               3: 'Friction', 4: 'Confrontation', 5: 'Rupture'}
+
+
+def _build_bluf(v, dominant, dom_level, contested, is_node, convergence):
+    """Plain-language one-line synthesis for the BLUF strip. Names the peak
+    wheel, its intensity, and the convergence state. Estimative, no forecast."""
+    active = sorted([(k, lv) for k, lv in v.items() if lv >= 2],
+                    key=lambda kv: -kv[1])
+    if is_node:
+        names = ', '.join(WHEEL_LABEL.get(k, k) for k, _ in active)
+        return ('Four-wheel contested node (%d/4): %s simultaneously active on Baku - '
+                'independent wheels stacking on the same window.' % (contested, names))
+    if dom_level <= 1:
+        return ('All wheels at baseline intensity; Baku holding active-balancer '
+                'equilibrium with no wheel converging.')
+    lead = '%s wheel leads at %s (L%d)' % (
+        WHEEL_LABEL.get(dominant, dominant),
+        LADDER_WORD.get(dom_level, 'L%d' % dom_level), dom_level)
+    if len(active) >= 2:
+        sk, slv = active[1]
+        return ('%s; %s also live at %s (L%d). Two wheels active, not yet a contested node.'
+                % (lead, WHEEL_LABEL.get(sk, sk),
+                   LADDER_WORD.get(slv, 'L%d' % slv), slv))
+    return '%s; the other wheels quiet - no multi-wheel convergence yet.' % lead
+
+
 # ============================================
 # SO WHAT (estimative; built from the four-wheel composite)
 # ============================================
@@ -160,17 +187,20 @@ def _build_so_what(scan_data):
     ru, ir, am, tk, il = (v['russia_rupture'], v['iran_friction'],
                           v['armenia_corridor'], v['turkey_axis'], v['israel_axis'])
 
+    bluf = _build_bluf(v, dominant, dom_level, contested, is_node, convergence)
+
     # Baseline / quiet: absence stays honest.
     if theatre_level <= 1 and dom_level <= 1:
         return {
             'scenario':   'Baseline balancing posture',
             'assessment': ('Baku is running its four patron relationships at routine intensity this cycle; '
                            'no wheel is converging. Azerbaijan remains in active-balancer equilibrium. '
-                           'Watch the russia_rupture and armenia_corridor wheels for first movement.'),
+                           'Watch the Russia rupture and Armenia / corridor wheels for first movement.'),
             'theatre_level':   theatre_level,
             'theatre_score':   theatre_score,
             'dominant_vector': dominant,
             'dominant_level':  dom_level,
+            'bluf':            bluf,
         }
 
     if is_node:
@@ -214,7 +244,7 @@ def _build_so_what(scan_data):
     else:
         scenario   = 'Elevated four-wheel activity'
         assessment = ('Baku\'s balancing activity is elevated, led by the %s wheel. No multi-wheel convergence yet; '
-                      'watch for russia_rupture or armenia_corridor to stack with a second wheel.' % WHEEL_LABEL.get(dominant, dominant))
+                      'watch for the Russia rupture or Armenia / corridor wheel to stack with a second wheel.' % WHEEL_LABEL.get(dominant, dominant))
 
     if convergence:
         assessment = assessment + ' Convergence read: ' + convergence
@@ -226,6 +256,7 @@ def _build_so_what(scan_data):
         'theatre_score':   theatre_score,
         'dominant_vector': dominant,
         'dominant_level':  dom_level,
+        'bluf':            bluf,
     }
 
 
