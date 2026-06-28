@@ -45,6 +45,7 @@ COPYRIGHT (c) 2025-2026 Asifah Analytics. All rights reserved.
 """
 
 import os
+import re
 import json
 import threading
 import time
@@ -478,6 +479,21 @@ def _fetch_all_articles(days=5):
 # ============================================
 # ACTOR SCORING
 # ============================================
+# Short single-token keywords (<=4 chars, e.g. "ege" = Aegean in Turkish) must match on
+# WORD BOUNDARIES, not as substrings -- otherwise "ege" matches "lEGEndary", "aEGEan",
+# slugs, etc., and silently inflates a vector to a false high. Multi-word / hyphenated /
+# longer keywords stay on fast substring matching (they are specific enough).
+_WB_CACHE = {}
+def _kw_in_body(kw, body):
+    if (' ' in kw) or ('-' in kw) or ('+' in kw) or len(kw) > 4:
+        return kw in body
+    pat = _WB_CACHE.get(kw)
+    if pat is None:
+        pat = re.compile(r'(?<![a-z0-9])' + re.escape(kw) + r'(?![a-z0-9])')
+        _WB_CACHE[kw] = pat
+    return pat.search(body) is not None
+
+
 def _score_actor(actor_id, actor_cfg, articles, telegram_msgs):
     keywords  = [kw.lower() for kw in actor_cfg['keywords']]
     hits      = []
@@ -485,7 +501,7 @@ def _score_actor(actor_id, actor_cfg, articles, telegram_msgs):
 
     for art in articles:
         body = art.get('body', '').lower()
-        matched = [kw for kw in keywords if kw in body]
+        matched = [kw for kw in keywords if _kw_in_body(kw, body)]
         if matched:
             hit_count += len(matched)
             hits.append({
@@ -499,7 +515,7 @@ def _score_actor(actor_id, actor_cfg, articles, telegram_msgs):
     tg_hits = 0
     for msg in telegram_msgs:
         body = (msg.get('title', '') or msg.get('body', '')).lower()
-        matched = [kw for kw in keywords if kw in body]
+        matched = [kw for kw in keywords if _kw_in_body(kw, body)]
         if matched:
             tg_hits += len(matched)
             hit_count += len(matched)
