@@ -645,11 +645,19 @@ def _compute_composite(actor_scores):
     elif turkey_posture_level >= 2:
         convergence_signal = '📡 Elevated Turkish posture toward Cyprus'
 
-    # Spoke fingerprint for the Turkey hub-and-spoke layer. The hub reads this to
-    # fold the inbound Cyprus<-Turkey vector into its spoke aggregation.
+    # Spoke fingerprint for the Turkey hub-and-spoke layer. Canonical hub-agnostic
+    # schema so the future Turkey hub aggregator reads every spoke the same way.
+    # 'direction' + 'ts' are stamped at write time in _bg_scan.
     spoke_fingerprint = {
-        'spoke':                 'cyprus',
-        'hub':                   'turkey',
+        'spoke':        'cyprus',
+        'hub':          'turkey',
+        'vector':       'turkey_posture',
+        'relationship': 'friction',   # Cyprus is pressured BY Turkey (inverted model)
+        'level':        turkey_posture_level,
+        'score':        tp_raw,
+        'direction':    'steady',
+        'top_signal':   convergence_signal or f'Turkey posture toward Cyprus at L{turkey_posture_level}',
+        # --- back-compat (legacy hub-reader fields) ---
         'turkey_posture_score':  tp_raw,
         'turkey_posture_level':  turkey_posture_level,
         'composite_score':       composite,
@@ -794,10 +802,31 @@ def _bg_scan():
             'convergence_signal':   result['convergence_signal'],
         }
         _redis_lpush(HISTORY_KEY, history_entry)
-        # Spoke-and-wheel: write the Turkey-posture fingerprint to a dedicated key
-        # the future Turkey hub tracker reads to aggregate its spokes (180d TTL).
+        # Spoke-and-wheel: write the canonical Turkey-posture fingerprint (180d TTL).
+        # 'direction' compares to the prior history entry (now at lindex 1, since
+        # this scan's entry was just lpushed to index 0).
         try:
-            _redis_set('spoke:turkey:cyprus', result.get('spoke_fingerprint', {}), ttl=180 * 24 * 3600)
+            _fp = dict(result.get('spoke_fingerprint', {}))
+            _cur = _fp.get('level', 0)
+            _prior_tp = None
+            try:
+                if UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN:
+                    _r = requests.get(
+                        f'{UPSTASH_REDIS_URL}/lindex/{HISTORY_KEY}/1',
+                        headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'},
+                        timeout=5
+                    )
+                    _raw = _r.json().get('result')
+                    if _raw:
+                        _prior_tp = json.loads(_raw).get('turkey_posture_level')
+            except Exception:
+                _prior_tp = None
+            if _prior_tp is None:    _fp['direction'] = 'steady'
+            elif _cur > _prior_tp:   _fp['direction'] = 'rising'
+            elif _cur < _prior_tp:   _fp['direction'] = 'falling'
+            else:                    _fp['direction'] = 'steady'
+            _fp['ts'] = datetime.now(timezone.utc).isoformat()
+            _redis_set('spoke:turkey:cyprus', _fp, ttl=180 * 24 * 3600)
         except Exception as _se:
             print(f'[Cyprus Rhetoric] spoke fingerprint write skipped: {_se}')
         print(f'[Cyprus Rhetoric] ✅ Cache + history written')
