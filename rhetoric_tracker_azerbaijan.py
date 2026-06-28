@@ -954,6 +954,9 @@ def register_azerbaijan_rhetoric_endpoints(app):
                 'israel_axis_level':        cached.get('israel_axis_level', 0),
                 'armenia_corridor_level':   cached.get('armenia_corridor_level', 0),
                 'domestic_legitimacy_level': cached.get('domestic_legitimacy_level', 0),
+                # Hottest single wheel -- regional rollup reads this when the
+                # weighted composite dilutes multi-front activity below threshold.
+                'peak_wheel_level':         cached.get('peak_wheel_level', 0),
                 # Contested-node read
                 'active_wheels':            cached.get('active_wheels', []),
                 'contested_node_score':     cached.get('contested_node_score', 0),
