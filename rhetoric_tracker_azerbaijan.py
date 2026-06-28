@@ -688,6 +688,9 @@ def _compute_composite(actor_scores):
         'israel_axis_level':        il_lvl,
         'armenia_corridor_level':   am_lvl,
         'domestic_legitimacy_level': dm_lvl,
+        # Highest single-wheel intensity (drives the frontend Intensity Ladder).
+        # Distinct from theatre_level, which is the weighted composite.
+        'peak_wheel_level':         max(tk_lvl, ru_lvl, ir_lvl, il_lvl, am_lvl, dm_lvl),
         # Contested-node read
         'active_wheels':            active_wheels,
         'contested_node_score':     contested_node_score,
