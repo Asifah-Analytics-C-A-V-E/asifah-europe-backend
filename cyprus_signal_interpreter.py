@@ -36,6 +36,41 @@ CYPRUS_FLAG = '\U0001f1e8\U0001f1fe'   # CY
 
 
 # ============================================
+# VECTOR LABELS (plain-language; never leak snake_case into prose)
+# ============================================
+VECTOR_LABEL = {
+    'turkey_posture':   'Turkish posture',
+    'eez_maritime':     'EEZ / maritime',
+    'green_line':       'Green Line',
+    'trnc_politics':    'TRNC politics',
+    'settlement_track': 'Settlement track',
+}
+
+LADDER_WORD = {0: 'Baseline', 1: 'Rhetoric', 2: 'Pressure',
+               3: 'Crisis', 4: 'Confrontation', 5: 'Rupture'}
+
+
+def _build_bluf(vectors, dominant, dom_level, convergence):
+    """Plain-language one-line synthesis for the BLUF strip / Gold Standard
+    card. Names the lead inbound vector, its intensity, and the convergence
+    state. Cyprus is inbound-pressure framed. Estimative, no forecast."""
+    active = sorted([(k, lv) for k, lv in vectors.items() if lv >= 2],
+                    key=lambda kv: -kv[1])
+    if dom_level <= 1:
+        return ('Inbound pressure on the Cyprus status quo at baseline; the '
+                'Republic of Cyprus holds as the calm anchor, no vector converging.')
+    lead = '%s leads at %s (L%d)' % (
+        VECTOR_LABEL.get(dominant, dominant),
+        LADDER_WORD.get(dom_level, 'L%d' % dom_level), dom_level)
+    if len(active) >= 2:
+        sk, slv = active[1]
+        return ('%s; %s also live at %s (L%d). Two inbound vectors active on the division.'
+                % (lead, VECTOR_LABEL.get(sk, sk),
+                   LADDER_WORD.get(slv, 'L%d' % slv), slv))
+    return '%s; other inbound vectors quiet - no multi-vector convergence yet.' % lead
+
+
+# ============================================
 # SO WHAT (estimative; built from the vectored composite)
 # ============================================
 def _build_so_what(scan_data):
@@ -53,6 +88,8 @@ def _build_so_what(scan_data):
     }
     dominant, dom_level = max(vectors.items(), key=lambda kv: kv[1])
 
+    bluf = _build_bluf(vectors, dominant, dom_level, convergence)
+
     tp = vectors['turkey_posture']
     ez = vectors['eez_maritime']
     gl = vectors['green_line']
@@ -64,9 +101,10 @@ def _build_so_what(scan_data):
             'scenario':   'Baseline division posture',
             'assessment': ('Inbound pressure on the Cyprus status quo is at baseline this cycle; '
                            'no vector is converging. The Republic of Cyprus (Dial 1) remains the '
-                           'calm anchor. Watch the turkey_posture and eez_maritime vectors for first movement.'),
+                           'calm anchor. Watch the Turkish posture and EEZ / maritime vectors for first movement.'),
             'dominant_vector': dominant,
             'dominant_level':  dom_level,
+            'bluf':            bluf,
         }
 
     if tp >= 4 and (ez >= 2 or gl >= 2):
@@ -94,8 +132,8 @@ def _build_so_what(scan_data):
     else:
         scenario = 'Elevated inbound division pressure'
         assessment = ('Inbound pressure on the Cyprus status quo is elevated, led by the %s vector. '
-                      'No multi-vector convergence yet; watch for the turkey_posture vector to stack with EEZ '
-                      'or buffer-zone friction.' % dominant)
+                      'No multi-vector convergence yet; watch for the Turkish posture vector to stack with EEZ '
+                      'or buffer-zone friction.' % VECTOR_LABEL.get(dominant, dominant))
 
     if convergence:
         assessment = assessment + ' Convergence read: ' + convergence
@@ -107,6 +145,7 @@ def _build_so_what(scan_data):
         'theatre_score':   theatre_score,
         'dominant_vector': dominant,
         'dominant_level':  dom_level,
+        'bluf':            bluf,
     }
 
 
