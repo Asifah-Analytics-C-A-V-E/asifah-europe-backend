@@ -68,6 +68,7 @@ TRACKER_KEYS = {
     'belarus':   'rhetoric:belarus:latest',
     'hungary':   'rhetoric:hungary:latest',   # v1.0 May 17 2026 -- axis reversal tracker
     'turkey':    'rhetoric:turkey:latest',    # v1.0 Jun 11 2026 -- swing-state tracker (alignment divergence)
+    'azerbaijan':'rhetoric:azerbaijan:latest', # v1.0 Jun 28 2026 -- four-wheel spoke tracker
     # Future Europe trackers slot in here:
     # 'poland':   'rhetoric:poland:latest',
     # 'baltics':  'rhetoric:baltics:latest',
@@ -80,6 +81,7 @@ THEATRE_FLAGS = {
     'belarus':   '\U0001f1e7\U0001f1fe',  # 🇧🇾
     'hungary':   '\U0001f1ed\U0001f1fa',  # 🇭🇺
     'turkey':    '\U0001f1f9\U0001f1f7',  # 🇹🇷
+    'azerbaijan':'\U0001f1e6\U0001f1ff',  # 🇦🇿
     'poland':    '\U0001f1f5\U0001f1f1',  # 🇵🇱
     'baltics':   '\U0001f1ea\U0001f1fa',  # 🇪🇺 fallback
 }
@@ -91,6 +93,7 @@ THEATRE_DISPLAY = {
     'belarus':   'BELARUS',
     'hungary':   'HUNGARY',
     'turkey':    'TURKEY',
+    'azerbaijan':'AZERBAIJAN',
     'poland':    'POLAND',
     'baltics':   'BALTICS',
 }
