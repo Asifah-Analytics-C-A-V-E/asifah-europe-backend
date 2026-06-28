@@ -389,6 +389,10 @@ GREECE_CHANNELS = [
     'OSINTdefender',        # anchor OSINT -- English, high signal
     'intelslava',           # aggregator -- catches Greece-Turkey items
     'disclosetv',           # breaking conflict news
+    # -- Turkish-side framing (the bidirectional Aegean voice -- reused from TURKEY_CHANNELS) --
+    'trtworld',             # verify -- TRT World (Turkish state media, EN)
+    'dailysabah',           # verify -- Daily Sabah (pro-government daily)
+    'abualiexpress',        # verify -- Abu Ali Express (HE+EN, heavy regional)
     # -- Greek-specific (verify handles are live) --
     'GreekCityTimes',       # ⚠️ verify -- Greek City Times (EN)
     'doureios',             # ⚠️ verify -- Doureios (Greek defense)
