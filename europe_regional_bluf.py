@@ -70,6 +70,7 @@ TRACKER_KEYS = {
     'turkey':    'rhetoric:turkey:latest',    # v1.0 Jun 11 2026 -- swing-state tracker (alignment divergence)
     'azerbaijan':'rhetoric:azerbaijan:latest', # v1.0 Jun 28 2026 -- four-wheel spoke tracker
     'cyprus':    'rhetoric:cyprus:latest',  # v1.0 Jun 28 2026 -- inverted single-hub spoke (pressured by Turkey)
+    'greece':    'rhetoric:greece:latest',  # v1.0 Jun 28 2026 -- anchored frontline spoke (peer-rivalry w/ Turkey)
     # Future Europe trackers slot in here:
     # 'poland':   'rhetoric:poland:latest',
     # 'baltics':  'rhetoric:baltics:latest',
@@ -84,6 +85,7 @@ THEATRE_FLAGS = {
     'turkey':    '\U0001f1f9\U0001f1f7',  # 🇹🇷
     'azerbaijan':'\U0001f1e6\U0001f1ff',  # 🇦🇿
     'cyprus':    '\U0001f1e8\U0001f1fe',  # 🇨🇾
+    'greece':    '\U0001f1ec\U0001f1f7',  # GR
     'poland':    '\U0001f1f5\U0001f1f1',  # 🇵🇱
     'baltics':   '\U0001f1ea\U0001f1fa',  # 🇪🇺 fallback
 }
@@ -97,6 +99,7 @@ THEATRE_DISPLAY = {
     'turkey':    'TURKEY',
     'azerbaijan':'AZERBAIJAN',
     'cyprus':    'CYPRUS',
+    'greece':    'GREECE',
     'poland':    'POLAND',
     'baltics':   'BALTICS',
 }
@@ -249,15 +252,16 @@ def _normalize_tracker_data(theatre, raw_data):
     if threat == 0 and alert_level_str in ALERT_TO_LEVEL:
         threat = ALERT_TO_LEVEL[alert_level_str]
 
-    # Four-wheel spokes (Azerbaijan) emit a weighted composite theatre_level that
-    # can dilute genuine multi-front L1 activity down to L0 -- multiple wheels at
-    # L1 weight to a composite score below the L1 threshold. peak_wheel_level is
-    # the hottest single wheel; surface it so the regional rollup does not
-    # under-read breadth. Only the four-wheel tracker emits this field; for every
-    # other tracker it is absent -> 0 -> no-op.
-    peak_wheel = _safe_int(raw_data.get('peak_wheel_level', 0))
-    if peak_wheel > threat:
-        threat = peak_wheel
+    # Multi-vector spokes emit a weighted composite theatre_level that can dilute
+    # genuine multi-front L1 activity down to L0 -- several vectors at L1 weight to
+    # a composite below the L1 threshold. Surface the hottest single vector so the
+    # regional rollup does not under-read breadth. Two field names exist:
+    # peak_wheel_level (four-wheel tracker, Azerbaijan) and peak_vector_level
+    # (dual-panel spokes, Greece). Read both; absent -> 0 -> no-op.
+    peak = max(_safe_int(raw_data.get('peak_wheel_level', 0)),
+               _safe_int(raw_data.get('peak_vector_level', 0)))
+    if peak > threat:
+        threat = peak
 
     # ---- SCORE ----
     # Belarus/Ukraine emit theatre_score AND pressure_score (same value).
