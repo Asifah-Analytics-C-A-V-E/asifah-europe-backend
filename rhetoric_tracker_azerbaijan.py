@@ -870,8 +870,24 @@ def _bg_scan():
             except Exception as _se:
                 print(f'[Azerbaijan Rhetoric] spoke:{hub}:azerbaijan write skipped: {_se}')
 
-        # Cross-theater slice for the resistance-axis readers
-        _write_crosstheater_fingerprint(result.get('crosstheater_slice', {}))
+        # Cross-theater slice for the resistance-axis readers.
+        # Canonical multi-hub shape (VZ schema, Jul 2026): node_class + hub_presence
+        # per wheel, built from the spoke fingerprints so level / role / trajectory
+        # are stamped ONCE (in the spoke loop above) and reused here. Additive:
+        # the flat *_level fields and spoke:* keys are untouched, so existing
+        # resistance-axis and Turkey-wheel readers keep working unchanged.
+        ct_slice = result.get('crosstheater_slice', {}) or {}
+        ct_slice['node_class'] = 'contested'
+        ct_slice['hub_presence'] = {
+            hub: {
+                'level':      fp.get('level', 0),
+                'role':       fp.get('relationship', ''),
+                'trajectory': fp.get('direction', 'steady'),
+                'top_signal': fp.get('top_signal', ''),
+            }
+            for hub, fp in spokes.items()
+        }
+        _write_crosstheater_fingerprint(ct_slice)
 
         print('[Azerbaijan Rhetoric] Cache + history + 4 spoke fingerprints written')
     except Exception as e:
