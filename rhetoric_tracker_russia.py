@@ -818,6 +818,19 @@ GROUND_OPS_TRIGGERS = {
         'russian drone kills', 'russian attack kills',
         'russia bombs ukraine', 'russia hits civilian',
     ],
+    # ── v2.0 Slice 3 (Jul 2026): Crimea supply-strain tier ──
+    # Occupation-economics signals: food/water/logistics strain in Crimea.
+    # Warning-grade (L2) -- supply strain is pressure on the war footprint,
+    # not kinetic escalation. EN + RU vocabulary; precision over recall
+    # (never bare 'crimea').
+    2: [
+        'crimea food shortage', 'food shortage crimea', 'crimea shortages',
+        'crimea supply crisis', 'crimea supplies disrupted', 'crimea grain',
+        'crimea bread shortage', 'crimea water shortage', 'sevastopol shortages',
+        'kerch bridge disruption', 'crimea logistics strain',
+        'дефицит в крыму', 'нехватка продовольствия крым',
+        'очереди в крыму', 'перебои с поставками крым',
+    ],
     1: [
         'ukraine war', 'russia ukraine', 'ukraine conflict',
         'ukraine russia fighting', 'donbas',
@@ -2239,7 +2252,50 @@ def _read_spoke_fingerprints():
         except Exception as e:
             spokes[name] = {'present': False, 'error': str(e)[:60]}
     live = [n for n, s2 in spokes.items() if s2.get('present') and s2.get('fresh')]
+    print(f"[Russia Rhelive = [n for n, s2 in spokes.items() if s2.get('present') and s2.get('fresh')]
     print(f"[Russia Rhetoric] Spoke reads: {len(live)} fresh ({', '.join(live) if live else 'none'})")
+    return spokes
+
+
+def _read_commodity_leverage():
+    """
+    v2.0 Slice 3 (Jul 2026) -- Commodity coupling, leverage-framed.
+
+    Reads the Europe proxy's cached Russia commodity payload
+    (europe:commodity:russia -- the same key russia_stability.py consumes;
+    emit once, consume many; zero new HTTP).
+
+    Producer-dominant doctrine: for Russia, commodity SURGE = export-revenue
+    cushion + geopolitical leverage, NOT regime stress. Wheat (#1 exporter)
+    and potash (#2) surges read as war-financing-cushion signals -- the
+    sensor for the "will Iran-war wheat/potash effects touch the war
+    footprint" question. The interpreter and Europe BLUF consume this.
+    Absence-honest: cold cache returns a present:false stub.
+    """
+    try:
+        bundle = _redis_get('europe:commodity:russia')
+        if not bundle or not isinstance(bundle, dict):
+            return {'present': False}
+        alert = (bundle.get('alert_level') or 'normal').lower()
+        summaries = bundle.get('commodity_summaries') or []
+        hot = [c.get('commodity') for c in summaries
+               if isinstance(c, dict) and
+               (c.get('global_alert_level') or 'normal').lower() in ('elevated', 'high', 'surge')]
+        cushion = [c for c in hot if c in ('wheat', 'potash', 'fertilizer', 'grain')]
+        return {
+            'present':  True,
+            'alert_level': alert,
+            'pressure': bundle.get('commodity_pressure', 0),
+            'hot_commodities': hot,
+            'war_financing_cushion_signal': bool(cushion) or alert in ('high', 'surge'),
+            'cushion_commodities': cushion,
+            'framing':  'producer_leverage',
+            'note': ('Producer-dominant node: elevated commodity pressure reads as export-revenue '
+                     'cushion and leverage, not regime stress. Wheat/potash surges historically '
+                     'extend war-financing headroom.'),
+        }
+    except Exception as e:
+        return {'present': False, 'error': str(e)[:60]}toric] Spoke reads: {len(live)} fresh ({', '.join(live) if live else 'none'})")
     return spokes
 
 
@@ -2357,6 +2413,13 @@ def run_russia_rhetoric_scan(force=False):
         # when built). Surface-only in v1 -- the interpreter and Europe BLUF
         # can consume; score polarity per spoke awaits Russia-wheel scoping.
         result['spoke_reads'] = _read_spoke_fingerprints()
+
+        # ── Commodity coupling (v2.0 Slice 3, Jul 2026) ──
+        # Producer-leverage read: wheat/potash surge = war-financing cushion.
+        result['commodity_leverage'] = _read_commodity_leverage()
+        if result['commodity_leverage'].get('war_financing_cushion_signal'):
+            print("[Russia Rhetoric] Commodity leverage: war-financing-cushion signal ACTIVE (" +
+                  ", ".join(result['commodity_leverage'].get('cushion_commodities') or ['pressure-band']) + ")")
 
         # Wire signals interpreter
         try:
