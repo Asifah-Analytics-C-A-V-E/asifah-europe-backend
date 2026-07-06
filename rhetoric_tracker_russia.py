@@ -2252,7 +2252,6 @@ def _read_spoke_fingerprints():
         except Exception as e:
             spokes[name] = {'present': False, 'error': str(e)[:60]}
     live = [n for n, s2 in spokes.items() if s2.get('present') and s2.get('fresh')]
-    print(f"[Russia Rhelive = [n for n, s2 in spokes.items() if s2.get('present') and s2.get('fresh')]
     print(f"[Russia Rhetoric] Spoke reads: {len(live)} fresh ({', '.join(live) if live else 'none'})")
     return spokes
 
@@ -2295,8 +2294,7 @@ def _read_commodity_leverage():
                      'extend war-financing headroom.'),
         }
     except Exception as e:
-        return {'present': False, 'error': str(e)[:60]}toric] Spoke reads: {len(live)} fresh ({', '.join(live) if live else 'none'})")
-    return spokes
+        return {'present': False, 'error': str(e)[:60]}
 
 
 # ============================================
