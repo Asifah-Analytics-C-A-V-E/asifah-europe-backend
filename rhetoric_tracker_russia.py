@@ -2192,6 +2192,57 @@ def _write_canonical_spoke_fingerprint(actor_results, vectors, regime_signals=No
         print(f"[Russia Rhetoric] Canonical fingerprint write failed: {e}")
 
 
+SPOKE_READ_KEYS = {
+    'azerbaijan': 'crosstheater:azerbaijan:fingerprint',
+    'belarus':    'crosstheater:belarus:fingerprint',
+    'ukraine':    'crosstheater:ukraine:fingerprint',
+    'armenia':    'crosstheater:armenia:fingerprint',   # future spoke -- absence-honest until built
+}
+
+def _read_spoke_fingerprints():
+    """
+    v2.0 (Jul 2026) -- The wheel reads its spokes.
+
+    Reads sibling canonical fingerprints (crosstheater:<country>:fingerprint),
+    freshness-gated at 24h. Absence-honest: missing or stale spokes are
+    reported as such, never invented.
+
+    v1 is surface-only -- spoke reads are attached to the scan payload for the
+    interpreter, the Europe BLUF, and future Russia-wheel narratives to consume.
+    No score modification yet: polarity per spoke (Belarus = aligned multiplier,
+    Azerbaijan = friction, Ukraine = adversary) is a Russia-wheel scoping
+    decision, not a default.
+    """
+    spokes = {}
+    now = datetime.now(timezone.utc)
+    for name, key in SPOKE_READ_KEYS.items():
+        try:
+            fp = _redis_get(key)
+            if not fp or not isinstance(fp, dict):
+                spokes[name] = {'present': False}
+                continue
+            fresh = False
+            ts_raw = fp.get('ts') or fp.get('updated_at')
+            if ts_raw:
+                try:
+                    ts = datetime.fromisoformat(str(ts_raw).replace('Z', '+00:00'))
+                    fresh = (now - ts).total_seconds() <= 86400
+                except Exception:
+                    fresh = False
+            spokes[name] = {
+                'present':    True,
+                'fresh':      fresh,
+                'level':      fp.get('level', 0),
+                'node_class': fp.get('node_class', 'unknown'),
+                'ts':         ts_raw,
+            }
+        except Exception as e:
+            spokes[name] = {'present': False, 'error': str(e)[:60]}
+    live = [n for n, s2 in spokes.items() if s2.get('present') and s2.get('fresh')]
+    print(f"[Russia Rhetoric] Spoke reads: {len(live)} fresh ({', '.join(live) if live else 'none'})")
+    return spokes
+
+
 # ============================================
 # MAIN SCAN
 # ============================================
@@ -2300,6 +2351,12 @@ def run_russia_rhetoric_scan(force=False):
         if hungary_signals.get('hungary_axis_reversal_active'):
             print(f"[Russia Rhetoric] Hungary axis reversal ACTIVE -- "
                   f"axis_level={hungary_signals.get('hungary_russia_axis_level')}")
+
+        # ── Cross-theater READ: sibling spokes (v2.0 Jul 2026) ──
+        # The wheel reads its rim: Azerbaijan / Belarus / Ukraine (+ Armenia
+        # when built). Surface-only in v1 -- the interpreter and Europe BLUF
+        # can consume; score polarity per spoke awaits Russia-wheel scoping.
+        result['spoke_reads'] = _read_spoke_fingerprints()
 
         # Wire signals interpreter
         try:
