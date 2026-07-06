@@ -2123,6 +2123,75 @@ def _write_crosstheater_fingerprint(actor_results, vectors, regime_signals=None)
     print(f"[Russia Rhetoric] Cross-theater fingerprint written")
 
 
+def _write_canonical_spoke_fingerprint(actor_results, vectors, regime_signals=None):
+    """
+    v2.0 (Jul 2026) -- Canonical per-country spoke emission.
+
+    Writes crosstheater:russia:fingerprint -- the hub-agnostic, per-country
+    schema consumed by the Iran wheel (PEER tier), the future Russia wheel,
+    and sibling spokes (Azerbaijan, Belarus, Ukraine, Armenia when built).
+
+    Runs ALONGSIDE the legacy collective write (emit once, consume many).
+    The legacy rhetoric:crosstheater:fingerprints key is untouched.
+    """
+    regime_signals = regime_signals or {}
+
+    def _al(actor_id):
+        return actor_results.get(actor_id, {}).get('escalation_level', 0)
+
+    nuc_level, _ = vectors.get('nuclear',    (0, None))
+    gnd_level, _ = vectors.get('ground_ops', (0, None))
+    flk_level, _ = vectors.get('nato_flank', (0, None))
+    arc_level, _ = vectors.get('arctic',     (0, None))
+    hyb_level, _ = vectors.get('hybrid',     (0, None))
+    theatre_level = max(nuc_level, gnd_level, flk_level, arc_level, hyb_level)
+
+    iran_axis_level = _al('russia_iran_axis')
+
+    fingerprint = {
+        'ts':         datetime.now(timezone.utc).isoformat(),
+        'country':    'russia',
+        'node_class': 'peer_hub',   # hub of its own wheel; PEER tier in the Iran wheel
+        'level':      theatre_level,
+        'vector_levels': {
+            'nuclear':    nuc_level,
+            'ground_ops': gnd_level,
+            'nato_flank': flk_level,
+            'arctic':     arc_level,
+            'hybrid':     hyb_level,
+        },
+        'actor_levels': {a: _al(a) for a in actor_results},
+
+        # -- IRAN PEER-ACCESS SLICE (consumed by the Iran wheel, PEER tier) --
+        # Peer means coordination access, NOT command. The Iran wheel must
+        # never count this slice toward proxy activation.
+        'iran_peer_access': {
+            'level':  iran_axis_level,
+            'active': iran_axis_level >= 2 or hyb_level >= 3,
+            'channels': {
+                'axis_activity':     iran_axis_level >= 2,
+                'sanctions_evasion': regime_signals.get('shadow_fleet', 0) >= 3,
+                'arms_trade':        regime_signals.get('arms_export', 0) >= 3,
+            },
+            'note': 'peer-tier access: do not count toward Iran proxy activation',
+        },
+
+        # -- Sibling-visible posture slices --
+        'belarus_level':         _al('belarus'),
+        'ukraine_level':         _al('ukraine'),
+        'nuclear_signaling':     nuc_level >= 3,
+        'arctic_elevated':       arc_level >= 3,
+        'regime_signals_max':    regime_signals.get('max', 0),
+        'regime_signals_active': regime_signals.get('active_count', 0),
+    }
+
+    try:
+        _redis_set('crosstheater:russia:fingerprint', fingerprint)
+        print("[Russia Rhetoric] Canonical spoke fingerprint written (crosstheater:russia:fingerprint)")
+    except Exception as e:
+        print(f"[Russia Rhetoric] Canonical fingerprint write failed: {e}")
+
+
 # ============================================
 # MAIN SCAN
 # ============================================
@@ -2262,6 +2331,8 @@ def run_russia_rhetoric_scan(force=False):
         })
         _write_crosstheater_fingerprint(actor_results, vectors,
                                          regime_signals=regime_signals)
+        _write_canonical_spoke_fingerprint(actor_results, vectors,
+                                            regime_signals=regime_signals)
 
         print(f"[Russia Rhetoric] Scan complete: score={theatre_score}, "
               f"nuc=L{nuc_level}, gnd=L{gnd_level}, nato=L{nat_level}, "
