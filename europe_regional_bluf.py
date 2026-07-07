@@ -457,7 +457,7 @@ def _synthesize_top_signals_legacy(theatre, raw_data, threat_int, score, so_what
 
     if effective_level >= 4:
         # Prefer tracker's own label; fall back to canonical dict
-        tracker_label = raw_data.get('theatre_label') or ESCALATION_LABELS.get(effective_level, '')
+        tracker_label = raw_data.get('theatre_label') or raw_data.get('theatre_escalation_label') or ESCALATION_LABELS.get(effective_level, '')
         signals.append({
             'priority':   9 + effective_level,
             'category':   'theatre_high',
@@ -481,7 +481,7 @@ def _synthesize_top_signals_legacy(theatre, raw_data, threat_int, score, so_what
     # and signal_text_short/long if emitted. Backward-compat fallback unchanged.
     elif threat_int >= 1:
         # Sliding priority: L1=5, L2=6, L3=7 — well below theatre_high range (13-14)
-        tracker_label = raw_data.get('theatre_label') or ESCALATION_LABELS.get(threat_int, '')
+        tracker_label = raw_data.get('theatre_label') or raw_data.get('theatre_escalation_label') or ESCALATION_LABELS.get(threat_int, '')
         signals.append({
             'priority':   4 + threat_int,
             'category':   'theatre_active',
