@@ -827,8 +827,11 @@ def _score_green_lines(scan_data):
     # activity BEFORE a formal track emerges. Mirror Ukraine interpreter
     # v1.1 expansion for cross-theater consistency.
     trump_putin = _scan_articles(
-        ['united_states', 'russia_government'],
+        ['united_states', 'russia_government', 'ukraine', 'nato_alliance'],
         ['trump putin meeting', 'trump putin call', 'trump putin talks',
+         'call putin', 'call with putin', 'meet zelensky', 'trump zelensky',
+         'созвониться с путиным', 'звонок путину', 'встретиться с зеленским',
+         'переговоры трампа и путина',
          'us russia summit', 'trump ukraine deal', 'trump russia negotiate',
          # ── v1.2 — early trend ──
          'trump pressures putin', 'trump pressures russia',
@@ -869,6 +872,8 @@ def _score_green_lines(scan_data):
     ukraine_openness = _scan_articles(
         ['ukraine'],
         ['zelenskyy open to talks', 'ukraine willing to negotiate',
+         'peace diplomacy', 'diplomatic efforts to achieve peace',
+         'coordination of peace', 'coordination of diplomatic efforts',
          'ukraine ceasefire terms', 'zelenskyy peace proposal',
          'ukraine accepts negotiations', 'ukraine peace conditions',
          # ── v1.2 — early signaling / openness chatter ──
@@ -1553,3 +1558,89 @@ if __name__ == '__main__':
         print(f'  {hm["similarity"]}% -- {hm["label"]} | Confidence: {hm["confidence"]}')
     print(f'\nDIPLOMATIC TRACK: score={result["diplomatic_track"]["score"]}, '
           f'max_pressure={result["diplomatic_track"]["maximum_pressure"]}')
+
+def build_top_signals(scan_data):
+    """
+    v1.1 (Jul 2026) -- Canonical top_signals[] emission for Europe BLUF / GPI.
+
+    This function was imported by the tracker since v2.0 but never existed --
+    every scan hit ImportError and emitted top_signals: []. Russia has been
+    invisible to the Europe regional BLUF. This fixes it.
+
+    Emits the canonical schema: priority / category / theatre / level /
+    icon / color / short_text / long_text. Escalatory (red lines, hot
+    vectors) AND de-escalatory (green lines, diplomatic track) signals
+    both surface -- peace signals reach the BLUF too.
+    """
+    sigs = []
+    interp = scan_data.get('interpretation', {}) or {}
+
+    # 1. Red lines (breached outrank approaching)
+    for rl in (interp.get('red_lines', {}) or {}).get('triggered', [])[:3]:
+        breached = rl.get('status') == 'BREACHED'
+        sigs.append({
+            'priority':  14 if breached else 12,
+            'category':  'red_line',
+            'theatre':   'russia',
+            'level':     5 if breached else 4,
+            'icon':      rl.get('icon', '\U0001F6A8'),
+            'color':     rl.get('color', '#dc2626'),
+            'short_text': '\U0001F1F7\U0001F1FA RUSSIA red line ' +
+                          ('BREACHED' if breached else 'approaching') + ': ' + rl.get('label', ''),
+            'long_text': (rl.get('detail', '') + ' ' + rl.get('source', ''))[:480],
+        })
+
+    # 2. Green lines -- de-escalatory, the peace signals (momentum-weighted)
+    for gl in (interp.get('green_lines', {}) or {}).get('triggered', [])[:2]:
+        sigs.append({
+            'priority':  10,
+            'category':  'diplomatic_offramp',
+            'theatre':   'russia',
+            'level':     2,
+            'icon':      gl.get('icon', '\U0001F54A'),
+            'color':     gl.get('color', '#10b981'),
+            'short_text': '\U0001F1F7\U0001F1FA RUSSIA off-ramp signal: ' + gl.get('label', ''),
+            'long_text': (gl.get('detail', '') + ' ' + gl.get('trigger', ''))[:480],
+        })
+
+    # 3. Hot vectors (L3+)
+    _VN = {'nuclear_level': ('Nuclear signaling', '\u2622\uFE0F'),
+           'ground_ops_level': ('Ukraine ground operations', '\u2694\uFE0F'),
+           'nato_flank_level': ('NATO flank pressure', '\U0001F6E1'),
+           'arctic_level': ('Arctic posture', '\U0001F9CA'),
+           'hybrid_level': ('Hybrid operations', '\U0001F4BB')}
+    for key, (name, icon) in _VN.items():
+        lvl = scan_data.get(key, 0)
+        if lvl >= 3:
+            sigs.append({
+                'priority':  8 + lvl,
+                'category':  'vector_escalation',
+                'theatre':   'russia',
+                'level':     lvl,
+                'icon':      icon,
+                'color':     '#ef4444' if lvl >= 4 else '#f97316',
+                'short_text': '\U0001F1F7\U0001F1FA RUSSIA ' + name + ' at L' + str(lvl),
+                'long_text': name + ' vector elevated to L' + str(lvl) +
+                             ' this scan -- see Russia Pressure Tracker for the signal detail.',
+            })
+
+    # 4. Historical precedent matches (>=70% similarity)
+    for hm in (interp.get('historical_matches', []) or []):
+        sim = hm.get('similarity', 0)
+        if sim >= 70:
+            sigs.append({
+                'priority':  9,
+                'category':  'historical_match',
+                'theatre':   'russia',
+                'level':     3,
+                'icon':      '\U0001F4DC',
+                'color':     '#f59e0b',
+                'short_text': '\U0001F1F7\U0001F1FA RUSSIA pattern ' + str(sim) +
+                              '% similar to ' + hm.get('label', ''),
+                'long_text': (hm.get('description', '') +
+                              ' Outcome: ' + hm.get('outcome', ''))[:480],
+            })
+
+    # Highest priority first; cap for BLUF hygiene
+    sigs.sort(key=lambda x: x['priority'], reverse=True)
+    return sigs[:8]
