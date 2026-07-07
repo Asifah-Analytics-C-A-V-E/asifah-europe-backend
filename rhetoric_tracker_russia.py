@@ -1865,6 +1865,22 @@ def _classify_articles(articles):
         'hybrid':     _score_vector(articles, HYBRID_TRIGGERS),
     }
 
+    # ── Option B war-baseline floor (Jul 2026) ──
+    # Russia-Ukraine is an active interstate war, so ground-ops floors at
+    # L4 ("Active Conflict") whenever the scan is valid -- daily grinding-
+    # war reporting can never read below active combat. L5 stays reserved
+    # for strategic escalation above the grind (see GROUND_OPS_TRIGGERS L5).
+    # Absence-honest: on an empty/failed scan (no articles) we do NOT
+    # fabricate a floor -- we surface the real reading instead.
+    WAR_BASELINE_FLOOR = 4
+    if articles:
+        _gnd_level, _gnd_trigger = vectors['ground_ops']
+        if _gnd_level < WAR_BASELINE_FLOOR:
+            vectors['ground_ops'] = (
+                WAR_BASELINE_FLOOR,
+                _gnd_trigger or 'war baseline (active-conflict floor)',
+            )
+
     return actor_results, vectors
 
 
