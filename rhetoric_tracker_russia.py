@@ -121,8 +121,8 @@ ESCALATION_LEVELS = {
     1: {'label': 'Rhetoric',        'color': '#3b82f6', 'description': 'Standard sovereignty / NATO threat language, formulaic warnings'},
     2: {'label': 'Warning',         'color': '#f59e0b', 'description': 'Elevated exercise tempo, escalatory Kremlin/MoD language'},
     3: {'label': 'Confrontation',   'color': '#f97316', 'description': 'Named exercises, explicit threat signals, nuclear rhetoric above baseline'},
-    4: {'label': 'Coercion',        'color': '#ef4444', 'description': 'Active nuclear signaling, Baltic/Arctic incident, hybrid attack confirmed'},
-    5: {'label': 'Active Conflict', 'color': '#dc2626', 'description': 'Confirmed military action, Article 5 trigger, nuclear use threatened directly'},
+    4: {'label': 'Active Conflict',     'color': '#ef4444', 'description': 'Sustained ground combat in Ukraine: daily strikes, advances, and casualties (war baseline)'},
+    5: {'label': 'Strategic Escalation','color': '#dc2626', 'description': 'Escalation above the war baseline: nuclear use or direct threat, general mobilization, NATO/Article 5 involvement, or front collapse'},
 }
 
 
@@ -2385,21 +2385,23 @@ def run_russia_rhetoric_scan(force=False):
 
         scan_time = round(time.time() - start, 1)
 
+        # Theatre headline level = highest signal across Russia's own posture
+        # actors AND all five vectors. This max previously omitted ground_ops
+        # / nato_flank / arctic / hybrid, so the L4 war-baseline floor never
+        # reached the headline. Now consistent with the spoke fingerprint.
+        _theatre_level = max(
+            actor_results.get('russia_military',  {}).get('escalation_level', 0),
+            actor_results.get('russia_government',{}).get('escalation_level', 0),
+            nuc_level, gnd_level, nat_level, arc_level, hyb_level,
+        )
+
         result = {
             'success':              True,
             'theatre':              'Russia',
             'theatre_score':        theatre_score,
             'rhetoric_score':       theatre_score,
-            'theatre_level':        max(
-                actor_results.get('russia_military',  {}).get('escalation_level', 0),
-                actor_results.get('russia_government',{}).get('escalation_level', 0),
-                nuc_level
-            ),
-            'theatre_escalation_label': _lvl(max(
-                actor_results.get('russia_military',  {}).get('escalation_level', 0),
-                actor_results.get('russia_government',{}).get('escalation_level', 0),
-                nuc_level
-            )),
+            'theatre_level':        _theatre_level,
+            'theatre_escalation_label': _lvl(_theatre_level),
             'theatre_color':        '#dc2626',
             'actors':               actor_results,
             # Vectors
