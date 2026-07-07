@@ -769,6 +769,58 @@ def _write_cross_theater_fingerprints(fingerprints):
 
 
 # ============================================================
+# CANONICAL SPOKE FINGERPRINT (Rim Emission Pass -- Jul 2026)
+# Writes crosstheater:ukraine:fingerprint so the Russia wheel's
+# _read_spoke_fingerprints() can finally read Ukraine. Clones the Russia
+# template; adapted to Ukraine's score/alert model. node_class = adversary.
+# SURFACE-ONLY: no polarity wired into any score -- that is a wheel scoping
+# decision, made once the rim is live, not smuggled in as plumbing.
+# ============================================================
+
+# Ukraine's alert enum -> canonical 0-5 level, honoring its own war-floor
+# doctrine (see _alert_level_from_score). Mirrors Russia Option B: L4 is the
+# active-war band, L5 is reserved for strategic escalation.
+_SPOKE_LEVEL_BY_ALERT = {
+    'elevated': 4,   # WAR FLOOR -- Active Conflict (matches Russia)
+    'high':     4,   # active war, elevated tempo
+    'critical': 5,   # Strategic Escalation -- major escalation / red-line breach
+}
+
+def _write_canonical_spoke_fingerprint(result):
+    """Emit crosstheater:ukraine:fingerprint (hub-agnostic per-country schema).
+
+    Consumed by the Russia wheel (_read_spoke_fingerprints), the Europe BLUF,
+    and future Russia-wheel recompute narratives. Runs ALONGSIDE the legacy
+    fingerprint:ukraine:* writes (emit once, consume many)."""
+    alert = result.get('alert_level', 'elevated')
+    level = _SPOKE_LEVEL_BY_ALERT.get(alert, 4)   # default to war floor, never below
+    green = result.get('green_lines') or {}
+    fingerprint = {
+        'ts':          datetime.now(timezone.utc).isoformat(),
+        'country':     'ukraine',
+        'node_class':  'adversary',   # adversary of Russia in the Russia wheel
+        'level':       level,
+        'score':       result.get('theatre_score', 0),
+        'alert_level': alert,
+
+        # -- Diplomatic slice: Ukraine is the adversary AND the loudest
+        #    off-ramp voice. The wheel reads "adversary active WHILE an
+        #    off-ramp is present" -- the dual signal, convergence-framed.
+        'diplomatic': {
+            'off_ramp_maturity':    result.get('de_escalation_maturity', 'none'),
+            'green_lines_active':   green.get('active_count', 0),
+            'contradiction_active': result.get('contradiction_active', False),
+            'diplomatic_max_raw':   result.get('diplomatic_max_raw', 0),
+        },
+    }
+    try:
+        _redis_set('crosstheater:ukraine:fingerprint', fingerprint)
+        print('[Ukraine Rhetoric] Canonical spoke fingerprint written (crosstheater:ukraine:fingerprint)')
+    except Exception as e:
+        print(f'[Ukraine Rhetoric] Canonical fingerprint write failed: {e}')
+
+
+# ============================================================
 # MAIN SCAN
 # ============================================================
 
@@ -949,6 +1001,7 @@ def run_ukraine_rhetoric_scan(force=False):
     }
 
     _redis_set(REDIS_KEY_LATEST, result)
+    _write_canonical_spoke_fingerprint(result)   # Rim Emission Pass -- feed the Russia wheel
     _redis_lpush_trim(REDIS_KEY_HISTORY, {
         'cached_at':     result['cached_at'],
         'theatre_score': result['theatre_score'],
