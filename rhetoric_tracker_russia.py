@@ -785,45 +785,62 @@ NUCLEAR_TRIGGERS = {
 
 # ── Vector 2: Ground Operations (Ukraine front) ───────────────
 GROUND_OPS_TRIGGERS = {
+    # L5 -- STRATEGIC ESCALATION: above the war baseline ONLY.
+    # Nuclear USE (not discussion), NATO/Article 5 direct entry, general
+    # mobilization, front collapse, capital/strategic-city fall. High
+    # specificity by design -- this rung is the alarm; daily war reporting
+    # must never reach it.
     5: [
-        'russia captures kyiv', 'russian forces kyiv',
-        'russia overruns ukraine', 'ukrainian collapse',
-        'russia takes zaporizhzhia city', 'russia captures kharkiv',
-        'ukraine surrenders', 'ukraine government flees',
-        'russia occupies ukraine capital',
+        'nuclear detonation', 'detonates nuclear', 'nuclear weapon used',
+        'used a nuclear weapon', 'nuclear strike on', 'first use of nuclear',
+        'article 5 invoked', 'nato enters the war', 'nato combat troops',
+        'nato direct intervention', 'attack on nato territory',
+        'general mobilization', 'mass mobilization', 'full mobilization',
+        'declares general mobilization', 'russia declares war',
+        'front collapses', 'front has collapsed', 'ukrainian collapse',
+        'ukraine lines collapse', 'russia captures kyiv', 'russia takes kyiv',
+        'kyiv falls', 'kharkiv falls', 'odesa falls',
+        'ukraine government flees', 'ukraine surrenders',
+        'strategic breakthrough', 'russia crosses dnieper',
     ],
+    # L4 -- ACTIVE CONFLICT: the grinding-war baseline. Daily strikes,
+    # advances, drone/missile attacks, offensives, deep strikes, casualties.
+    # Generous by design -- this is where the war lives and where the vector
+    # floors. Real MoD / OSINT / Ukrainian reporting language (EN+RU+UK).
     4: [
-        'russia major offensive', 'russian breakthrough ukraine',
-        'russia advances rapidly', 'ukraine lines collapse',
-        'russia takes strategic city', 'russian forces encircle',
-        'ukraine loses major city', 'russia captures key town',
-        'russian surge ukraine', 'russia mass attack ukraine',
-        'russia crosses dnieper', 'russia odesa landing',
+        'advancing in all directions', 'liberated', 'liberation of',
+        'special military operation', 'russian offensive', 'russia offensive',
+        'ukraine offensive', 'counteroffensive', 'counterattack',
+        'drone attack', 'drone strike', 'drone attacks', 'missile attack',
+        'missile strike', 'missile barrage', 'shahed', 'ballistic missile',
+        'airstrike', 'air strike', 'shelling', 'shelled', 'artillery',
+        'struck', 'strikes on', 'strike on', 'bombardment', 'bombs',
+        'russian troops', 'russian forces', 'russian units',
+        'ukrainian forces', 'ukrainian armed forces', 'ukrainian troops',
+        'front line', 'frontline', 'the front', 'assault',
+        'captured', 'seized', 'stormed', 'encircle', 'pushed back',
+        'killed', 'casualties', 'wounded in',
+        'pokrovsk', 'kupiansk', 'chasiv yar', 'toretsk', 'kurakhove',
+        'zaporizhzhia front', 'kharkiv region', 'donetsk region',
+        'наступление', 'освободили', 'наступают', 'обстрел',
+        'удар по', 'атака дронов', 'ракетный удар',
+        'наступ', 'обстріл', 'ударили по',
     ],
+    # L3 -- CONFRONTATION: below active combat -- buildups, named exercises,
+    # explicit threat signals. (Largely superseded by the L4 war-floor;
+    # retained for coherence and trigger-phrase completeness.)
     3: [
-        'russian advance ukraine', 'russia gains ground ukraine',
-        'russian forces push', 'ukraine retreats',
-        'ukraine loses territory', 'russia offensive ukraine',
-        'russian attack succeeds', 'russia captures village',
-        'kursk incursion russia', 'russia counterattack ukraine',
-        'ukraine front pressure', 'russian artillery advance',
+        'troop buildup', 'military buildup', 'force concentration',
+        'zapad exercise', 'named exercise', 'nuclear rhetoric',
+        'mobilization decree',
     ],
-   2: [
-        'russia ukraine front', 'ukraine fighting',
-        'ukraine battle', 'russia ukraine war',
-        'russia strikes ukraine', 'russian missile ukraine',
-        'russian drone ukraine', 'shahed ukraine',
-        'fpv drone ukraine', 'fpv attack ukraine',
-        'nikopol', 'kherson shelling', 'mykolaiv attack',
-        'russian drone kills', 'russian attack kills',
-        'russia bombs ukraine', 'russia hits civilian',
-    ],
-    # ── v2.0 Slice 3 (Jul 2026): Crimea supply-strain tier ──
-    # Occupation-economics signals: food/water/logistics strain in Crimea.
-    # Warning-grade (L2) -- supply strain is pressure on the war footprint,
-    # not kinetic escalation. EN + RU vocabulary; precision over recall
-    # (never bare 'crimea').
+    # L2 -- WARNING: war-tempo references + Crimea occupation-economics /
+    # supply-strain (v2.0 Slice 3, PRESERVED). Merged into a single L2 key
+    # to repair the duplicate-key bug that had silently deleted the
+    # war-tempo terms. EN+RU vocabulary; precision over recall on Crimea.
     2: [
+        'russia ukraine front', 'russia ukraine war', 'ukraine fighting',
+        'ukraine battle', 'clashes', 'skirmish', 'firefight',
         'crimea food shortage', 'food shortage crimea', 'crimea shortages',
         'crimea supply crisis', 'crimea supplies disrupted', 'crimea grain',
         'crimea bread shortage', 'crimea water shortage', 'sevastopol shortages',
@@ -831,9 +848,10 @@ GROUND_OPS_TRIGGERS = {
         'дефицит в крыму', 'нехватка продовольствия крым',
         'очереди в крыму', 'перебои с поставками крым',
     ],
+    # L1 -- RHETORIC: generic war references, no kinetic specificity.
     1: [
         'ukraine war', 'russia ukraine', 'ukraine conflict',
-        'ukraine russia fighting', 'donbas',
+        'ukraine russia fighting', 'donbas', 'war in ukraine',
     ],
 }
 
