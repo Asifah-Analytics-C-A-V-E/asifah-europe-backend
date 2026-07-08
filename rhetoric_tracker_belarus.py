@@ -670,6 +670,58 @@ def _write_cross_theater_fingerprints(fingerprints):
 
 
 # ============================================================
+# CANONICAL SPOKE FINGERPRINT (Rim Emission Pass -- Jul 2026)
+# Writes crosstheater:belarus:fingerprint so the Russia wheel's
+# _read_spoke_fingerprints() reads Belarus. node_class = aligned_multiplier.
+# SURFACE-ONLY: no polarity wired into any score (Belarus escalating is an
+# AMPLIFIER, but that read is a wheel scoping decision, not plumbing).
+# ============================================================
+
+# Belarus alert enum -> canonical 0-5 level. Belarus is an ALIGNED MULTIPLIER,
+# not a combatant -- NO war floor (unlike Ukraine). Reads 'normal' when quiet
+# and caps at L4 (Incident): a force multiplier never reaches L5 strategic
+# escalation on its own -- that is principal-actor territory.
+_SPOKE_LEVEL_BY_ALERT = {
+    'normal':   0,   # Baseline -- aligned but quiet
+    'elevated': 2,   # Warning -- pressure building (troop movement, rhetoric)
+    'high':     3,   # Direct Threat -- Suwalki pressure / mobilization / nuclear-host activity
+    'critical': 4,   # Incident -- Belarus directly implicated
+}
+
+def _write_canonical_spoke_fingerprint(result):
+    """Emit crosstheater:belarus:fingerprint (hub-agnostic per-country schema).
+
+    Read by the Russia wheel (_read_spoke_fingerprints), the Europe BLUF, and
+    future Russia-wheel recompute narratives. Runs ALONGSIDE the legacy
+    fingerprint:belarus:* writes (emit once, consume many)."""
+    alert = result.get('alert_level', 'normal')
+    level = _SPOKE_LEVEL_BY_ALERT.get(alert, 0)
+    ctf = result.get('cross_theater_fingerprints') or {}
+    fingerprint = {
+        'ts':          datetime.now(timezone.utc).isoformat(),
+        'country':     'belarus',
+        'node_class':  'aligned_multiplier',   # Russia force multiplier / Suwalki Gap
+        'level':       level,
+        'score':       result.get('theatre_score', 0),
+        'alert_level': alert,
+
+        # -- Multiplier slice: what makes Belarus matter to the Russia wheel --
+        #    Suwalki/NATO perimeter, Russian force staging, nuclear host posture.
+        'multiplier': {
+            'russia_axis':             ctf.get('belarus_russia_axis', True),
+            'nato_perimeter_pressure': ctf.get('nato_perimeter_pressure', False),
+            'wagner_active':           ctf.get('wagner_active_belarus', False),
+            'succession_watch':        ctf.get('lukashenko_succession_watch', False),
+        },
+    }
+    try:
+        _redis_set('crosstheater:belarus:fingerprint', fingerprint)
+        print('[Belarus Rhetoric] Canonical spoke fingerprint written (crosstheater:belarus:fingerprint)')
+    except Exception as e:
+        print(f'[Belarus Rhetoric] Canonical fingerprint write failed: {e}')
+
+
+# ============================================================
 # MAIN SCAN
 # ============================================================
 
@@ -820,6 +872,7 @@ def run_belarus_rhetoric_scan(force=False):
 
     # Persist
     _redis_set(REDIS_KEY_LATEST, result)
+    _write_canonical_spoke_fingerprint(result)   # Rim Emission Pass -- feed the Russia wheel
     _redis_lpush_trim(REDIS_KEY_HISTORY, {
         'cached_at':     result['cached_at'],
         'theatre_score': result['theatre_score'],
