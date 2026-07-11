@@ -313,6 +313,9 @@ RSS_FEEDS = [
     # Arctic-focused
     'https://www.arctictoday.com/feed/',
     'https://www.highnorthnews.com/en/rss.xml',
+    'https://sermitsiaq.ag/rss',
+    'https://knr.gl/da/rss',
+    'https://news.google.com/rss/search?q=gr%C3%B8nland+suver%C3%A6nitet+OR+gr%C3%B8nland+usa+OR+gr%C3%B8nland+trump&hl=da&gl=DK&ceid=DK:da',
     # Danish news (English)
     'https://www.thelocal.dk/feed/',
     'https://denmark.dk/news-and-media/rss-feeds',
