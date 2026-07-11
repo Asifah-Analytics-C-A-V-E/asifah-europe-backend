@@ -1375,7 +1375,7 @@ REDDIT_SUBREDDITS = {
     'hungary': ['hungary', 'europe', 'geopolitics', 'worldnews', 'europeanunion'],
     'belarus': ['belarus', 'europe', 'geopolitics', 'worldnews', 'CredibleDefense'],
     'turkmenistan': ['CentralAsia', 'geopolitics', 'worldnews', 'energy'],
-    'kazakhstan': ['Kazakhstan', 'CentralAsia', 'geopolitics', 'worldnews', 'energy']
+    'kazakhstan': ['Kazakhstan', 'CentralAsia', 'geopolitics', 'worldnews', 'CredibleDefense'],
 }
 
 # ========================================
