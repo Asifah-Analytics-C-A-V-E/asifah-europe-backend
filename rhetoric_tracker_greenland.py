@@ -770,6 +770,81 @@ def _compute_composite(actor_scores):
 # ============================================
 # MAIN SCAN
 # ============================================
+# ============================================================
+# CANONICAL SPOKE FINGERPRINT + CRITICAL MINERALS (Rim Pass -- Jul 2026)
+# Greenland = INBOUND-TARGET node: the wheel wants to know when pressure is
+# pointed AT Greenland (US acquisition posture, Russian Arctic counter-moves,
+# Denmark alliance friction) -- not what Greenland does to anyone.
+# Hub-agnostic emission: the Russia wheel reads it today; the future USA
+# wheel reads the SAME key (emit once, consume many).
+# ============================================================
+
+def _read_commodity_pressure():
+    """Critical-minerals read (rare earths = the Trump-era strategic story).
+
+    Order: (1) Redis europe:commodity:greenland -- the canonical stability-
+    page bundle key (lands with the stability retrofit); (2) HTTP fallback to
+    the ME backend, where commodity_tracker.py lives (single-source, proxy-
+    not-clone); (3) absence-honest empty read -- never invented."""
+    try:
+        bundle = _redis_get('europe:commodity:greenland')
+        if bundle and isinstance(bundle, dict):
+            return {'available': True, 'source': 'redis',
+                    'pressure_score': bundle.get('total_score', bundle.get('commodity_pressure', 0)),
+                    'signals': bundle.get('signals', [])[:5]}
+    except Exception:
+        pass
+    try:
+        resp = requests.get(
+            'https://asifah-backend.onrender.com/api/commodity-pressure/greenland',
+            timeout=6)
+        if resp.status_code == 200:
+            d = resp.json()
+            return {'available': True, 'source': 'me_backend_api',
+                    'pressure_score': d.get('total_score', d.get('commodity_pressure', 0)),
+                    'signals': (d.get('signals') or d.get('active_signals') or [])[:5]}
+    except Exception:
+        pass
+    return {'available': False, 'source': None, 'pressure_score': 0, 'signals': []}
+
+
+def _write_canonical_spoke_fingerprint(result):
+    """Emit crosstheater:greenland:fingerprint (hub-agnostic schema)."""
+    actors = result.get('actors') or {}
+    def _alvl(aid):
+        a = actors.get(aid) or {}
+        return a.get('escalation_level', a.get('level', 0))
+    cm = result.get('commodity_pressure') or {}
+    fingerprint = {
+        'ts':          datetime.now(timezone.utc).isoformat(),
+        'country':     'greenland',
+        'node_class':  'inbound_target',   # pressure flows AT this node
+        'level':       result.get('theatre_level', 0),
+        'score':       result.get('theatre_score', 0),
+        'alert_level': result.get('theatre_label', ''),
+
+        # -- Inbound slice: who is pressing, and is sovereignty in play --
+        'inbound': {
+            'us_pressure_level':    _alvl('us_pressure'),     # US acquisition posture
+            'russia_arctic_level':  _alvl('russia_arctic'),   # Russian counter-moves
+            'denmark_nato_level':   _alvl('denmark_nato'),    # alliance-friction axis
+            'sovereignty_crisis':   result.get('is_sovereignty_crisis', False),
+            'convergence_signal':   result.get('convergence_signal'),
+        },
+        # -- Critical-minerals slice: rare earths as the strategic prize --
+        'critical_minerals': {
+            'available':      cm.get('available', False),
+            'pressure_score': cm.get('pressure_score', 0),
+            'signal_count':   len(cm.get('signals') or []),
+        },
+    }
+    try:
+        _redis_set('crosstheater:greenland:fingerprint', fingerprint)
+        print('[Greenland Rhetoric] Canonical spoke fingerprint written (crosstheater:greenland:fingerprint)')
+    except Exception as e:
+        print(f'[Greenland Rhetoric] Canonical fingerprint write failed: {e}')
+
+
 def run_greenland_rhetoric_scan(days=5):
     """Full scan: fetch articles, score all actors, return structured result."""
     print(f'[Greenland Rhetoric] Starting scan (days={days})...')
@@ -830,6 +905,10 @@ def run_greenland_rhetoric_scan(days=5):
         'is_sovereignty_crisis': composite['theatre_level'] >= 3,
     }
 
+    # Critical minerals: attach BEFORE interpretation so the interpreter
+    # payload carries the rare-earths pressure read (absence-honest).
+    result['commodity_pressure'] = _read_commodity_pressure()
+
     # Signal interpretation -- So What, Red Lines, Historical Patterns
     if INTERPRETER_AVAILABLE:
         try:
@@ -859,6 +938,8 @@ def run_greenland_rhetoric_scan(days=5):
         except Exception as e:
             print(f'[Greenland Rhetoric] build_top_signals error: {str(e)[:120]}')
             result['top_signals'] = []
+
+    _write_canonical_spoke_fingerprint(result)   # Rim Emission Pass -- feed the Russia wheel (+ future USA wheel)
 
     print(f'[Greenland Rhetoric] Scan complete in {elapsed}s | Theatre L{composite["theatre_level"]} ({composite["theatre_score"]}/100) | {composite["convergence_signal"] or "No convergence signal"}')
     return result
