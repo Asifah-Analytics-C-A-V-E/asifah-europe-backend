@@ -2247,6 +2247,7 @@ SPOKE_READ_KEYS = {
     'hungary':    'crosstheater:hungary:fingerprint',   # axis-reversal watch (Jul 2026)
     'greenland':  'crosstheater:greenland:fingerprint', # inbound-target (Jul 2026)
     'syria':      'crosstheater:syria:fingerprint',     # ruptured node (Jul 2026)
+    'cuba':       'crosstheater:cuba:fingerprint',      # inbound-target, dual-meddle (Jul 2026)
 }
 
 def _read_spoke_fingerprints():
