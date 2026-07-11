@@ -569,6 +569,52 @@ def _redis_set(key, value, ttl=None):
         return False
 
 
+# ============================================================
+# CANONICAL SPOKE FINGERPRINT (Rim Emission Pass -- Jul 2026)
+# Writes crosstheater:hungary:fingerprint for the Russia wheel's
+# _read_spoke_fingerprints(). node_class = axis_reversal_watch: Hungary is
+# an EU/NATO member whose Russia posture FLIPPED post-April-2026 (Tisza/
+# Magyar reversal of the Orban era). The wheel watches for reversal
+# durability vs Orban-revival drift back toward Moscow.
+# SURFACE-ONLY: no polarity wired into any score -- wheel scoping decision.
+# NOTE: requires 'hungary' added to SPOKE_READ_KEYS in
+# rhetoric_tracker_russia.py -- the reader does not listen for Hungary
+# by default (unlike ukraine/belarus).
+# ============================================================
+
+def _write_canonical_spoke_fingerprint(result):
+    """Emit crosstheater:hungary:fingerprint (hub-agnostic per-country schema).
+
+    Hungary emits its NATIVE 0-5 theatre_level (no enum translation --
+    unlike Ukraine/Belarus, this tracker computes the canonical level
+    directly). Runs ALONGSIDE the legacy collective crosstheater writes
+    (emit once, consume many)."""
+    ct = result.get('cross_theater') or {}
+    fingerprint = {
+        'ts':          datetime.now(timezone.utc).isoformat(),
+        'country':     'hungary',
+        'node_class':  'axis_reversal_watch',   # EU/NATO member, post-Orban reversal
+        'level':       result.get('theatre_level', 0),
+        'score':       result.get('theatre_score', 0),
+        'alert_level': result.get('theatre_label', ''),
+
+        # -- Reversal slice: the read the wheel actually wants from Hungary.
+        #    reversal_active = drifting AWAY from Moscow (de-tensioning);
+        #    orban_revival   = drift BACK toward Moscow (the watch signal).
+        'reversal': {
+            'axis_reversal_active': ct.get('axis_reversal_active', False),
+            'orban_revival_signal': ct.get('orban_revival_signal', False),
+            'reversal_hits':        len(ct.get('axis_reversal_hits', []) or []),
+            'revival_hits':         len(ct.get('orban_revival_hits', []) or []),
+        },
+    }
+    try:
+        _redis_set('crosstheater:hungary:fingerprint', fingerprint)
+        print('[Hungary Rhetoric] Canonical spoke fingerprint written (crosstheater:hungary:fingerprint)')
+    except Exception as e:
+        print(f'[Hungary Rhetoric] Canonical fingerprint write failed: {e}')
+
+
 def _crossteater_update(key, value):
     """Update a single field in the cross-theater fingerprint blob."""
     try:
@@ -1123,6 +1169,7 @@ def run_hungary_scan():
 
     # Cache + history
     _redis_set(RHETORIC_CACHE_KEY, result, ttl=RHETORIC_CACHE_TTL)
+    _write_canonical_spoke_fingerprint(result)   # Rim Emission Pass -- feed the Russia wheel
 
     # Update history
     try:
