@@ -867,6 +867,17 @@ def _bg_scan():
                     fp['direction'] = 'steady'
                 fp['ts'] = now_iso
                 _redis_set(f'spoke:{hub}:azerbaijan', fp, ttl=SPOKE_TTL)
+                # Rim Emission Pass (Jul 2026): ALSO write the canonical
+                # hub-agnostic key the Russia wheel actually reads. The
+                # per-hub 'spoke:{hub}:azerbaijan' naming predates the
+                # canonical schema -- this mismatch is why Russia read
+                # Azerbaijan as present:false despite this tracker running.
+                if hub == 'russia':
+                    _canon = dict(fp)
+                    _canon['country'] = 'azerbaijan'
+                    _canon['node_class'] = 'contested_node'
+                    _redis_set('crosstheater:azerbaijan:fingerprint', _canon)
+                    print('[Azerbaijan Rhetoric] Canonical spoke fingerprint written (crosstheater:azerbaijan:fingerprint)')
             except Exception as _se:
                 print(f'[Azerbaijan Rhetoric] spoke:{hub}:azerbaijan write skipped: {_se}')
 
