@@ -917,6 +917,11 @@ TARGET_KEYWORDS = {
             'greenland rare earth', 'greenland critical minerals',
             'greenland military base', 'greenland us military',
             'múte egede', 'greenland mineral',
+            'jens-frederik nielsen', 'naalakkersuisut', 'inatsisartut',
+            'pituffik', 'thule air base',
+            'kvanefjeld', 'kuannersuit', 'tanbreez', 'amaroq', 'nalunaq',
+            'grønland usa', 'grønland trump', 'grønland selvstændighed',
+            'grønland sjældne jordarter', 'grønlands regering',
             'arctic sovereignty', 'arctic nato', 'arctic military',
             'canadian arctic dispute', 'trump greenland purchase',
             'greenland referendum', 'greenland self-rule',
@@ -1349,7 +1354,7 @@ TARGET_KEYWORDS = {
 # ========================================
 REDDIT_USER_AGENT = "AsifahAnalytics-Europe/1.1.0 (OSINT monitoring tool)"
 REDDIT_SUBREDDITS = {
-    'greenland': ['Greenland', 'europe', 'geopolitics', 'worldnews', 'Denmark'],
+    'greenland': ['Greenland', 'europe', 'geopolitics', 'worldnews', 'Denmark', 'Arctic', 'Mining', 'RareEarthMetals'],
     'ukraine': ['ukraine', 'UkraineWarVideoReport', 'UkrainianConflict', 'europe', 'geopolitics', 'worldnews'],
     'russia': ['russia', 'europe', 'geopolitics', 'worldnews'],
     'poland': ['poland', 'Polska', 'europe', 'geopolitics', 'worldnews'],
@@ -2169,7 +2174,7 @@ def get_rate_limit_info():
 # ========================================
 # NEWS API FUNCTIONS
 # ========================================
-def fetch_newsapi_articles(query, days=7):
+def fetch_newsapi_articles(query, days=7, language='en'):
     """Fetch articles from NewsAPI"""
     if not NEWSAPI_KEY:
         print("[Europe v1.1] NewsAPI: No API key configured")
@@ -2182,7 +2187,7 @@ def fetch_newsapi_articles(query, days=7):
         'q': query,
         'from': from_date,
         'sortBy': 'publishedAt',
-        'language': 'en',
+        'language': language,
         'apiKey': NEWSAPI_KEY,
         'pageSize': 100
     }
