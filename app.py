@@ -100,6 +100,15 @@ except ImportError as e:
     GREECE_MIGRATION_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Greece migration module not available: {e}")
 
+# Poland refugee tracker (sensor) -- UNHCR RDF annual + Eurostat monthly TPD
+try:
+    from poland_refugee_tracker import register_poland_refugee_endpoints
+    POLAND_REFUGEES_AVAILABLE = True
+    print("[Europe Backend] ✅ Poland refugee tracker module loaded")
+except ImportError as e:
+    POLAND_REFUGEES_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Poland refugee tracker not available: {e}")
+
 # Russia rhetoric tracker + signals interpreter
 try:
     from rhetoric_tracker_russia import (
@@ -4453,6 +4462,11 @@ if GREECE_RHETORIC_AVAILABLE:
 # Register Greece migration sensor (v1.0 -- Jun 27, 2026 -- UNHCR ODP arrivals)
 if GREECE_MIGRATION_AVAILABLE:
     register_greece_migration_endpoints(app)
+
+# Register Poland refugee tracker (v1.0 -- Jul 11, 2026 -- UNHCR + Eurostat, 24h logical freshness)
+if POLAND_REFUGEES_AVAILABLE:
+    register_poland_refugee_endpoints(app)
+    print("[Europe Backend] ✅ Poland refugee routes registered")
 
 # Register Russia rhetoric tracker
 if RUSSIA_RHETORIC_AVAILABLE:
