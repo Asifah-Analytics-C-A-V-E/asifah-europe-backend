@@ -2244,6 +2244,7 @@ SPOKE_READ_KEYS = {
     'belarus':    'crosstheater:belarus:fingerprint',
     'ukraine':    'crosstheater:ukraine:fingerprint',
     'armenia':    'crosstheater:armenia:fingerprint',   # future spoke -- absence-honest until built
+    'hungary':    'crosstheater:hungary:fingerprint',   # axis-reversal watch (Jul 2026)
 }
 
 def _read_spoke_fingerprints():
