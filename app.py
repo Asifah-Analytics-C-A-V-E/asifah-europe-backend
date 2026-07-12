@@ -212,6 +212,22 @@ except ImportError as e:
     PL_FINANCIAL_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Poland financial pulse not available: {e}")
 
+# Poland Consensus Tracker (v1.0 -- Jul 12, 2026)
+# Consensus-integrity instrument · domain-split hybrid ladder (kinetic/cyber/
+# cognitive) · casualty Black Swan tripwire · corridor family #3 (military_logistics)
+# and #4 (instrumentalized_migration, inverted polarity).
+# Emits crosstheater:poland:fingerprint with node_class: inbound_target.
+try:
+    from rhetoric_tracker_poland import (
+        register_poland_rhetoric_endpoints,
+        start_poland_rhetoric_scanner,
+    )
+    PL_RHETORIC_AVAILABLE = True
+    print("[Europe Backend] ✅ Poland consensus tracker loaded")
+except ImportError as e:
+    PL_RHETORIC_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Poland consensus tracker not available: {e}")
+
 # Turkey rhetoric tracker + signals interpreter (v1.0 -- Jun 11, 2026)
 # First Asifah SWING-STATE tracker: dual alignment indices (NATO-anchor vs
 # strategic-autonomy), Lebanon-vector playbook ladder, mirror-imaging
@@ -4561,6 +4577,12 @@ if PL_FINANCIAL_AVAILABLE:
     register_poland_financial_endpoints(app)
     start_pl_financial_refresh()
     print("[Europe Backend] ✅ Poland financial routes registered + refresh started")
+
+# Register Poland consensus tracker (v1.0 -- Jul 12, 2026)
+if PL_RHETORIC_AVAILABLE:
+    register_poland_rhetoric_endpoints(app)
+    start_poland_rhetoric_scanner()
+    print("[Europe Backend] ✅ Poland rhetoric routes registered + scanner started")
 
 # Register Kazakhstan financial pulse (v1.0 -- Jul 12, 2026)
 if KZ_FINANCIAL_AVAILABLE:
