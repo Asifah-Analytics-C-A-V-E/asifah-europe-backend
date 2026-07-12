@@ -59,13 +59,14 @@ USAGE FROM app.py:
 import os
 import json
 import time
+import random
 import threading
 from datetime import datetime, timezone, timedelta
 
 import requests
 from flask import jsonify, request
 
-VERSION = '1.0.0'
+VERSION = '1.0.1'
 
 UPSTASH_REDIS_URL   = os.environ.get('UPSTASH_REDIS_URL')
 UPSTASH_REDIS_TOKEN = os.environ.get('UPSTASH_REDIS_TOKEN')
@@ -153,6 +154,38 @@ def _acquire_scan_lock(ttl_sec=600):
 # YAHOO FETCHER (canonical helper + query1→query2 failover)
 # ════════════════════════════════════════════════════════════
 
+# ── YAHOO RATE-LIMIT DISCIPLINE (v1.0.1, Jul 12 2026) ────────────────────
+# First deploy returned HTTP 429 on ALL NINE tickers. Diagnosis: three bugs.
+#   1. No gap between requests -- up to 18 calls fired as fast as the CPU could
+#      issue them, from a Render IP already shared with the Kazakhstan pulse and
+#      russia_stability.
+#   2. The failover chain treated a 429 as "this ticker does not exist" and
+#      sprinted to the next candidate -- which also 429'd. Nine tickers burned,
+#      the rate limit deepened, and zero information gained.
+#      A 429 IS NOT A MISSING TICKER. IT IS A THROTTLE SIGNAL.
+#   3. A throttled tile looked identical to a dead one. "No data" and "Yahoo
+#      told us to wait" are different facts and the card must say which.
+_YF_MIN_GAP_SEC = 2.0          # minimum gap between ANY two Yahoo calls
+_YF_MAX_429_RETRY = 2          # retries on 429, exponential backoff
+_yf_last_call = [0.0]
+_yf_gap_lock = threading.Lock()
+
+# Tickers whose failure was a THROTTLE, not an absence. The chain checks this
+# before advancing -- a rate limit says nothing about whether the next symbol
+# exists, so sprinting past it is both rude and uninformative.
+_THROTTLED = set()
+
+
+def _yf_throttle():
+    """Serialize Yahoo calls with a minimum gap. Cheap insurance: at 2s apart,
+    a full 4-tile refresh costs ~10s twice a day."""
+    with _yf_gap_lock:
+        elapsed = time.time() - _yf_last_call[0]
+        if elapsed < _YF_MIN_GAP_SEC:
+            time.sleep(_YF_MIN_GAP_SEC - elapsed)
+        _yf_last_call[0] = time.time()
+
+
 _YF_HEADERS = {
     'User-Agent': ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
                    'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -174,11 +207,21 @@ def _fetch_yahoo_chart_with_sparkline(ticker, ticker_url_encoded=None):
     """
     if ticker_url_encoded is None:
         ticker_url_encoded = ticker.replace('=', '%3D').replace('^', '%5E')
-    for host in ('query1', 'query2'):
+    _THROTTLED.discard(ticker)
+
+    for attempt in range(_YF_MAX_429_RETRY + 1):
+      saw_429 = False
+      for host in ('query1', 'query2'):
         url = f'https://{host}.finance.yahoo.com/v8/finance/chart/{ticker_url_encoded}'
         try:
+            _yf_throttle()
             r = requests.get(url, params={'interval': '1d', 'range': '1mo'},
                              timeout=10, headers=_YF_HEADERS)
+            if r.status_code == 429:
+                saw_429 = True
+                _LAST_ERRORS[ticker] = f'HTTP 429 (rate limited) via {host}'
+                print(f'[PL Financial] {ticker} via {host}: HTTP 429 -- backing off')
+                continue
             _LAST_ERRORS[ticker] = f'HTTP {r.status_code} via {host}'
             if r.status_code != 200:
                 print(f'[PL Financial] {ticker} via {host}: HTTP {r.status_code} (url={url})')
@@ -229,6 +272,23 @@ def _fetch_yahoo_chart_with_sparkline(ticker, ticker_url_encoded=None):
             _LAST_ERRORS[ticker] = f'{type(e).__name__}: {str(e)[:80]}'
             print(f'[PL Financial] {ticker} via {host}: {str(e)[:100]}')
             continue
+
+      # Both hosts said 429 -> this is a throttle, not an absence. Back off
+      # exponentially and retry the SAME ticker rather than burning the chain.
+      if saw_429 and attempt < _YF_MAX_429_RETRY:
+          backoff = 5 * (2 ** attempt)      # 5s, then 10s
+          print(f'[PL Financial] {ticker}: rate-limited, sleeping {backoff}s '
+                f'(retry {attempt + 1}/{_YF_MAX_429_RETRY})')
+          time.sleep(backoff)
+          continue
+      if saw_429:
+          _THROTTLED.add(ticker)
+          _LAST_ERRORS[ticker] = 'HTTP 429 (rate limited, retries exhausted)'
+          print(f'[PL Financial] {ticker}: THROTTLED -- retries exhausted. '
+                'Not a missing ticker.')
+          return None
+      break
+
     print(f'[PL Financial] {ticker}: all hosts failed '
           f'(last: {_LAST_ERRORS.get(ticker, "unknown")})')
     return None
@@ -249,6 +309,14 @@ def _fetch_chain(candidates):
                 print(f'[PL Financial] {candidates[0]} unavailable -- '
                       f'resolved via substitute {tk}')
             return out
+        if tk in _THROTTLED:
+            # A 429 tells us NOTHING about whether the next candidate exists --
+            # it only tells us to slow down. Sprinting through the rest of the
+            # chain deepens the rate limit and buys zero information. Abort and
+            # report throttled honestly; the next refresh will try again.
+            print(f'[PL Financial] Chain aborted at {tk}: THROTTLED, not missing. '
+                  f'Skipping remaining candidates {candidates[i+1:]}')
+            return None
     return None
 
 
@@ -344,14 +412,21 @@ def _trend(chg):
     return 'rising' if v > 0.3 else ('falling' if v < -0.3 else 'flat')
 
 
-def _empty_tile(name, ticker, market_status, note):
+def _empty_tile(name, ticker, market_status, note, chain=None):
     """Shell tile when a fetcher fails — ABSENCE-HONEST. We never invent a
-    number to fill a tile."""
+    number to fill a tile.
+
+    Distinguishes THROTTLED from MISSING. 'The feed rate-limited us' and 'this
+    instrument does not exist' are different facts, and a sensor that conflates
+    them is lying by omission. The card renders them differently."""
+    throttled = bool(chain) and any(tk in _THROTTLED for tk in chain)
     return {
         'name': name, 'ticker': ticker, 'value': None, 'change_pct_24h': None,
         'trend': 'flat', 'tier': 'stable', 'source': None,
         'market_status': market_status, 'timestamp': None, 'sparkline': [],
         'note': note, 'unavailable': True,
+        'throttled': throttled,
+        'unavailable_reason': ('rate_limited' if throttled else 'no_data'),
     }
 
 
@@ -400,7 +475,8 @@ def _build_financial_pulse(wig_full, pln_full, attr_full, orlen_full):
         }
     else:
         tiles['WIG20'] = _empty_tile('WIG20 (Warsaw)', 'WIG20.WA', gpw_status,
-                                     'Warsaw blue-chip index -- domestic risk appetite')
+                                     'Warsaw blue-chip index -- domestic risk appetite',
+                                     chain=WIG20_CHAIN)
 
     # ── Tile 2: USD/PLN (INVERTED) ──
     if pln_full:
@@ -418,7 +494,7 @@ def _build_financial_pulse(wig_full, pln_full, attr_full, orlen_full):
             'note':           'INVERTED polarity: rising USD/PLN = weaker zloty.',
         }
     else:
-        tiles['PLNUSD'] = _empty_tile('USD/PLN', 'PLN=X', fx_status, 'Zloty FX stress')
+        tiles['PLNUSD'] = _empty_tile('USD/PLN', 'PLN=X', fx_status, 'Zloty FX stress', chain=PLN_CHAIN)
 
     # ── Tile 3: THE ATTRITION TILE ──
     # Poland's defence spend is debt-financed. This tile is where the bill shows
@@ -461,7 +537,8 @@ def _build_financial_pulse(wig_full, pln_full, attr_full, orlen_full):
         }
     else:
         tiles['ATTRITION'] = _empty_tile('Poland 10Y Yield', 'PL10YT=RR', gpw_status,
-                                         'Cost of the armament spiral -- debt-financed defence')
+                                         'Cost of the armament spiral -- debt-financed defence',
+                                         chain=ATTRITION_CHAIN)
         tiles['ATTRITION']['attrition_reference'] = DEFENCE_ATTRITION_REFERENCE
         tiles['ATTRITION']['attrition_note'] = (
             f"Defence {DEFENCE_ATTRITION_REFERENCE['defence_pct_gdp']}% of GDP · "
@@ -487,10 +564,12 @@ def _build_financial_pulse(wig_full, pln_full, attr_full, orlen_full):
         }
     else:
         tiles['ORLEN'] = _empty_tile('Orlen (Energy)', 'PKN.WA', gpw_status,
-                                     'State energy champion -- post-Russian-gas supply security')
+                                     'State energy champion -- post-Russian-gas supply security',
+                                     chain=ORLEN_CHAIN)
 
     agg = _aggregate_market_status([gpw_status, fx_status, us_status])
 
+    n_throttled = sum(1 for v in tiles.values() if v.get('throttled'))
     return {
         'country':        'PL',
         'card_label':     'Poland Financial Pulse',
@@ -498,6 +577,7 @@ def _build_financial_pulse(wig_full, pln_full, attr_full, orlen_full):
         'last_refreshed': datetime.now(timezone.utc).isoformat(),
         'market_status':  agg,
         'gpw_status':     gpw_status,
+        'rate_limited':   n_throttled > 0,
         'tiles':          tiles,
     }
 
@@ -528,6 +608,23 @@ def get_poland_financial(force=False):
     print(f'[PL Financial] Tiles resolved: {len(resolved)}/4 -> {resolved}'
           + (f' | substitutes in use: {subs}' if subs else ''))
 
+    # INCOMPLETE-PICTURE TTL (the pattern europe_regional_bluf already uses):
+    # if we resolved NOTHING and it was a rate limit, do not freeze that zero
+    # into the 12h cache. Hold the last good payload if we have one, and mark
+    # this attempt for a short retry instead.
+    if not resolved and payload.get('rate_limited'):
+        prior = _redis_get(REDIS_KEY)
+        if prior and any(not t.get('unavailable') for t in (prior.get('tiles') or {}).values()):
+            prior['cache_status'] = 'held_last_good'
+            prior['rate_limited'] = True
+            prior['note'] = ('Feed rate-limited this cycle -- holding last known good tile set '
+                             'rather than showing a false zero. Values may be stale.')
+            print('[PL Financial] Rate-limited with zero resolved -- HOLDING last known good')
+            return prior
+        payload['retry_soon'] = True
+        print('[PL Financial] Rate-limited, no prior good data -- not caching the zero')
+        return payload
+
     _redis_set(REDIS_KEY, payload)
     return payload
 
@@ -537,7 +634,10 @@ def get_poland_financial(force=False):
 # ════════════════════════════════════════════════════════════
 
 def _background_refresh():
-    time.sleep(240)
+    # Jittered start + jittered cycle: the Kazakhstan pulse and russia_stability
+    # share this Render IP and this Yahoo quota. Colliding refreshes are how we
+    # earned the 429 in the first place.
+    time.sleep(240 + random.randint(0, 180))
     while True:
         try:
             if _acquire_scan_lock(ttl_sec=600):
@@ -546,7 +646,7 @@ def _background_refresh():
                 print('[PL Financial] Another worker owns the refresh window -- skipping')
         except Exception as e:
             print(f'[PL Financial] Background error: {str(e)[:120]}')
-        time.sleep(REFRESH_SEC)
+        time.sleep(REFRESH_SEC + random.randint(0, 600))
 
 
 def start_background_refresh():
