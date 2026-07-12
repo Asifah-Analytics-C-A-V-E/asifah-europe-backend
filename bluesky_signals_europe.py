@@ -59,6 +59,27 @@ BLUESKY_TIMEOUT = 8
 #   Mirrors can go dark — if fetches fail consistently, comment the handle.
 # ────────────────────────────────────────────────────────────────
 BLUESKY_ACCOUNTS_EUROPE = [
+    # ── Poland (v1.1 — Jul 12 2026) ───────────────────────────
+    # The Poland tracker measures the TAPE (Russia never claims), so what we
+    # need from Bluesky is ATTRIBUTION and ANALYSIS, not adversary posturing.
+    # Polish officials naming Moscow in public is scored as RESILIENCE by the
+    # consensus-integrity model -- these handles are how we hear it.
+    #
+    # ⚠️ HANDLES UNVERIFIED ON FIRST DEPLOY. The fetcher soft-fails per account
+    # (a dead handle returns [] and logs, it does not crash the scan), so this
+    # is safe to ship. Check the boot log for which resolve; the Cuba
+    # dead-handle sweep is the precedent for pruning what doesn't.
+    ('notesfrompoland.bsky.social',   1.0, ['poland'],
+        'Notes from Poland — English-language Polish analysis'),
+    ('sikorskiradek.bsky.social',     1.1, ['poland', 'russia', 'ukraine'],
+        'Radek Sikorski (Polish FM) — attribution voice'),
+    ('donaldtusk.bsky.social',        1.1, ['poland', 'russia', 'ukraine'],
+        'Donald Tusk (PM) — names Russia publicly; attribution = resilience'),
+    ('euvsdisinfo.bsky.social',       1.0, ['poland', 'hungary', 'russia', 'ukraine'],
+        'EU vs Disinfo — Doppelgänger/Matryoshka, the cognitive domain'),
+    ('defence24.bsky.social',         1.0, ['poland'],
+        'Defence24 — authors of the "Phase 0" hybrid-war assessment'),
+
     # ── US government — native Bluesky ────────────────────────
     ('state-department.bsky.social',  1.0, ['*'],
         'US State Department (official) — travel advisories, diplomatic signals'),
@@ -314,6 +335,21 @@ def fetch_hungary_bluesky_signals(days=7, max_posts_per_account=20):
     when those accounts are verified live on Bluesky.
     """
     return fetch_bluesky_for_target('hungary',
+                                    days=days,
+                                    max_posts_per_account=max_posts_per_account)
+
+
+def fetch_poland_bluesky_signals(days=7, max_posts_per_account=20):
+    """Bluesky posts relevant to the Poland consensus tracker (v1.0.0 Jul 12 2026).
+
+    Surfaces Polish attribution voices (Tusk, Sikorski), Polish analytical media
+    (Notes from Poland, Defence24), and EU disinformation tracking -- plus the
+    existing govmirror accounts that already carry 'poland' in their targets.
+
+    The tracker calls fetch_bluesky_for_target('poland') directly, so this
+    wrapper exists for symmetry with the other theatres.
+    """
+    return fetch_bluesky_for_target('poland',
                                     days=days,
                                     max_posts_per_account=max_posts_per_account)
 
