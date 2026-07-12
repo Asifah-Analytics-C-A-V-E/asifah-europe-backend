@@ -166,6 +166,24 @@ except ImportError as e:
     ARMENIA_RHETORIC_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Armenia rhetoric tracker not available: {e}")
 
+# Kazakhstan Multi-Vector Tracker (v1.0 -- Jul 12, 2026)
+# Hedging-integrity sensor: Middle Corridor (corridor family #2) / Russia levers /
+# China dual-track (elite pull vs street friction) / Jan-2022 domestic pattern class /
+# three-pole hedge index / succession / Turkic axis / CONVERGENCE-GATED commodity.
+# Emits crosstheater:kazakhstan:fingerprint (Russia wheel) and
+# spoke:china:kazakhstan (*** THE FIRST CHINA-WHEEL SPOKE ***).
+try:
+    from rhetoric_tracker_kazakhstan import (
+        register_kazakhstan_rhetoric_endpoints,
+        start_background_refresh as start_kazakhstan_rhetoric_refresh,
+    )
+    from kazakhstan_signal_interpreter import interpret_signals as kazakhstan_interpret_signals
+    KAZAKHSTAN_RHETORIC_AVAILABLE = True
+    print("[Europe Backend] ✅ Kazakhstan multi-vector tracker loaded")
+except ImportError as e:
+    KAZAKHSTAN_RHETORIC_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Kazakhstan multi-vector tracker not available: {e}")
+
 # Kazakhstan Financial Pulse (v1.0 -- Jul 12, 2026)
 # 4 tiles: Brent (+CPC route-dependency inline) / USD-KZT (inverted polarity) /
 # Kazatomprom KAP.IL (uranium chokepoint) / Halyk HSBK.IL (banking integrity)
@@ -4529,6 +4547,12 @@ if KZ_FINANCIAL_AVAILABLE:
     register_kazakhstan_financial_endpoints(app)
     start_kz_financial_refresh()
     print("[Europe Backend] ✅ Kazakhstan financial routes registered + refresh started")
+
+# Register Kazakhstan multi-vector tracker (v1.0 -- Jul 12, 2026)
+if KAZAKHSTAN_RHETORIC_AVAILABLE:
+    register_kazakhstan_rhetoric_endpoints(app)
+    start_kazakhstan_rhetoric_refresh()
+    print("[Europe Backend] ✅ Kazakhstan rhetoric routes registered + refresh started")
 
 # Register Turkey rhetoric tracker (v1.0 -- Jun 11, 2026)
 if TURKEY_RHETORIC_AVAILABLE:
