@@ -166,6 +166,20 @@ except ImportError as e:
     ARMENIA_RHETORIC_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Armenia rhetoric tracker not available: {e}")
 
+# Kazakhstan Financial Pulse (v1.0 -- Jul 12, 2026)
+# 4 tiles: Brent (+CPC route-dependency inline) / USD-KZT (inverted polarity) /
+# Kazatomprom KAP.IL (uranium chokepoint) / Halyk HSBK.IL (banking integrity)
+try:
+    from kazakhstan_financial_pulse import (
+        register_kazakhstan_financial_endpoints,
+        start_background_refresh as start_kz_financial_refresh,
+    )
+    KZ_FINANCIAL_AVAILABLE = True
+    print("[Europe Backend] ✅ Kazakhstan financial pulse loaded")
+except ImportError as e:
+    KZ_FINANCIAL_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Kazakhstan financial pulse not available: {e}")
+
 # Turkey rhetoric tracker + signals interpreter (v1.0 -- Jun 11, 2026)
 # First Asifah SWING-STATE tracker: dual alignment indices (NATO-anchor vs
 # strategic-autonomy), Lebanon-vector playbook ladder, mirror-imaging
