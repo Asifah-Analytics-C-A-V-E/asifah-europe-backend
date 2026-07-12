@@ -148,6 +148,24 @@ except ImportError as e:
     UKRAINE_RHETORIC_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Ukraine rhetoric tracker not available: {e}")
 
+# Armenia rhetoric tracker + signals interpreter (v1.0 -- Jul 12, 2026)
+# Multi-vector hybrid (Ukraine model): TRIPP corridor vector (portable
+# corridor family #1), treaty/referendum track, Russia interference tempo,
+# westward drift axis, Iran conditional buffer, Turkiye normalization.
+# Emits crosstheater:armenia:fingerprint (Russia wheel, tenth rim spoke)
+# and spoke:turkey:armenia (Turkey wheel periphery).
+try:
+    from rhetoric_tracker_armenia import (
+        register_armenia_rhetoric_endpoints,
+        start_background_refresh as start_armenia_rhetoric_refresh,
+    )
+    from armenia_signal_interpreter import interpret_signals as armenia_interpret_signals
+    ARMENIA_RHETORIC_AVAILABLE = True
+    print("[Europe Backend] ✅ Armenia rhetoric tracker loaded")
+except ImportError as e:
+    ARMENIA_RHETORIC_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Armenia rhetoric tracker not available: {e}")
+
 # Turkey rhetoric tracker + signals interpreter (v1.0 -- Jun 11, 2026)
 # First Asifah SWING-STATE tracker: dual alignment indices (NATO-anchor vs
 # strategic-autonomy), Lebanon-vector playbook ladder, mirror-imaging
@@ -4485,6 +4503,12 @@ if UKRAINE_RHETORIC_AVAILABLE:
     register_ukraine_rhetoric_endpoints(app)
     start_ukraine_rhetoric_refresh()
     print("[Europe Backend] ✅ Ukraine rhetoric routes registered + refresh started")
+
+# Register Armenia rhetoric tracker (v1.0 -- Jul 12, 2026)
+if ARMENIA_RHETORIC_AVAILABLE:
+    register_armenia_rhetoric_endpoints(app)
+    start_armenia_rhetoric_refresh()
+    print("[Europe Backend] ✅ Armenia rhetoric routes registered + refresh started")
 
 # Register Turkey rhetoric tracker (v1.0 -- Jun 11, 2026)
 if TURKEY_RHETORIC_AVAILABLE:
