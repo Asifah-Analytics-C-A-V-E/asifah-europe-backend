@@ -4510,6 +4510,12 @@ if ARMENIA_RHETORIC_AVAILABLE:
     start_armenia_rhetoric_refresh()
     print("[Europe Backend] ✅ Armenia rhetoric routes registered + refresh started")
 
+# Register Kazakhstan financial pulse (v1.0 -- Jul 12, 2026)
+if KZ_FINANCIAL_AVAILABLE:
+    register_kazakhstan_financial_endpoints(app)
+    start_kz_financial_refresh()
+    print("[Europe Backend] ✅ Kazakhstan financial routes registered + refresh started")
+
 # Register Turkey rhetoric tracker (v1.0 -- Jun 11, 2026)
 if TURKEY_RHETORIC_AVAILABLE:
     register_turkey_rhetoric_endpoints(app)
