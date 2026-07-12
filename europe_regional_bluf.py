@@ -73,8 +73,8 @@ TRACKER_KEYS = {
     'greece':    'rhetoric:greece:latest',  # v1.0 Jun 28 2026 -- anchored frontline spoke (peer-rivalry w/ Turkey)
     'armenia':   'rhetoric:armenia:latest', # v1.0 Jul 12 2026 -- peace-implementation tracker (tenth rim spoke)
     'kazakhstan':'rhetoric:kazakhstan:latest', # v1.0 Jul 12 2026 -- multi-vector hedging-integrity tracker
+    'poland':    'rhetoric:poland:latest',  # v1.0 Jul 12 2026 -- consensus-integrity tracker (inbound_target, NOT a drift spoke)
     # Future Europe trackers slot in here:
-    # 'poland':   'rhetoric:poland:latest',
     # 'baltics':  'rhetoric:baltics:latest',
 }
 
