@@ -157,6 +157,37 @@ HUNGARY_CHANNELS = [
     'bbcrussian',           # BBC Russian — Eastern European transitions
 ]
 
+# ── Poland channel list (v1.3.0 — Jul 12 2026) ──
+# Used by rhetoric_tracker_poland.py (mode='tape' target).
+#
+# CURATION LOGIC — and it is deliberately narrow:
+# Poland's tracker measures the TAPE, not an actor. Russia never claims its
+# hybrid operations in Poland, so there is no adversary channel to monitor for
+# a confession. What we need instead is: (a) attack reporting, (b) POLISH
+# ATTRIBUTION (the state naming Moscow — which the model scores as RESILIENCE),
+# and (c) amplification/disinformation detection.
+#
+# HARD LESSON APPLIED (from the Hungary v1.1.0 cleanup): war-heavy channels like
+# intelslava / OSINTdefender / WarMonitors inflated Hungary's score by 92% with
+# Ukraine-war content leakage. Poland is adjacent to the same war, so the same
+# trap is wide open here. This list therefore EXCLUDES generic war-OSINT feeds
+# and stays on Poland-relevant, attribution-capable sources. Do not "helpfully"
+# add sentdefender later -- it will pollute the tempo baseline, and a polluted
+# baseline is worse than no baseline.
+POLAND_CHANNELS = [
+    # ── Polish / Central European media ──────────────────────────
+    'notesfrompoland',      # Notes from Poland — English-language, analytical
+    'tvpworld',             # TVP World — Polish state broadcaster, English
+
+    # ── Disinformation + influence-operation detection (the cognitive domain) ──
+    'EUvsDisinfo',          # EU vs Disinfo — Doppelgänger/Matryoshka tracking
+    'nexta_tv',             # NEXTA — Belarus/Poland border, Lukashenko lever
+
+    # ── Regional / institutional ─────────────────────────────────
+    'France24_en',          # France 24 — EU institutional coverage
+    'bbcrussian',           # BBC Russian — the other side of the mirror
+]
+
 # ── Russia-specific channel list (v1.2.0) ──
 # Used by rhetoric_tracker_russia.py
 # Focuses on Russian military ops, Ukraine front,
@@ -740,6 +771,47 @@ def fetch_europe_telegram_signals(hours_back=24, include_extended=True):
                 loop.close()
     except Exception as e:
         print(f"[Telegram Europe] ❌ fetch error: {str(e)[:200]}")
+        return []
+
+
+def fetch_poland_telegram_signals(hours_back=96):
+    """
+    Fetch Telegram signals for the Poland consensus tracker.
+
+    96h window -- Poland's hybrid tape is steady rather than bursty. The
+    campaign is designed to be sustainable, so it does not spike the way an
+    active-war theatre does; a shorter window would miss the pattern and a
+    longer one would blur it.
+
+    Key signals to watch:
+      - Sabotage / arson / rail incidents (kinetic domain)
+      - Cyber incidents against energy, rail, government (cyber domain)
+      - Doppelgänger / Matryoshka / bot-campaign detection (cognitive domain)
+      - POLISH ATTRIBUTION -- ABW/Tusk/Siemoniak naming Russia. Note this is
+        scored as RESILIENCE, not damage: a state that names its attacker in
+        public is a state whose consensus is functioning.
+      - Belarus border / instrumentalized migration
+      - Volhynia / Poland-Ukraine wedge amplification
+    """
+    if not _telegram_available():
+        print("[Telegram Poland] Signals unavailable — skipping")
+        return []
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, _async_fetch_messages(POLAND_CHANNELS, hours_back))
+                return future.result(timeout=120)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(_async_fetch_messages(POLAND_CHANNELS, hours_back))
+            finally:
+                loop.close()
+    except Exception as e:
+        print(f"[Telegram Poland] ❌ fetch error: {str(e)[:200]}")
         return []
 
 
