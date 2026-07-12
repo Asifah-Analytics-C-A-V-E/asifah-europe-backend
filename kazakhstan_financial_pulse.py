@@ -1,7 +1,8 @@
 """
 ═══════════════════════════════════════════════════════════════════════
   ASIFAH ANALYTICS — KAZAKHSTAN FINANCIAL PULSE
-  v1.0.0 (Jul 12 2026) · Europe backend
+  v1.0.1 (Jul 12 2026) · Europe backend
+  v1.0.1: URL-encode '=' in tickers (BZ=F -> BZ%3DF); per-ticker error registry
 ═══════════════════════════════════════════════════════════════════════
 
 Canonical Financial Pulse card (Saudi/Nigeria/Russia Gold Standard),
@@ -59,7 +60,7 @@ from datetime import datetime, timezone, timedelta
 import requests
 from flask import jsonify, request
 
-VERSION = '1.0.0'
+VERSION = '1.0.1'
 
 UPSTASH_REDIS_URL   = os.environ.get('UPSTASH_REDIS_URL')
 UPSTASH_REDIS_TOKEN = os.environ.get('UPSTASH_REDIS_TOKEN')
@@ -139,6 +140,10 @@ def _acquire_scan_lock(ttl_sec=600):
 # YAHOO FETCHER (canonical v1.2.0 helper + query1→query2 failover)
 # ════════════════════════════════════════════════════════════
 
+# Per-ticker last-error registry — surfaced by /debug/kazakhstan-financial so a
+# failed tile says WHY it failed instead of just showing N/A.
+_LAST_ERRORS = {}
+
 _YF_HEADERS = {
     'User-Agent': ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
                    'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -147,7 +152,7 @@ _YF_HEADERS = {
 }
 
 
-def _fetch_yahoo_chart_with_sparkline(ticker):
+def _fetch_yahoo_chart_with_sparkline(ticker, ticker_url_encoded=None):
     """Canonical Yahoo helper. Returns dict with value / change_pct_24h /
     sparkline (30d) / source / timestamp, or None.
 
@@ -157,13 +162,20 @@ def _fetch_yahoo_chart_with_sparkline(ticker):
 
     query1 → query2 failover (canonical: query1 intermittently 401s).
     """
+    # CRITICAL: '=' in a Yahoo ticker MUST be percent-encoded to %3D in the URL
+    # path or Yahoo returns an error. BZ=F -> BZ%3DF, KZT=X -> KZT%3DX.
+    # (Hard-won in russia_stability.py, which carries the same second parameter.)
+    if ticker_url_encoded is None:
+        ticker_url_encoded = ticker.replace('=', '%3D')
     for host in ('query1', 'query2'):
-        url = f'https://{host}.finance.yahoo.com/v8/finance/chart/{ticker}'
+        url = f'https://{host}.finance.yahoo.com/v8/finance/chart/{ticker_url_encoded}'
         try:
             r = requests.get(url, params={'interval': '1d', 'range': '1mo'},
                              timeout=10, headers=_YF_HEADERS)
+            _LAST_ERRORS[ticker] = f'HTTP {r.status_code} via {host}'
             if r.status_code != 200:
-                print(f'[KZ Financial] {ticker} via {host}: HTTP {r.status_code}')
+                print(f'[KZ Financial] {ticker} via {host}: HTTP {r.status_code} '
+                      f'(url={url})')
                 continue
             data = r.json()
             result = (data.get('chart', {}).get('result') or [{}])[0]
@@ -205,9 +217,11 @@ def _fetch_yahoo_chart_with_sparkline(ticker):
                 'timestamp':      datetime.now(timezone.utc).isoformat(),
             }
         except Exception as e:
+            _LAST_ERRORS[ticker] = f'{type(e).__name__}: {str(e)[:80]}'
             print(f'[KZ Financial] {ticker} via {host}: {str(e)[:100]}')
             continue
-    print(f'[KZ Financial] {ticker}: all hosts failed')
+    print(f'[KZ Financial] {ticker}: all hosts failed '
+          f'(last: {_LAST_ERRORS.get(ticker, "unknown")})')
     return None
 
 
@@ -544,6 +558,7 @@ def register_kazakhstan_financial_endpoints(app):
                 } for k, v in tiles.items()
             },
             'resolved_count': sum(1 for v in tiles.values() if not v.get('unavailable')),
+            'last_errors':     dict(_LAST_ERRORS),
             'redis_configured': bool(UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN),
         })
 
