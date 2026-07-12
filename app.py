@@ -198,6 +198,20 @@ except ImportError as e:
     KZ_FINANCIAL_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Kazakhstan financial pulse not available: {e}")
 
+# Poland Financial Pulse (v1.0 -- Jul 12, 2026)
+# 4 tiles: WIG20 / USD-PLN (inverted) / ATTRITION (PL 10Y yield -> EUAD substitute,
+# the debt-financed cost of the armament spiral) / Orlen (post-Russian-gas energy)
+try:
+    from poland_financial_pulse import (
+        register_poland_financial_endpoints,
+        start_background_refresh as start_pl_financial_refresh,
+    )
+    PL_FINANCIAL_AVAILABLE = True
+    print("[Europe Backend] ✅ Poland financial pulse loaded")
+except ImportError as e:
+    PL_FINANCIAL_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Poland financial pulse not available: {e}")
+
 # Turkey rhetoric tracker + signals interpreter (v1.0 -- Jun 11, 2026)
 # First Asifah SWING-STATE tracker: dual alignment indices (NATO-anchor vs
 # strategic-autonomy), Lebanon-vector playbook ladder, mirror-imaging
@@ -4541,6 +4555,12 @@ if ARMENIA_RHETORIC_AVAILABLE:
     register_armenia_rhetoric_endpoints(app)
     start_armenia_rhetoric_refresh()
     print("[Europe Backend] ✅ Armenia rhetoric routes registered + refresh started")
+
+# Register Poland financial pulse (v1.0 -- Jul 12, 2026)
+if PL_FINANCIAL_AVAILABLE:
+    register_poland_financial_endpoints(app)
+    start_pl_financial_refresh()
+    print("[Europe Backend] ✅ Poland financial routes registered + refresh started")
 
 # Register Kazakhstan financial pulse (v1.0 -- Jul 12, 2026)
 if KZ_FINANCIAL_AVAILABLE:
