@@ -1,7 +1,7 @@
 """
 ═══════════════════════════════════════════════════════════════════════
   ASIFAH ANALYTICS — POLAND CONSENSUS TRACKER
-  rhetoric_tracker_poland.py  ·  v1.0.0 (Jul 12 2026)  ·  Europe backend
+  rhetoric_tracker_poland.py  ·  v1.0.0 (Jul 12 2026)  ·  Europe backend w00t
 ═══════════════════════════════════════════════════════════════════════
 
 Poland has been in NATO since MARCH 1999. It is not a recent accession, it is
