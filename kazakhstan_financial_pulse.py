@@ -54,13 +54,14 @@ USAGE FROM app.py:
 import os
 import json
 import time
+import random
 import threading
 from datetime import datetime, timezone, timedelta
 
 import requests
 from flask import jsonify, request
 
-VERSION = '1.0.1'
+VERSION = '1.0.2'
 
 UPSTASH_REDIS_URL   = os.environ.get('UPSTASH_REDIS_URL')
 UPSTASH_REDIS_TOKEN = os.environ.get('UPSTASH_REDIS_TOKEN')
@@ -144,6 +145,26 @@ def _acquire_scan_lock(ttl_sec=600):
 # failed tile says WHY it failed instead of just showing N/A.
 _LAST_ERRORS = {}
 
+# ── YAHOO RATE-LIMIT DISCIPLINE (v1.0.2, Jul 12 2026) ────────────────────
+# Poland's first deploy 429'd on ALL nine tickers; this module shares the same
+# Render IP and the same Yahoo quota, so it was almost certainly being throttled
+# too. A 429 IS NOT A MISSING TICKER -- it is a throttle signal, and a failover
+# chain that sprints past it deepens the limit while learning nothing.
+_YF_MIN_GAP_SEC = 2.0
+_YF_MAX_429_RETRY = 2
+_yf_last_call = [0.0]
+_yf_gap_lock = threading.Lock()
+_THROTTLED = set()
+
+
+def _yf_throttle():
+    with _yf_gap_lock:
+        elapsed = time.time() - _yf_last_call[0]
+        if elapsed < _YF_MIN_GAP_SEC:
+            time.sleep(_YF_MIN_GAP_SEC - elapsed)
+        _yf_last_call[0] = time.time()
+
+
 _YF_HEADERS = {
     'User-Agent': ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
                    'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -166,12 +187,22 @@ def _fetch_yahoo_chart_with_sparkline(ticker, ticker_url_encoded=None):
     # path or Yahoo returns an error. BZ=F -> BZ%3DF, KZT=X -> KZT%3DX.
     # (Hard-won in russia_stability.py, which carries the same second parameter.)
     if ticker_url_encoded is None:
-        ticker_url_encoded = ticker.replace('=', '%3D')
-    for host in ('query1', 'query2'):
+        ticker_url_encoded = ticker.replace('=', '%3D').replace('^', '%5E')
+    _THROTTLED.discard(ticker)
+
+    for attempt in range(_YF_MAX_429_RETRY + 1):
+      saw_429 = False
+      for host in ('query1', 'query2'):
         url = f'https://{host}.finance.yahoo.com/v8/finance/chart/{ticker_url_encoded}'
         try:
+            _yf_throttle()
             r = requests.get(url, params={'interval': '1d', 'range': '1mo'},
                              timeout=10, headers=_YF_HEADERS)
+            if r.status_code == 429:
+                saw_429 = True
+                _LAST_ERRORS[ticker] = f'HTTP 429 (rate limited) via {host}'
+                print(f'[KZ Financial] {ticker} via {host}: HTTP 429 -- backing off')
+                continue
             _LAST_ERRORS[ticker] = f'HTTP {r.status_code} via {host}'
             if r.status_code != 200:
                 print(f'[KZ Financial] {ticker} via {host}: HTTP {r.status_code} '
@@ -220,20 +251,39 @@ def _fetch_yahoo_chart_with_sparkline(ticker, ticker_url_encoded=None):
             _LAST_ERRORS[ticker] = f'{type(e).__name__}: {str(e)[:80]}'
             print(f'[KZ Financial] {ticker} via {host}: {str(e)[:100]}')
             continue
+
+      if saw_429 and attempt < _YF_MAX_429_RETRY:
+          backoff = 5 * (2 ** attempt)
+          print(f'[KZ Financial] {ticker}: rate-limited, sleeping {backoff}s '
+                f'(retry {attempt + 1}/{_YF_MAX_429_RETRY})')
+          time.sleep(backoff)
+          continue
+      if saw_429:
+          _THROTTLED.add(ticker)
+          _LAST_ERRORS[ticker] = 'HTTP 429 (rate limited, retries exhausted)'
+          print(f'[KZ Financial] {ticker}: THROTTLED -- not a missing ticker.')
+          return None
+      break
+
     print(f'[KZ Financial] {ticker}: all hosts failed '
           f'(last: {_LAST_ERRORS.get(ticker, "unknown")})')
     return None
 
 
 def _fetch_with_failover(primary, fallback=None):
-    """Try primary ticker, then fallback. Kazatomprom lists as KAP.IL on the
-    LSE International Order Book; KAP.L is the same instrument under a
-    different Yahoo suffix. Absence-honest: returns None if both fail."""
+    """Try primary, then fallback. ABSENCE-HONEST: returns None if both fail.
+
+    THROTTLE-AWARE: if the primary was rate-limited (429) rather than genuinely
+    missing, do NOT try the fallback -- a 429 says nothing about whether the
+    fallback exists, and firing it deepens the limit for zero information."""
     out = _fetch_yahoo_chart_with_sparkline(primary)
     if out:
         return out
+    if primary in _THROTTLED:
+        print(f'[KZ Financial] {primary} THROTTLED -- skipping fallback {fallback}')
+        return None
     if fallback:
-        print(f'[KZ Financial] {primary} failed — trying fallback {fallback}')
+        print(f'[KZ Financial] {primary} failed -- trying fallback {fallback}')
         return _fetch_yahoo_chart_with_sparkline(fallback)
     return None
 
@@ -339,9 +389,11 @@ def _trend(chg):
     return 'rising' if v > 0.3 else ('falling' if v < -0.3 else 'flat')
 
 
-def _empty_tile(name, ticker, market_status, note):
+def _empty_tile(name, ticker, market_status, note, chain=None):
     """Shell tile when a fetcher fails — keeps shape consistent and is
     ABSENCE-HONEST. We never invent a number to fill a tile."""
+    _chain = chain or [ticker]
+    throttled = any(tk in _THROTTLED for tk in _chain)
     return {
         'name':           name,
         'ticker':         ticker,
@@ -355,6 +407,8 @@ def _empty_tile(name, ticker, market_status, note):
         'sparkline':      [],
         'note':           note,
         'unavailable':    True,
+        'throttled':      throttled,
+        'unavailable_reason': ('rate_limited' if throttled else 'no_data'),
     }
 
 
@@ -504,7 +558,8 @@ def get_kazakhstan_financial(force=False):
 # ════════════════════════════════════════════════════════════
 
 def _background_refresh():
-    time.sleep(180)
+    # Jittered: the Poland pulse and russia_stability share this IP and quota.
+    time.sleep(180 + random.randint(0, 180))
     while True:
         try:
             if _acquire_scan_lock(ttl_sec=600):
@@ -513,7 +568,7 @@ def _background_refresh():
                 print('[KZ Financial] Another worker owns the refresh window -- skipping')
         except Exception as e:
             print(f'[KZ Financial] Background error: {str(e)[:120]}')
-        time.sleep(REFRESH_SEC)
+        time.sleep(REFRESH_SEC + random.randint(0, 600))
 
 
 def start_background_refresh():
