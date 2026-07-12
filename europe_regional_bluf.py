@@ -72,6 +72,7 @@ TRACKER_KEYS = {
     'cyprus':    'rhetoric:cyprus:latest',  # v1.0 Jun 28 2026 -- inverted single-hub spoke (pressured by Turkey)
     'greece':    'rhetoric:greece:latest',  # v1.0 Jun 28 2026 -- anchored frontline spoke (peer-rivalry w/ Turkey)
     'armenia':   'rhetoric:armenia:latest', # v1.0 Jul 12 2026 -- peace-implementation tracker (tenth rim spoke)
+    'kazakhstan':'rhetoric:kazakhstan:latest', # v1.0 Jul 12 2026 -- multi-vector hedging-integrity tracker
     # Future Europe trackers slot in here:
     # 'poland':   'rhetoric:poland:latest',
     # 'baltics':  'rhetoric:baltics:latest',
@@ -88,6 +89,7 @@ THEATRE_FLAGS = {
     'cyprus':    '\U0001f1e8\U0001f1fe',  # 🇨🇾
     'greece':    '\U0001f1ec\U0001f1f7',  # GR
     'armenia':   '\U0001f1e6\U0001f1f2',  # AM
+    'kazakhstan':'\U0001f1f0\U0001f1ff',  # KZ
     'poland':    '\U0001f1f5\U0001f1f1',  # 🇵🇱
     'baltics':   '\U0001f1ea\U0001f1fa',  # 🇪🇺 fallback
 }
@@ -103,6 +105,7 @@ THEATRE_DISPLAY = {
     'cyprus':    'CYPRUS',
     'greece':    'GREECE',
     'armenia':   'ARMENIA',
+    'kazakhstan':'KAZAKHSTAN',
     'poland':    'POLAND',
     'baltics':   'BALTICS',
 }
