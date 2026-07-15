@@ -35,6 +35,7 @@ import math
 import xml.etree.ElementTree as ET
 import threading
 import json
+import gc
 
 try:
     from telegram_signals_europe import fetch_europe_telegram_signals
@@ -614,6 +615,12 @@ def _refresh_all_caches():
             except Exception as e:
                 print(f"[Background Refresh] ✗ {target} failed: {e}")
 
+            # Release this target's article list before the next one loads.
+            # Serial-without-gc still accumulates: without this, ~15 countries'
+            # worth of scans stay resident and blow the 512MB ceiling (the
+            # 1:30am/1:30pm OOM). gc.collect() keeps only ONE scan live at a time.
+            gc.collect()
+
             # Small delay between targets to avoid hammering APIs
             time.sleep(5)
 
@@ -647,6 +654,10 @@ def _refresh_all_caches():
             print(f"[Background Refresh] ✓ Travel advisories cached ({len(ta_data.get('advisories', {}))} countries)")
         except Exception as e:
             print(f"[Background Refresh] ✗ Travel advisories failed: {e}")
+
+        # Final sweep before the long sleep so the worker sits idle at a low
+        # memory floor between cycles, not at the cycle's peak.
+        gc.collect()
 
         elapsed = time.time() - start
         print(f"[Background Refresh] Complete in {elapsed:.1f}s. Sleeping {CACHE_TTL}s until next refresh.\n")
