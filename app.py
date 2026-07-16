@@ -196,6 +196,20 @@ except ImportError as e:
     KAZAKHSTAN_RHETORIC_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Kazakhstan multi-vector tracker not available: {e}")
 
+# Moldova capture-vs-anchor tracker (inbound-target node class -- Russia acts
+# UPON Moldova: energy blackmail, election interference, Transnistria/Gagauzia).
+try:
+    from rhetoric_tracker_moldova import (
+        register_moldova_rhetoric_endpoints,
+        start_background_refresh as start_moldova_rhetoric_refresh,
+    )
+    from moldova_signal_interpreter import interpret_signals as moldova_interpret_signals
+    MOLDOVA_RHETORIC_AVAILABLE = True
+    print("[Europe Backend] ✅ Moldova capture-vs-anchor tracker loaded")
+except ImportError as e:
+    MOLDOVA_RHETORIC_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Moldova capture-vs-anchor tracker not available: {e}")
+
 # Kazakhstan Financial Pulse (v1.0 -- Jul 12, 2026)
 # 4 tiles: Brent (+CPC route-dependency inline) / USD-KZT (inverted polarity) /
 # Kazatomprom KAP.IL (uranium chokepoint) / Halyk HSBK.IL (banking integrity)
@@ -4853,6 +4867,12 @@ if KAZAKHSTAN_RHETORIC_AVAILABLE:
     register_kazakhstan_rhetoric_endpoints(app)
     start_kazakhstan_rhetoric_refresh()
     print("[Europe Backend] ✅ Kazakhstan rhetoric routes registered + refresh started")
+
+# Register Moldova capture-vs-anchor tracker (v1.0 -- Jul 16, 2026)
+if MOLDOVA_RHETORIC_AVAILABLE:
+    register_moldova_rhetoric_endpoints(app)
+    start_moldova_rhetoric_refresh()
+    print("[Europe Backend] ✅ Moldova rhetoric routes registered + refresh started")
 
 # Register Turkey rhetoric tracker (v1.0 -- Jun 11, 2026)
 if TURKEY_RHETORIC_AVAILABLE:
