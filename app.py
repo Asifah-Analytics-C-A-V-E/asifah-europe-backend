@@ -110,6 +110,17 @@ except ImportError as e:
     POLAND_REFUGEES_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Poland refugee tracker not available: {e}")
 
+# Moldova refugee tracker (sensor) -- DUAL-READ: UKR->MDA inflow (UNHCR+Eurostat)
+# + MDA emigration/remittance outflow (UNHCR + World Bank). Bidirectional
+# migration model (Syria/Lebanon/Sudan/Cuba family).
+try:
+    from moldova_refugee_tracker import register_moldova_refugee_endpoints
+    MOLDOVA_REFUGEES_AVAILABLE = True
+    print("[Europe Backend] ✅ Moldova refugee tracker module loaded")
+except ImportError as e:
+    MOLDOVA_REFUGEES_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Moldova refugee tracker not available: {e}")
+
 # Russia rhetoric tracker + signals interpreter
 try:
     from rhetoric_tracker_russia import (
@@ -693,6 +704,9 @@ TRAVEL_ADVISORY_CODES = {
     'belarus': ['BO'],          # State Dept code for Belarus is 'BO'
     'turkmenistan': ['TX'],     # State Dept code for Turkmenistan is 'TX'
     'kazakhstan': ['KZ'],       # State Dept code for Kazakhstan is 'KZ'
+    'moldova': ['MD'],          # FIPS 'MD' (matches ISO here, unlike UP/RS/BO).
+                                # Advisory is L2 nationally with an L4 do-not-travel
+                                # carve-out for Transnistria -- the split IS the story.
 }
 
 TRAVEL_ADVISORY_LEVELS = {
@@ -4786,6 +4800,11 @@ if GREECE_MIGRATION_AVAILABLE:
 if POLAND_REFUGEES_AVAILABLE:
     register_poland_refugee_endpoints(app)
     print("[Europe Backend] ✅ Poland refugee routes registered")
+
+# Register Moldova refugee tracker (v1.0 -- Jul 16 2026 -- dual-read inflow/outflow)
+if MOLDOVA_REFUGEES_AVAILABLE:
+    register_moldova_refugee_endpoints(app)
+    print("[Europe Backend] ✅ Moldova refugee routes registered")
 
 # Register Russia rhetoric tracker
 if RUSSIA_RHETORIC_AVAILABLE:
