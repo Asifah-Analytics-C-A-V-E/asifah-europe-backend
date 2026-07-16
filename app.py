@@ -1586,6 +1586,15 @@ NOTAM_REGIONS = {
         'display_name': 'Poland',
         'flag': '🇵🇱'
     },
+    'moldova': {
+        # Chisinau FIR closures/restrictions are a live Transnistria-proximity
+        # signal (Moldova has repeatedly closed airspace during missile transits
+        # and drone incidents). LUKK = Chisinau International.
+        'fir_codes': ['LUUU'],
+        'icao_codes': ['LUKK'],
+        'display_name': 'Moldova',
+        'flag': '🇲🇩'
+    },
     'russia_west': {
         'fir_codes': ['UUWV', 'ULLL', 'UMKK'],
         'icao_codes': ['UUEE', 'UUDD', 'ULLI', 'UMKK'],
