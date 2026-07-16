@@ -1885,46 +1885,6 @@ def _classify_articles(articles):
 
 
 # ============================================
-# SUCCESSION POSITIONING (Peter's slice, Jul 16 2026)
-# Feeds: regime-signal dimension #6 + spoke:china:russia
-# ============================================
-# THE READ IS ABOUT BEIJING, NOT PUTIN. This family measures PATRON
-# POSITIONING BEHAVIOR -- third-party actions that reveal what the
-# best-informed adversary intelligence services believe about the Kremlin's
-# horizon. It NEVER adjudicates health claims: no rumor ladder, no
-# "Putin sick" phrases anywhere in the triggers. Health-rumor OSINT has been
-# annually wrong since 2014; positioning behavior is observable and sourced.
-# Precedent anchor: patron cultivation of succession alternatives has
-# historically preceded both managed transitions AND violent purges of the
-# cultivated (Jang Song-thaek, Beijing's man in Pyongyang, executed 2013).
-RUSSIA_SUCCESSION_POSITIONING_TRIGGERS = {
-    5: [
-        'china prepares putin succession', 'beijing succession plan russia',
-        'china cultivates putin successor', 'chinese intelligence russian elites succession',
-    ],
-    4: [
-        'china russian officials succession', 'beijing contacts russian elites',
-        'chinese intelligence russian officials', 'china post-putin',
-        'china relations putin successors', 'beijing russian power transition',
-        'china prepares for putin', 'wsj china putin succession',
-    ],
-    3: [
-        'china russian elites contacts', 'beijing mid-level russian officials',
-        'china hedges russia leadership', 'chinese officials kremlin succession',
-        'russia power transition china', 'patron cultivation russia',
-        'китай преемник путина', 'пекин российские элиты',
-    ],
-    2: [
-        'putin succession', 'kremlin succession', 'post-putin russia',
-        'russia power transition', 'putin successor',
-        'преемник путина', 'транзит власти россия',
-    ],
-    1: [
-        'russia leadership future', 'kremlin elites',
-    ],
-}
-
-# ============================================
 # REGIME SIGNAL SUB-SCORER (May 7 2026)
 # Mirrors iran tracker's _score_iran_regime_signals pattern.
 # Runs all five regime-signal ladders against the article corpus and
@@ -1953,7 +1913,6 @@ def _score_russia_regime_signals(articles):
         'shadow_fleet':    RUSSIA_SHADOW_FLEET_TRIGGERS,
         'brics_alignment': RUSSIA_BRICS_ALIGNMENT_TRIGGERS,
         'yuan_settlement': RUSSIA_YUAN_SETTLEMENT_TRIGGERS,
-        'succession_positioning': RUSSIA_SUCCESSION_POSITIONING_TRIGGERS,  # Jul 16 2026 -- Beijing's behavior, not Putin's health
     }
     scores = {dim: 0 for dim in dimensions}
 
@@ -2287,6 +2246,7 @@ SPOKE_READ_KEYS = {
     'armenia':    'crosstheater:armenia:fingerprint',   # future spoke -- absence-honest until built
     'hungary':    'crosstheater:hungary:fingerprint',   # axis-reversal watch (Jul 2026)
     'greenland':  'crosstheater:greenland:fingerprint', # inbound-target (Jul 2026)
+    'moldova':    'crosstheater:moldova:fingerprint',   # inbound-target, capture-vs-anchor (Jul 16 2026)
     'syria':      'crosstheater:syria:fingerprint',     # ruptured node (Jul 2026)
     'cuba':       'crosstheater:cuba:fingerprint',      # inbound-target, dual-meddle (Jul 2026)
     'venezuela':  'crosstheater:venezuela:fingerprint', # inbound-target, dual-meddle (Jul 2026)
@@ -2411,8 +2371,7 @@ def run_russia_rhetoric_scan(force=False):
         if regime_signals.get('active_count', 0) > 0:
             active_dims = [d for d in
                            ['arms_export', 'dedollarization', 'shadow_fleet',
-                            'brics_alignment', 'yuan_settlement',
-                            'succession_positioning']
+                            'brics_alignment', 'yuan_settlement']
                            if regime_signals.get(d, 0) >= 3]
             print(f"[Russia Rhetoric] 🌐 Regime signals: {regime_signals['active_count']} active "
                   f"({', '.join(active_dims)}) — max L{regime_signals['max']}")
@@ -2495,45 +2454,6 @@ def run_russia_rhetoric_scan(force=False):
         # when built). Surface-only in v1 -- the interpreter and Europe BLUF
         # can consume; score polarity per spoke awaits Russia-wheel scoping.
         result['spoke_reads'] = _read_spoke_fingerprints()
-
-        # ── Succession positioning read + China-rim spoke (Jul 16 2026) ──
-        # The read is about BEIJING: patron positioning behavior observed on
-        # the Russia corpus. Estimative, precedent-anchored, never a health
-        # claim. Written to spoke:china:russia because Beijing-cultivating-
-        # Kremlin-elites is CHINA-wheel behavior observed on the Russia rim --
-        # the China wheel's rim reader (Phase H) consumes it with zero extra
-        # wiring once its key registry includes 'russia'.
-        sp_level = regime_signals.get('succession_positioning', 0)
-        result['succession_positioning'] = {
-            'level': sp_level,
-            'active': sp_level >= 3,
-            'read': (
-                'Reported third-party cultivation of Russian elites beyond the incumbent '
-                'is consistent with patron positioning for a leadership horizon -- an '
-                'informed-actor read on what Beijing believes, not a claim about Putin. '
-                'Precedent: patron cultivation of succession alternatives has historically '
-                'preceded both managed transitions and violent purges of the cultivated '
-                '(Jang Song-thaek, 2013).'
-            ) if sp_level >= 3 else (
-                'No sustained patron-positioning signals this cycle. Baseline succession '
-                'chatter is ambient and is not scored as positioning.'
-            ),
-        }
-        try:
-            _redis_set('spoke:china:russia', {
-                'ts': datetime.now(timezone.utc).isoformat(),
-                'spoke': 'russia', 'node_class': 'peer',
-                'level': sp_level,
-                'succession_positioning': sp_level,
-                'dependency_note': ('Beijing cultivation of post-incumbent Kremlin contacts '
-                                    'reported this cycle' if sp_level >= 3 else
-                                    'No patron-positioning signals this cycle'),
-            })
-            if sp_level >= 3:
-                print(f"[Russia Rhetoric] 👑 Succession positioning ACTIVE (L{sp_level}) "
-                      f"-- spoke:china:russia written")
-        except Exception as e:
-            print(f"[Russia Rhetoric] succession spoke write error: {str(e)[:100]}")
 
         # ── Commodity coupling (v2.0 Slice 3, Jul 2026) ──
         # Producer-leverage read: wheat/potash surge = war-financing cushion.
