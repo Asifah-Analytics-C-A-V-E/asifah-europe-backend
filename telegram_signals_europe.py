@@ -295,6 +295,54 @@ def fetch_belarus_telegram_signals(hours_back=120):
         return []
 
 # ────────────────────────────────────────────────────────────
+# MOLDOVA TELEGRAM (v1.0.0 — Jul 16 2026)
+# ────────────────────────────────────────────────────────────
+# The Moldovan information space is Telegram-heavy and RU-first in exactly
+# the places that matter (Transnistria, Gagauzia, the Shor networks operate
+# ON Telegram). Curated list, VERIFY-IN-LOGS: any channel logging zero
+# messages across two scans needs its handle corrected.
+MOLDOVA_CHANNELS = [
+    ('newsmakerlive',  1.0, 'NewsMaker — RU-language Chisinau outlet; fastest Moldova wire'),
+    ('nokta_md',       0.9, 'Nokta — Gagauzia-focused independent outlet (Comrat)'),
+    ('tv8md',          0.9, 'TV8 — independent Moldovan broadcaster'),
+    ('zdgmd',          0.9, 'Ziarul de Garda — investigative (Shor networks, vote-buying)'),
+]
+
+
+def fetch_moldova_telegram_signals(hours_back=168):
+    """
+    Moldova-specific Telegram scan (dedicated list — the general Europe
+    channels are war-heavy and would drown the interference signal, the same
+    isolation rationale as Hungary).
+
+    Watching for:
+      - Election interference / vote-buying network chatter (Shor ecosystem)
+      - Transnistria escalation language (OGRF, Cobasna, Security Zone)
+      - Gagauzia separatist pressure (Comrat, Gutul)
+      - Energy blackmail cycles (Moldovagaz, Cuciurgan/MGRES)
+    """
+    if not _telegram_available():
+        print("[Telegram Moldova] Signals unavailable — skipping")
+        return []
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, _async_fetch_messages(MOLDOVA_CHANNELS, hours_back))
+                return future.result(timeout=120)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(_async_fetch_messages(MOLDOVA_CHANNELS, hours_back))
+            finally:
+                loop.close()
+    except Exception as e:
+        print(f"[Telegram Moldova] ❌ fetch error: {str(e)[:200]}")
+        return []
+
+# ────────────────────────────────────────────────────────────
 # UKRAINE TELEGRAM (v1.0.0 — May 2026)
 # ────────────────────────────────────────────────────────────
 UKRAINE_CHANNELS = [

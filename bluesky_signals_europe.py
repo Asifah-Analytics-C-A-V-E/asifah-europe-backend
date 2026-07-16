@@ -75,7 +75,7 @@ BLUESKY_ACCOUNTS_EUROPE = [
         'Radek Sikorski (Polish FM) — attribution voice'),
     ('donaldtusk.bsky.social',        1.1, ['poland', 'russia', 'ukraine'],
         'Donald Tusk (PM) — names Russia publicly; attribution = resilience'),
-    ('euvsdisinfo.bsky.social',       1.0, ['poland', 'hungary', 'russia', 'ukraine'],
+    ('euvsdisinfo.bsky.social',       1.0, ['poland', 'hungary', 'russia', 'ukraine', 'moldova'],
         'EU vs Disinfo — Doppelgänger/Matryoshka, the cognitive domain'),
     ('defence24.bsky.social',         1.0, ['poland'],
         'Defence24 — authors of the "Phase 0" hybrid-war assessment'),
@@ -117,7 +117,7 @@ BLUESKY_ACCOUNTS_EUROPE = [
     # Many European institutional accounts are on Mastodon/EU Voice rather
     # than Bluesky. Keep this list minimal and verified; add handles as
     # they're confirmed live. Unknown handles will 404 harmlessly.
-    ('euvsdisinfo.bsky.social',       0.9, ['russia', 'ukraine', 'hungary', 'belarus'],
+    ('euvsdisinfo.bsky.social',       0.9, ['russia', 'ukraine', 'hungary', 'belarus', 'moldova'],
         'EU vs Disinfo — Russian/Belarusian disinformation monitoring'),
 
     # ── Belarus opposition — native Bluesky (v1.0.0 Apr 29 2026) ──

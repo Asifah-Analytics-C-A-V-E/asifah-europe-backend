@@ -730,7 +730,8 @@ SOURCE_WEIGHTS = {
             'Ekathimerini', 'ANA-MPA', 'Greek City Times', 'Naftemporiki', 'To Vima',
             'Ukrinform', 'Defence24', 'Notes from Poland',
             'Exit.al', 'Tirana Times', 'Euronews Albania',
-            'The Brussels Times', 'VRT', 'RTBF', 'Le Soir'
+            'The Brussels Times', 'VRT', 'RTBF', 'Le Soir',
+            'NewsMaker', 'Ziarul de Garda', 'IPN', 'TV8 Moldova', 'Nokta'
         ],
         'weight': 0.85
     },
@@ -774,10 +775,8 @@ KEYWORD_SEVERITY = {
             'air defense activated', 'air defense fires',
             'scrambles jets', 'jets scrambled',
             'invokes article 5', 'article 5 invoked',
-            'operation epic fury', 'regime change operation',
+            'regime change operation',
             'ballistic missile intercepted over',
-            'iranian missile hits', 'iranian drone hits',
-            'iran strikes', 'iran attacks',
         ],
         'multiplier': 3.0
     },
@@ -971,6 +970,10 @@ TARGET_BASELINES = {
     'kazakhstan': {
         'base_adjustment': +6,
         'description': 'Central Asia\'s indispensable state — world #1 uranium producer (~40% global supply); CPC pipeline (Russia-routed oil export vulnerability); Tengiz/Karachaganak/Kashagan supergiant fields; March 15 2026 constitutional referendum (87.15% approval) consolidating Tokayev authority via Kurultai + Vice Presidency; Middle Corridor anchor bypassing Russia/Iran; Russian-language northern minority demographic vulnerability; Iran transit corridor via Caspian (Aktau port)'
+    },
+    'moldova': {
+        'base_adjustment': +8,
+        'description': 'Highest-activity Russian interference target in Europe -- election meddling + vote-buying networks (Shor), Transnistria garrison (OGRF ~1,500 + Cobasna depot), Gagauzia separatist pressure, recurring energy blackmail (Gazprom/Cuciurgan), EU-accession counterpressure'
     }
 }
 
@@ -1446,6 +1449,43 @@ TARGET_KEYWORDS = {
             'Middle Corridor', 'Kazakhstan China', 'Kazakhstan Russia',
             'Kazakhstan uranium', 'Kazakhstan referendum'
         ]
+    },
+    'moldova': {
+        # ── QUERY TIER (first 8 = the only keywords APIs ever see) ──
+        'keywords': [
+            'Moldova', 'Transnistria', 'Gagauzia', 'Maia Sandu',
+            'Moldova Russia', 'Moldova election', 'Chisinau', 'Moldova energy',
+            # ── RELEVANCE NET (v1.5 gate reads the FULL list) ──
+            # Political / interference axis
+            'Igor Dodon', 'Ilan Shor', 'Shor network', 'Victory bloc',
+            'Moldova interference', 'Moldova hybrid', 'Moldova disinformation',
+            'vote buying Moldova', 'Moldova referendum', 'Moldova EU accession',
+            'Moldova pro-Russian', 'Moldova opposition protest',
+            # Transnistria / security axis
+            'Tiraspol', 'Operational Group of Russian Forces',
+            'Russian peacekeepers Transnistria', 'Security Zone Dniester',
+            'Cobasna ammunition', 'Transnistria settlement',
+            # Gagauzia axis
+            'Evghenia Gutul', 'Comrat', 'Gagauzia autonomy',
+            # Energy blackmail axis
+            'Moldovagaz', 'Gazprom Moldova', 'Cuciurgan', 'MGRES',
+            'Moldova gas crisis', 'Moldova electricity', 'Moldova blackout',
+            # Romanian (native script -- the gate and native GDELT read these)
+            'alegeri Moldova', 'ingerința rusă', 'șantaj energetic',
+            'Transnistria separatism', 'aderare UE Moldova',
+            # Russian (Transnistria/Gagauzia information space is RU-first)
+            'Приднестровье', 'Гагаузия',
+            'выборы в Молдове', 'Кишинёв',
+            'вмешательство России Молдова',
+            'энергетический кризис Молдова',
+            'миротворцы Приднестровье',
+            'Тирасполь',
+        ],
+        'reddit_keywords': [
+            'moldova', 'transnistria', 'gagauzia', 'sandu', 'chisinau',
+            'moldova election', 'moldova russia', 'moldovan',
+            'tiraspol', 'moldova energy',
+        ]
     }
 }
 
@@ -1703,8 +1743,10 @@ EXPANDED_PRESSURE_SIGNALS = {
             'shelling', 'artillery barrage', 'cross-border fire',
             'frontline breakthrough', 'incursion', 'sabotage',
             'intercepts', 'explosions', 'hybrid attack',
-            'Ñ€Ð°ÐºÐµÑ‚Ð½Ñ‹Ð¹ ÑƒÐ´Ð°Ñ€', 'Ð±ÐµÑÐ¿Ð¸Ð»Ð¾Ñ‚Ð½Ð¸Ðº', 'Ð¾Ð±ÑÑ‚Ñ€ÐµÐ»',
-            'Ñ€Ð°ÐºÐµÑ‚Ð½Ð¸Ð¹ ÑƒÐ´Ð°Ñ€', 'Ð´Ñ€Ð¾Ð½', 'Ð¾Ð±ÑÑ‚Ñ€Ñ–Ð»',
+            # RU / UK / FR -- repaired Jul 16 2026: previous strings were
+            # UTF-8 double-encoded (mojibake) and could never match.
+            'ракетный удар', 'беспилотник', 'обстрел',
+            'ракетний удар', 'дрон', 'обстріл',
             'frappe de missile', 'attaque de drone', 'bombardement',
         ],
     },
@@ -1714,8 +1756,8 @@ EXPANDED_PRESSURE_SIGNALS = {
             'mobilization', 'reserve call-up', 'troop movement',
             'nato reinforcement', 'air defense activation', 'snap exercise',
             'state of emergency', 'embassy drawdown', 'border closure',
-            'Ð¼Ð¾Ð±Ð¸Ð»Ð¸Ð·Ð°Ñ†Ð¸Ñ', 'Ð¿Ñ€Ð¸Ð·Ñ‹Ð² Ñ€ÐµÐ·ÐµÑ€Ð²Ð¸ÑÑ‚Ð¾Ð²', 'ÑƒÑ‡ÐµÐ½Ð¸Ñ',
-            'Ð¼Ð¾Ð±Ñ–Ð»Ñ–Ð·Ð°Ñ†Ñ–Ñ', 'ÐµÐ²Ð°ÐºÑƒÐ°Ñ†Ñ–Ñ', 'Ð¿Ð¾ÑÐ¸Ð»ÐµÐ½Ð½Ñ ÐŸÐŸÐž',
+            'мобилизация', 'призыв резервистов', 'учения',
+            'мобілізація', 'евакуація', 'посилення ппо',
             'mobilisation', 'evacuation', 'renforts',
         ],
     },
@@ -1725,8 +1767,8 @@ EXPANDED_PRESSURE_SIGNALS = {
             'energy infrastructure', 'power outage', 'blackout',
             'refugee surge', 'grain corridor', 'port closure',
             'sanctions evasion', 'rail sabotage', 'cyberattack',
-            'Ð¾Ñ‚ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ ÑÐ»ÐµÐºÑ‚Ñ€Ð¾ÑÐ½ÐµÑ€Ð³Ð¸Ð¸', 'Ð±ÐµÐ¶ÐµÐ½Ñ†Ñ‹',
-            'Ð²Ñ–Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð½Ñ ÑÐ²Ñ–Ñ‚Ð»Ð°', 'Ð±Ñ–Ð¶ÐµÐ½Ñ†Ñ–',
+            'отключение электроэнергии', 'беженцы',
+            'відключення світла', 'біженці',
             'coupure de courant', 'refugies', 'cyberattaque',
         ],
     },
@@ -3000,6 +3042,14 @@ def fetch_rferl_belarus_en_rss():
     """RFE/RL Belarus Service — English-language RSS."""
     return _fetch_native_rss('https://www.rferl.org/api/zypppgmm-en', 'RFE/RL Belarus', 'en')
 
+def fetch_newsmaker_md_rss():
+    # VERIFY-IN-LOGS: wordpress feed path assumed
+    return _fetch_native_rss('https://newsmaker.md/feed/', 'NewsMaker', 'ru', '[Europe v1.5]')
+
+def fetch_zdg_md_rss():
+    # VERIFY-IN-LOGS: wordpress feed path assumed
+    return _fetch_native_rss('https://www.zdg.md/feed/', 'Ziarul de Garda', 'ro', '[Europe v1.5]')
+
 def fetch_viasna_en_rss():
     """Viasna Human Rights Centre — political prisoner tracking, English RSS. Key signal for crackdown intensity."""
     return _fetch_native_rss('https://spring96.org/en/rss', 'Viasna', 'en')
@@ -3523,6 +3573,17 @@ def _run_threat_scan(target, days=7):
     if target in ('ukraine', 'russia'):
         articles_gdelt_uk = fetch_gdelt_articles(query, days, 'ukr')
 
+    # Moldova: Romanian-language GDELT pass (v1.5). The RO information space
+    # carries the election/interference story; the RU pass above covers the
+    # Transnistria/Gagauzia space, which is Russian-first.
+    if target == 'moldova':
+        try:
+            articles_gdelt_uk.extend(fetch_gdelt_articles(
+                'Moldova OR Transnistria OR Gagauzia OR alegeri OR Chisinau',
+                days, 'ron'))
+        except Exception as e:
+            print(f"Moldova GDELT (ron) error: {e}")
+
     articles_reddit = fetch_reddit_posts(
         target,
         TARGET_KEYWORDS[target]['reddit_keywords'],
@@ -3606,6 +3667,25 @@ def _run_threat_scan(target, days=7):
             rss_articles.extend(fetch_google_news_rss('Poland military OR NATO OR border OR drone OR airspace', 'Poland News'))
         except Exception as e:
             print(f"Poland Google News error: {e}")
+
+    if target == 'moldova':
+        # Moldova native + aggregated feeds (v1.5, Jul 16 2026).
+        # NewsMaker = RU-language Chisinau outlet (Transnistria/Gagauzia space);
+        # Ziarul de Garda = RO-language investigative (Shor networks, vote-buying).
+        # Feed URLs flagged VERIFY-IN-LOGS on first deploy -- if a fetcher logs
+        # 0 articles across two scans, the URL needs correcting.
+        try:
+            rss_articles.extend(fetch_newsmaker_md_rss())
+        except Exception as e:
+            print(f"NewsMaker RSS error: {e}")
+        try:
+            rss_articles.extend(fetch_zdg_md_rss())
+        except Exception as e:
+            print(f"Ziarul de Garda RSS error: {e}")
+        try:
+            rss_articles.extend(fetch_google_news_rss('Moldova Transnistria OR Sandu OR election OR interference OR Gagauzia OR energy', 'Moldova News'))
+        except Exception as e:
+            print(f"Moldova Google News error: {e}")
 
     if target == 'turkey':
         # Turkey RSS feeds (v1.3.0)
@@ -3890,6 +3970,9 @@ def _run_threat_scan(target, days=7):
             elif target == 'azerbaijan':
                 from telegram_signals_europe import fetch_azerbaijan_telegram_signals
                 telegram_msgs = fetch_azerbaijan_telegram_signals(hours_back=days*24)
+            elif target == 'moldova':
+                from telegram_signals_europe import fetch_moldova_telegram_signals
+                telegram_msgs = fetch_moldova_telegram_signals(hours_back=days*24)
             else:
                 telegram_msgs = fetch_europe_telegram_signals(hours_back=days*24, include_extended=True)
             if telegram_msgs:
@@ -3932,6 +4015,46 @@ def _run_threat_scan(target, days=7):
                    rss_articles + telegram_articles + nitter_articles)
 
     # Score
+    # ── v1.5 (Jul 16 2026): DEDUP + RELEVANCE GATE ──
+    # Two inflation sources fixed at once:
+    # 1. NO DEDUP existed here (the URL dedup below belongs to the flights
+    #    scanner) -- the same story arriving via NewsAPI + GDELT + Google News
+    #    scored two or three times.
+    # 2. NO RELEVANCE GATE existed -- whole-feed RSS pulls (Meduza's entire
+    #    feed, broad Google News queries) contributed a full 1.0x score per
+    #    article even with ZERO target-keyword match. Article volume was
+    #    inflating pressure scores.
+    # The gate keeps an article if it (a) matches ANY target keyword -- the
+    # FULL curated list, not just the 8 the query uses, which finally puts the
+    # other 90+ keywords per country to work -- or (b) trips a severity
+    # keyword, or (c) trips a de-escalation keyword (negative signal must
+    # survive the gate). Everything else is noise and is counted, not scored.
+    _seen_keys = set()
+    _deduped = []
+    for _a in all_articles:
+        _k = (_a.get('url') or '').strip() or (_a.get('title') or '').strip().lower()
+        if _k and _k in _seen_keys:
+            continue
+        if _k:
+            _seen_keys.add(_k)
+        _deduped.append(_a)
+
+    _kw_full = [k.lower() for k in TARGET_KEYWORDS[target]['keywords']]
+    _gated, _noise_count = [], 0
+    for _a in _deduped:
+        _txt = f"{_a.get('title','')} {_a.get('description','')} {_a.get('content','')}".lower()
+        if (any(_kw in _txt for _kw in _kw_full)
+                or detect_keyword_severity(_txt) > 1.0
+                or detect_deescalation(_txt)):
+            _gated.append(_a)
+        else:
+            _noise_count += 1
+    _dupes_removed = len(all_articles) - len(_deduped)
+    print(f"[Europe v1.5] {target}: {len(all_articles)} fetched -> "
+          f"{_dupes_removed} dupes removed, {_noise_count} filtered as noise, "
+          f"{len(_gated)} scored")
+    all_articles = _gated
+
     scoring_result = calculate_threat_probability(all_articles, days, target)
     probability = scoring_result['probability']
     momentum = scoring_result['momentum']
@@ -4020,6 +4143,7 @@ def _run_threat_scan(target, days=7):
         'articles_ru': [a for a in all_articles if a.get('language') == 'ru'][:20],
         'articles_fr': [a for a in all_articles if a.get('language') == 'fr'][:20],
         'articles_uk': [a for a in all_articles if a.get('language') == 'uk'][:20],
+        'articles_ro': [a for a in all_articles if a.get('language') == 'ro'][:20],
         'articles_reddit': [a for a in all_articles if a.get('source', {}).get('name', '').startswith('r/')][:20],
         'days_analyzed': days,
         'version': '1.1.0-europe'
