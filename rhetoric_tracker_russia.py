@@ -2246,9 +2246,9 @@ SPOKE_READ_KEYS = {
     'armenia':    'crosstheater:armenia:fingerprint',   # future spoke -- absence-honest until built
     'hungary':    'crosstheater:hungary:fingerprint',   # axis-reversal watch (Jul 2026)
     'greenland':  'crosstheater:greenland:fingerprint', # inbound-target (Jul 2026)
-    'moldova':    'crosstheater:moldova:fingerprint',   # inbound-target, capture-vs-anchor (Jul 16 2026)
     'syria':      'crosstheater:syria:fingerprint',     # ruptured node (Jul 2026)
     'cuba':       'crosstheater:cuba:fingerprint',      # inbound-target, dual-meddle (Jul 2026)
+    'libya':      'crosstheater:libya:fingerprint',     # expeditionary client (Africa Corps east), dual-wheel w/ Turkey (Jul 17 2026)
     'venezuela':  'crosstheater:venezuela:fingerprint', # inbound-target, dual-meddle (Jul 2026)
     'iran':       'crosstheater:iran:fingerprint',      # aligned partner (Jul 2026)
 }
