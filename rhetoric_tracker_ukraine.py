@@ -339,6 +339,19 @@ ACTORS = {
             'icc warrant putin', 'icc warrant lvova-belova',
             'mass grave ukraine', 'atrocity ukraine',
             'оккупированная территория украины', 'фильтрационный лагерь',
+            # ── v1.3 (Jul 20 2026) — Crimea posture / Black Sea Fleet displacement ──
+            # RUMINT sub-vector: Ukrainian-sourced reports (Atesh partisan recon,
+            # leaked Russian garrison orders) of BSF command + military-family
+            # relocation OUT of Sevastopol under the sustained strike campaign.
+            # Consistent with sea-denial success; NOT a Russian concession signal.
+            # Flagged UNVERIFIED in the crimea_posture scan block (interested sources).
+            'black sea fleet evacuation', 'black sea fleet relocation',
+            'sevastopol evacuation', 'crimea evacuation', 'evacuate crimea',
+            'fleet command novorossiysk', 'fleet relocation novorossiysk',
+            'bsf withdrawal', 'black sea fleet withdrawal', 'pinchuk sevastopol',
+            'atesh', 'void group', 'crimea military families',
+            'эвакуация севастополь', 'эвакуация крым', 'флот новороссийск',
+            'евакуація крим', 'чорноморський флот евакуація',
         ],
     },
 }
@@ -863,6 +876,73 @@ def run_ukraine_rhetoric_scan(force=False):
     print(f'[Ukraine Rhetoric] Reddit: {len(reddit_signals)} posts')
 
     by_actor = _classify_articles(articles)
+
+    # ── v1.3 (Jul 20 2026): Crimea posture RUMINT sub-read ──────────────────
+    # Counts occupied-territories articles that name the BSF-displacement
+    # cluster, tags the SOURCE class (partisan/leaked/confirmed-strike), and
+    # returns an explicitly-UNVERIFIED structured block. Sensor-only: this does
+    # NOT feed the theatre score (partisan/interested sourcing must never
+    # inflate a confirmed-fact metric). The analyst layer frames the meaning.
+    _crimea_displacement_kw = [
+        'black sea fleet evacuation', 'black sea fleet relocation',
+        'sevastopol evacuation', 'crimea evacuation', 'evacuate crimea',
+        'fleet command novorossiysk', 'fleet relocation novorossiysk',
+        'bsf withdrawal', 'black sea fleet withdrawal', 'pinchuk sevastopol',
+        'crimea military families', 'эвакуация севастополь', 'эвакуация крым',
+        'евакуація крим',
+    ]
+    _rumint_sources = ['atesh', 'void group', 'leaked', 'telegram attributed',
+                       'partisan', 'reconnaissance group', 'could not verify',
+                       'could not independently verify', 'unverified']
+    _crimea_hits, _crimea_src_tags, _crimea_examples = 0, set(), []
+    for _a in articles:
+        _txt = ' '.join([
+            (_a.get('title') or '').lower(),
+            (_a.get('description') or '').lower(),
+            (_a.get('url') or '').lower().replace('-', ' ').replace('/', ' '),
+        ])
+        if any(_kw in _txt for _kw in _crimea_displacement_kw):
+            _crimea_hits += 1
+            if any(_s in _txt for _s in _rumint_sources):
+                _crimea_src_tags.add('partisan/leaked (unverified)')
+            if any(_s in _txt for _s in ('strike', 'drone', 'storm shadow',
+                                         'atacms', 'magura', 'destroyed', 'hit')):
+                _crimea_src_tags.add('strike-corroborated')
+            if len(_crimea_examples) < 4:
+                _crimea_examples.append({
+                    'title':  (_a.get('title') or '')[:180],
+                    'url':    _a.get('url', ''),
+                    'source': _a.get('source', ''),
+                })
+    # Level 0-3, deliberately capped at 3: this is a RUMINT read, never a
+    # confirmed 4/5. 1-2 reports = L1, 3-4 = L2, 5+ = L3.
+    if _crimea_hits >= 5:
+        _crimea_level = 3
+    elif _crimea_hits >= 3:
+        _crimea_level = 2
+    elif _crimea_hits >= 1:
+        _crimea_level = 1
+    else:
+        _crimea_level = 0
+    crimea_posture = {
+        'level':      _crimea_level,
+        'report_count': _crimea_hits,
+        'verified':   False,   # ALWAYS false — partisan/leaked/interested sources
+        'rumint':     True,
+        'source_classes': sorted(_crimea_src_tags),
+        'examples':   _crimea_examples,
+        'reading': ('Reports of Black Sea Fleet command / military-family '
+                    'displacement from Sevastopol toward Novorossiysk. '
+                    'Consistent with sustained Ukrainian sea-denial pressure on '
+                    'occupied Crimea. UNVERIFIED — sourced to Ukrainian partisan '
+                    'reconnaissance (Atesh) and leaked garrison orders. A '
+                    'contingency-planning / logistics-strain read, NOT a Russian '
+                    'decision to concede Crimea and NOT a shift in stated war aims.'),
+    }
+    if _crimea_hits:
+        print(f'[Ukraine Rhetoric] Crimea posture RUMINT: {_crimea_hits} report(s), '
+              f'L{_crimea_level}, sources={sorted(_crimea_src_tags) or ["unclassified"]}')
+
     actor_summaries = {}
     for actor_key, actor_articles in by_actor.items():
         actor_def = ACTORS[actor_key]
@@ -994,6 +1074,7 @@ def run_ukraine_rhetoric_scan(force=False):
         'contradiction_active':   _contradiction_active,
         'contradiction_flags':    _contradiction_flags,
         'diplomatic_max_raw':     _dt.get('score', 0),
+        'crimea_posture':    crimea_posture,   # v1.3 RUMINT sub-read (unverified, score-neutral)
         'commodity_signal':  interpretation.get('commodity_signal'),
         'cross_theater_fingerprints': interpretation.get('cross_theater_fingerprints'),
         'composite_modifier': interpretation.get('composite_modifier', 0),
