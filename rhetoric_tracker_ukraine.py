@@ -352,6 +352,27 @@ ACTORS = {
             'atesh', 'void group', 'crimea military families',
             'эвакуация севастополь', 'эвакуация крым', 'флот новороссийск',
             'евакуація крим', 'чорноморський флот евакуація',
+            # ── v1.4 (Jul 21 2026) — occupied-Crimea-under-strain frame ──
+            # The actor was blind to the strangulation/logistics story: the
+            # strike campaign isolating occupied Crimea (fuel/power collapse),
+            # grain extraction from occupied ports, and named occupied
+            # geographies. These are occupied-territory PRESSURE signals — the
+            # broad sensor read — distinct from the narrow BSF-displacement
+            # RUMINT tripwire above (v1.3) and the crimea_posture scan block.
+            # Occupied-Crimea distress reads as pressure on Russian control,
+            # convergence-framed (not a prediction of collapse).
+            'crimea fuel', 'crimea fuel crisis', 'crimea fuel shortage',
+            'crimea power outage', 'crimea blackout', 'crimea energy crisis',
+            'crimea isolated', 'crimea cut off', 'crimea supply',
+            'crimea economy', 'occupied crimea economy',
+            'feodosia', 'dzhankoi', 'saky', 'sevastopol occupied',
+            'kerch', 'kerch strait', 'crimean bridge',
+            'occupied port', 'occupied ukrainian port',
+            'stolen grain', 'grain smuggling occupied', 'looted grain',
+            'grain theft crimea', 'russian shadow fleet grain',
+            'occupied melitopol', 'occupied berdiansk', 'occupied enerhodar',
+            'zaporizhzhia nuclear plant occupied', 'znpp occupied',
+            'оккупированный крым', 'крым топливо', 'крым блэкаут',
         ],
     },
 }
