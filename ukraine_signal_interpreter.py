@@ -367,6 +367,34 @@ RED_LINES = [
             'children deported', 'mariupol survivors',
         ],
     },
+    {
+        'id': 'crimea_bsf_displacement',
+        'category': 'Occupied Territories',
+        'title': 'Black Sea Fleet Displacement from Crimea (RUMINT)',
+        'severity': 3,
+        'description':
+            'Ukrainian-sourced reports of Black Sea Fleet command and '
+            'military-family relocation OUT of occupied Sevastopol toward '
+            'Novorossiysk, under the sustained Ukrainian strike campaign on '
+            'Crimea. Consistent with successful sea-denial and logistics '
+            'strain on Russian naval infrastructure. CONVERGENCE / RUMINT '
+            'framing: this is a pressure read on Russian control of occupied '
+            'territory, NOT evidence of a Russian decision to concede Crimea '
+            'and NOT a change in stated war aims. Sources are partisan '
+            '(Atesh reconnaissance) and leaked garrison orders — interested '
+            'parties; the confirmable core is the strike campaign, not the '
+            'evacuation decision. A genuine concession signal would come as '
+            'OFFICIAL Russian language, not Ukrainian partisan leaks.',
+        'triggers_breached': [
+            'black sea fleet evacuation', 'black sea fleet withdrawal',
+            'sevastopol evacuation', 'fleet command novorossiysk',
+            'fleet relocation novorossiysk',
+        ],
+        'triggers_approaching': [
+            'crimea evacuation', 'evacuate crimea', 'crimea military families',
+            'bsf withdrawal', 'pinchuk sevastopol', 'atesh', 'void group',
+        ],
+    },
 ]
 
 
@@ -886,6 +914,10 @@ def _build_so_what_narrative(red_lines_triggered, green_lines_triggered,
         bits.append("energy-grid pressure (" + _st(grid).lower() + ")")
     if _st(front) in ('APPROACHING', 'BREACHED'):
         bits.append("frontline-collapse indicators")
+    crimea = _rl('crimea_bsf_displacement')
+    if _st(crimea) in ('APPROACHING', 'BREACHED'):
+        bits.append("Black Sea Fleet displacement from Crimea (RUMINT, "
+                    "unverified — consistent with sea-denial, not concession)")
     nuke_clause = ("; nuclear signaling inactive" if _st(nuke) == 'INACTIVE'
                    else "; nuclear signaling " + _st(nuke).lower())
     if bits:
