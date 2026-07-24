@@ -357,7 +357,7 @@ app = Flask(__name__)
 # CONFIGURATION
 # ========================================
 NEWSAPI_KEY = os.environ.get('NEWSAPI_KEY')
-GDELT_BASE_URL = "http://api.gdeltproject.org/api/v2/doc/doc"
+GDELT_BASE_URL = "https://api.gdeltproject.org/api/v2/doc/doc"  # Jul 23 2026: was http:// -- every request paid a redirect before starting
 
 # Cache TTL in seconds (4 hours)
 CACHE_TTL = 12 * 60 * 60
@@ -2483,8 +2483,43 @@ def fetch_newsapi_articles(query, days=7, language='en'):
         return []
 
 
+# ── Shared GDELT gateway (Jul 23 2026) ────────────────────────────────
+# Europe runs ~20 background threads on 6-12h cycles that boot within seconds
+# of each other, so they re-align and hammer GDELT together. A live scan showed
+# dozens of consecutive "GDELT eng: HTTP 429" lines and Russia reporting
+# "827 articles fetched (0 from GDELT)". The gateway serialises and paces every
+# GDELT call on this backend behind one semaphore.
+try:
+    from gdelt_gateway import gdelt_fetch as _gw_fetch
+    _GDELT_GATEWAY = True
+except ImportError:
+    print("[Europe v1.1] gdelt_gateway not available -- using direct GDELT calls")
+    _GDELT_GATEWAY = False
+
 def fetch_gdelt_articles(query, days=7, language='eng'):
-    """Fetch articles from GDELT"""
+    """Fetch articles from GDELT -- routed through the shared gateway.
+
+    This is the busiest GDELT caller on the backend: it is invoked per theatre
+    per language, which is why the logs fill with "[Europe v1.1] GDELT eng:
+    HTTP 429". Article shape preserved exactly (`source` is a dict).
+    """
+    if _GDELT_GATEWAY:
+        _lang_map_gw = {'eng': 'en', 'rus': 'ru', 'fra': 'fr', 'ukr': 'uk',
+                        'pol': 'pl', 'dan': 'da', 'deu': 'de', 'ara': 'ar',
+                        'hun': 'hu', 'ron': 'ro', 'bel': 'be'}
+        _q = f"({query})" if ' OR ' in query else query
+        raw = _gw_fetch(_q, language=language, timespan=f'{days}d',
+                        maxrecords=75, label=f'europe/{language}')
+        return [{
+            'title':       a.get('title', ''),
+            'description': a.get('title', ''),
+            'url':         a.get('url', ''),
+            'publishedAt': a.get('published', ''),
+            'source':      {'name': a.get('source') or 'GDELT'},
+            'content':     a.get('title', ''),
+            'language':    _lang_map_gw.get(language, 'en'),
+        } for a in raw]
+
     try:
         wrapped_query = f"({query})" if ' OR ' in query else query
 

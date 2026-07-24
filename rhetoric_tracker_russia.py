@@ -1683,7 +1683,41 @@ def _fetch_rss(url, source_name, weight=0.85, max_items=20):
     return articles
 
 
+# ── Shared GDELT gateway (Jul 23 2026) ────────────────────────────────
+# Europe runs ~20 background threads on 6-12h cycles that boot within seconds
+# of each other, so they re-align and hammer GDELT together. A live scan showed
+# dozens of consecutive "GDELT eng: HTTP 429" lines and Russia reporting
+# "827 articles fetched (0 from GDELT)". The gateway serialises and paces every
+# GDELT call on this backend behind one semaphore.
+try:
+    from gdelt_gateway import gdelt_fetch as _gw_fetch
+    _GDELT_GATEWAY = True
+except ImportError:
+    print("[Russia Rhetoric] gdelt_gateway not available -- using direct GDELT calls")
+    _GDELT_GATEWAY = False
+
 def _fetch_gdelt(query, language='eng', days=3, max_records=25):
+    """Routed through the shared GDELT gateway.
+
+    Russia runs the widest language sweep on the backend (eng/rus/ukr/bel/ara/
+    fas), and every one of them was timing out -- the last scan logged
+    "827 articles fetched (0 from GDELT)". Shape preserved; `source` is a dict
+    carrying a language label rather than the domain.
+    """
+    if _GDELT_GATEWAY:
+        _lang_map_gw = {'eng': 'en', 'rus': 'ru', 'ukr': 'uk'}
+        raw = _gw_fetch(query, language=language, timespan=f'{days}d',
+                        maxrecords=max_records, label=f'russia/{language}')
+        return [{
+            'title':       a.get('title', ''),
+            'description': a.get('title', ''),
+            'url':         a.get('url', ''),
+            'publishedAt': a.get('published', ''),
+            'source':      {'name': f"GDELT ({language})"},
+            'content':     a.get('title', ''),
+            'language':    _lang_map_gw.get(language, language),
+        } for a in raw]
+
     articles = []
     try:
         params = {

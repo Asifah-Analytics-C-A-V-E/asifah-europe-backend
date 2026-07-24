@@ -674,7 +674,44 @@ def _fetch_rss(url, name, weight=1.0):
         return []
 
 
+# ── Shared GDELT gateway (Jul 23 2026) ────────────────────────────────
+try:
+    from gdelt_gateway import gdelt_fetch as _gw_fetch
+    _GDELT_GATEWAY = True
+except ImportError:
+    print("[Hungary Rhetoric] gdelt_gateway not available -- using direct GDELT calls")
+    _GDELT_GATEWAY = False
+
+
 def _fetch_gdelt(query, language='en', timespan='7d'):
+    """Routed through the shared GDELT gateway.
+
+    Hungary embeds sourcelang INSIDE the query string rather than passing it as
+    a parameter, so the gateway is handed the composed query with
+    language='eng' to stop it appending a second, conflicting sourcelang.
+    """
+    lang_param = {'en': 'eng', 'hu': 'hun', 'ru': 'rus'}.get(language, 'eng')
+    if _GDELT_GATEWAY:
+        raw = _gw_fetch(f'{query} sourcelang:{lang_param}', language='eng',
+                        timespan=timespan, maxrecords=30,
+                        label=f'hungary/{lang_param}')
+        out = []
+        for a in raw:
+            t = (a.get('title') or '').strip()
+            if not t:
+                continue
+            out.append({
+                'title':       t[:300],
+                'description': t[:400],
+                'url':         a.get('url', ''),
+                'publishedAt': a.get('published', ''),
+                'source':      {'name': a.get('source') or 'GDELT'},
+                'content':     t,
+                'language':    language,
+                'feed_type':   'gdelt',
+            })
+        return out
+
     try:
         # Language code mapping for GDELT
         lang_param = {'en': 'eng', 'hu': 'hun', 'ru': 'rus'}.get(language, 'eng')
@@ -1312,6 +1349,25 @@ def _background_refresh_loop():
     """Daemon loop -- runs run_hungary_scan() every 12 hours."""
     global _refresh_stop_event
     import time as _time
+
+    # Jul 23 2026 -- STAGGERED BOOT DELAY.
+    # This loop previously scanned IMMEDIATELY on start, which is why every
+    # Europe restart logged "[Hungary Background] Starting scheduled scan..."
+    # during boot. With ~20 background threads starting within seconds of each
+    # other, all of them scanning at once produced a memory and GDELT spike at
+    # exactly the moment the app was least able to absorb it -- and because the
+    # cycles then stay in phase, they re-align on every subsequent tick.
+    #
+    # Sleeping first breaks the alignment. Each tracker should use a DIFFERENT
+    # offset; Hungary takes 11 minutes.
+    _BOOT_DELAY_SECONDS = 11 * 60
+    print(f'[Hungary Background] Boot delay {_BOOT_DELAY_SECONDS}s before first scan '
+          f'(staggering against the other Europe trackers)')
+    for _ in range(_BOOT_DELAY_SECONDS // 30):
+        if _refresh_stop_event is not None and _refresh_stop_event.is_set():
+            return
+        _time.sleep(30)
+
     while _refresh_stop_event is not None and not _refresh_stop_event.is_set():
         try:
             print('[Hungary Background] Starting scheduled scan...')
