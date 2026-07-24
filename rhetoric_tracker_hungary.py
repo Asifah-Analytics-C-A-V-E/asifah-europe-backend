@@ -1350,24 +1350,10 @@ def _background_refresh_loop():
     global _refresh_stop_event
     import time as _time
 
-    # Jul 23 2026 -- STAGGERED BOOT DELAY.
-    # This loop previously scanned IMMEDIATELY on start, which is why every
-    # Europe restart logged "[Hungary Background] Starting scheduled scan..."
-    # during boot. With ~20 background threads starting within seconds of each
-    # other, all of them scanning at once produced a memory and GDELT spike at
-    # exactly the moment the app was least able to absorb it -- and because the
-    # cycles then stay in phase, they re-align on every subsequent tick.
-    #
-    # Sleeping first breaks the alignment. Each tracker should use a DIFFERENT
-    # offset; Hungary takes 11 minutes.
-    _BOOT_DELAY_SECONDS = 11 * 60
-    print(f'[Hungary Background] Boot delay {_BOOT_DELAY_SECONDS}s before first scan '
-          f'(staggering against the other Europe trackers)')
-    for _ in range(_BOOT_DELAY_SECONDS // 30):
-        if _refresh_stop_event is not None and _refresh_stop_event.is_set():
-            return
-        _time.sleep(30)
-
+    # NOTE: this loop scans immediately when started, by design. The BOOT
+    # STAGGER lives centrally in app.py (_staggered_start), which defers the
+    # start call itself -- one schedule, one place to tune it, rather than a
+    # different delay buried in each of ~20 tracker files.
     while _refresh_stop_event is not None and not _refresh_stop_event.is_set():
         try:
             print('[Hungary Background] Starting scheduled scan...')

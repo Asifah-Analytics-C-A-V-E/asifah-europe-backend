@@ -2496,6 +2496,50 @@ except ImportError:
     print("[Europe v1.1] gdelt_gateway not available -- using direct GDELT calls")
     _GDELT_GATEWAY = False
 
+# ═══════════════════════════════════════════════════════════════════════
+# BOOT STAGGER (Jul 23 2026)
+# ═══════════════════════════════════════════════════════════════════════
+# Europe starts ~20 background threads within seconds of each other. Each then
+# loops on a 6h or 12h cycle -- so they stay IN PHASE and re-converge on every
+# tick, producing a simultaneous spike of article fetching, GDELT calls and
+# memory four times a day. The boot log shows the first of those spikes
+# directly: several trackers scanning while the app is still coming up.
+#
+# Rather than bury a different delay inside each of ~20 tracker files, this
+# defers the START CALL itself. Each tracker keeps its own loop untouched; it
+# simply begins its cycle at a different wall-clock minute, and stays offset
+# from then on.
+#
+# Offsets are minutes. Keep them distinct; the exact values matter less than
+# the spacing. Weather is left immediate -- it is cheap and short.
+import threading as _stagger_threading
+import time as _stagger_time
+
+_STAGGER_ENABLED = os.environ.get('DISABLE_BOOT_STAGGER', '').lower() not in ('1', 'true', 'yes')
+
+
+def _staggered_start(fn, delay_minutes, name):
+    """Start a background refresh after `delay_minutes`, off the boot path."""
+    if not _STAGGER_ENABLED or delay_minutes <= 0:
+        try:
+            fn()
+        except Exception as e:
+            print(f"[Stagger] {name}: immediate start failed: {str(e)[:110]}")
+        return
+
+    def _runner():
+        _stagger_time.sleep(delay_minutes * 60)
+        try:
+            fn()
+            print(f"[Stagger] {name}: background refresh started (+{delay_minutes}m)")
+        except Exception as e:
+            print(f"[Stagger] {name}: start failed: {str(e)[:110]}")
+
+    _stagger_threading.Thread(target=_runner, daemon=True,
+                              name=f'stagger-{name}').start()
+    print(f"[Stagger] {name}: queued for +{delay_minutes}m")
+
+
 def fetch_gdelt_articles(query, days=7, language='eng'):
     """Fetch articles from GDELT -- routed through the shared gateway.
 
@@ -4858,67 +4902,67 @@ if MOLDOVA_REFUGEES_AVAILABLE:
 # Register Russia rhetoric tracker
 if RUSSIA_RHETORIC_AVAILABLE:
     register_russia_rhetoric_endpoints(app)
-    start_russia_rhetoric_refresh()
+    _staggered_start(start_russia_rhetoric_refresh, 0, 'russia')
     print("[Europe Backend] ✅ Russia rhetoric routes registered")
 
 # Register Belarus rhetoric tracker
 if BELARUS_RHETORIC_AVAILABLE:
     register_belarus_rhetoric_endpoints(app)
-    start_belarus_rhetoric_refresh()
+    _staggered_start(start_belarus_rhetoric_refresh, 4, 'belarus')
     print("[Europe Backend] ✅ Belarus rhetoric routes registered + refresh started")
 
 # Register Ukraine rhetoric tracker
 if UKRAINE_RHETORIC_AVAILABLE:
     register_ukraine_rhetoric_endpoints(app)
-    start_ukraine_rhetoric_refresh()
+    _staggered_start(start_ukraine_rhetoric_refresh, 8, 'ukraine')
     print("[Europe Backend] ✅ Ukraine rhetoric routes registered + refresh started")
 
 # Register Armenia rhetoric tracker (v1.0 -- Jul 12, 2026)
 if ARMENIA_RHETORIC_AVAILABLE:
     register_armenia_rhetoric_endpoints(app)
-    start_armenia_rhetoric_refresh()
+    _staggered_start(start_armenia_rhetoric_refresh, 12, 'armenia')
     print("[Europe Backend] ✅ Armenia rhetoric routes registered + refresh started")
 
 # Register Poland financial pulse (v1.0 -- Jul 12, 2026)
 if PL_FINANCIAL_AVAILABLE:
     register_poland_financial_endpoints(app)
-    start_pl_financial_refresh()
+    _staggered_start(start_pl_financial_refresh, 16, 'poland-financial')
     print("[Europe Backend] ✅ Poland financial routes registered + refresh started")
 
 # Register Poland consensus tracker (v1.0 -- Jul 12, 2026)
 if PL_RHETORIC_AVAILABLE:
     register_poland_rhetoric_endpoints(app)
-    start_poland_rhetoric_scanner()
+    _staggered_start(start_poland_rhetoric_scanner, 20, 'poland-rhetoric')
     print("[Europe Backend] ✅ Poland rhetoric routes registered + scanner started")
 
 # Register Kazakhstan financial pulse (v1.0 -- Jul 12, 2026)
 if KZ_FINANCIAL_AVAILABLE:
     register_kazakhstan_financial_endpoints(app)
-    start_kz_financial_refresh()
+    _staggered_start(start_kz_financial_refresh, 24, 'kazakhstan-financial')
     print("[Europe Backend] ✅ Kazakhstan financial routes registered + refresh started")
 
 # Register Kazakhstan multi-vector tracker (v1.0 -- Jul 12, 2026)
 if KAZAKHSTAN_RHETORIC_AVAILABLE:
     register_kazakhstan_rhetoric_endpoints(app)
-    start_kazakhstan_rhetoric_refresh()
+    _staggered_start(start_kazakhstan_rhetoric_refresh, 28, 'kazakhstan-rhetoric')
     print("[Europe Backend] ✅ Kazakhstan rhetoric routes registered + refresh started")
 
 # Register Moldova capture-vs-anchor tracker (v1.0 -- Jul 16, 2026)
 if MOLDOVA_RHETORIC_AVAILABLE:
     register_moldova_rhetoric_endpoints(app)
-    start_moldova_rhetoric_refresh()
+    _staggered_start(start_moldova_rhetoric_refresh, 32, 'moldova')
     print("[Europe Backend] ✅ Moldova rhetoric routes registered + refresh started")
 
 # Register Turkey rhetoric tracker (v1.0 -- Jun 11, 2026)
 if TURKEY_RHETORIC_AVAILABLE:
     register_turkey_rhetoric_endpoints(app)
-    start_turkey_rhetoric_refresh()
+    _staggered_start(start_turkey_rhetoric_refresh, 36, 'turkey')
     print("[Europe Backend] ✅ Turkey rhetoric routes registered + refresh started")
 
 # Register Hungary rhetoric tracker (v1.0 -- May 17, 2026)
 if HUNGARY_RHETORIC_AVAILABLE:
     register_hungary_rhetoric_endpoints(app)
-    start_hungary_rhetoric_refresh()
+    _staggered_start(start_hungary_rhetoric_refresh, 40, 'hungary')
     print("[Europe Backend] ✅ Hungary rhetoric routes registered + refresh started")
 
 # Register Russia stability index
