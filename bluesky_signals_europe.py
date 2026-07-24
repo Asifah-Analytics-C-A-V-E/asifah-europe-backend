@@ -58,6 +58,49 @@ BLUESKY_TIMEOUT = 8
 #   provides a legal, stable path to monitor accounts that haven't left X.
 #   Mirrors can go dark — if fetches fail consistently, comment the handle.
 # ────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# DEAD-HANDLE PRUNE -- July 23 2026
+# ═══════════════════════════════════════════════════════════════════════
+# 14 handles removed after a live Europe scan returned HTTP 400 for every one
+# -- 70% of the queried roster. Each was costing a failed request per theatre,
+# and Europe queries 13 theatres, so a single dead handle was burning up to 13
+# requests per cycle.
+#
+# WHAT THIS COST:
+#   * natohq, euvsdisinfo, potus, secrubio -- queried for nearly every theatre.
+#   * The entire Ukrainian official layer: mfa.gov.ua, defenceu, zelensky-repost.
+#   * The entire Russian official layer: mfarussia, modrussia.
+#   * Belarus opposition: tsikhanouskaya. Poland: sikorskiradek, defence24.
+#   * Greece/Cyprus MFAs -- both theatres lost their only national source.
+#
+# Removed:
+#   cyprusmfa.bsky.social
+#   defence24.bsky.social
+#   defenceu.govmirrors.com
+#   euvsdisinfo.bsky.social
+#   euvsdisinfo.bsky.social
+#   greekmfa.bsky.social
+#   mfa.gov.ua
+#   mfarussia.govmirrors.com
+#   modrussia.govmirrors.com
+#   natohq.bsky.social
+#   potus.govmirrors.com
+#   secrubio.govmirrors.com
+#   sikorskiradek.bsky.social
+#   tsikhanouskaya.bsky.social
+#   zelensky-repost.bsky.social
+#
+# STILL ALIVE (do not remove):
+#   donaldtusk.bsky.social, notesfrompoland.bsky.social,
+#   realdonaldtrump.govmirrors.com, state-department.bsky.social,
+#   statedept.govmirrors.com
+#
+# ALIVE BUT EMPTY: azerbaijanmfa.bsky.social returns 200 with no posts. Kept --
+# an empty feed is a real observation; a 400 is not.
+#
+# NOT replaced with guesses: ~70% of this roster failed, so an invented handle
+# is more likely to add another 400 than a source. Verify before adding.
+# ═══════════════════════════════════════════════════════════════════════
 BLUESKY_ACCOUNTS_EUROPE = [
     # ── Poland (v1.1 — Jul 12 2026) ───────────────────────────
     # The Poland tracker measures the TAPE (Russia never claims), so what we
@@ -71,14 +114,8 @@ BLUESKY_ACCOUNTS_EUROPE = [
     # dead-handle sweep is the precedent for pruning what doesn't.
     ('notesfrompoland.bsky.social',   1.0, ['poland'],
         'Notes from Poland — English-language Polish analysis'),
-    ('sikorskiradek.bsky.social',     1.1, ['poland', 'russia', 'ukraine'],
-        'Radek Sikorski (Polish FM) — attribution voice'),
     ('donaldtusk.bsky.social',        1.1, ['poland', 'russia', 'ukraine'],
         'Donald Tusk (PM) — names Russia publicly; attribution = resilience'),
-    ('euvsdisinfo.bsky.social',       1.0, ['poland', 'hungary', 'russia', 'ukraine', 'moldova'],
-        'EU vs Disinfo — Doppelgänger/Matryoshka, the cognitive domain'),
-    ('defence24.bsky.social',         1.0, ['poland'],
-        'Defence24 — authors of the "Phase 0" hybrid-war assessment'),
 
     # ── US government — native Bluesky ────────────────────────
     ('state-department.bsky.social',  1.0, ['*'],
@@ -86,14 +123,10 @@ BLUESKY_ACCOUNTS_EUROPE = [
 
     # ── US government — govmirrors (X-sourced) ─────────────────
     # Use mirrors ONLY if native Bluesky account does not exist.
-    ('potus.govmirrors.com',          1.0, ['greenland', 'ukraine', 'russia', 'poland', 'hungary', 'belarus'],
-        'POTUS (X mirror) — White House executive statements'),
     ('statedept.govmirrors.com',      0.9, ['*'],
         'StateDept (X mirror) — redundant with native, kept as backup'),
 
     # ── NATO / EU institutions — native Bluesky ────────────────
-    ('natohq.bsky.social',            1.0, ['*'],
-        'NATO (official) — alliance posture, deployments, Article 5; covers Belarus border'),
 
     # ── Ukraine — native Bluesky + verified mirrors ────────────
     # v1.1.0 (May 24 2026): Replaced unverified zelenskyyua.bsky.social
@@ -104,48 +137,27 @@ BLUESKY_ACCOUNTS_EUROPE = [
     # Trade-off: lower post volume vs. X (mirror lag ~minutes), but
     # captures all public Zelensky statements including pre-strike
     # warnings (e.g. May 23 2026 Oreshnik warning).
-    ('zelensky-repost.bsky.social',   1.2, ['ukraine', 'russia', 'belarus'],
-        'President Zelensky (X mirror via @hbouwmeester) — direct statements, '
-        'pre-strike warnings, ceasefire framing; Belarus relevant for second-front concerns'),
-    ('mfa.gov.ua',                    1.1, ['ukraine', 'russia', 'belarus'],
-        'Ukraine MFA (custom domain) — diplomatic signals; Belarus deployment monitoring'),
     # Ukraine MoD via govmirrors (unverified — comment out if 404s)
-    ('defenceu.govmirrors.com',       1.0, ['ukraine', 'russia', 'belarus'],
-        'Ukraine MoD (X mirror, unverified) — operational reports, missile/drone strikes'),
 
     # ── European institutions — where available ────────────────
     # Many European institutional accounts are on Mastodon/EU Voice rather
     # than Bluesky. Keep this list minimal and verified; add handles as
     # they're confirmed live. Unknown handles will 404 harmlessly.
-    ('euvsdisinfo.bsky.social',       0.9, ['russia', 'ukraine', 'hungary', 'belarus', 'moldova'],
-        'EU vs Disinfo — Russian/Belarusian disinformation monitoring'),
 
     # ── Belarus opposition — native Bluesky (v1.0.0 Apr 29 2026) ──
     # Tikhanovskaya's office is the primary international voice of the
     # Belarusian democratic movement. Handle is unverified — if it 404s,
     # remove with no impact (graceful degradation pattern).
-    ('tsikhanouskaya.bsky.social',    1.1, ['belarus', 'russia'],
-        'Sviatlana Tsikhanouskaya (if native) — Belarusian opposition leader in exile'),
 
     # ── govmirrors fallbacks for X-only accounts ──────────────
     ('realdonaldtrump.govmirrors.com', 1.2, ['greenland', 'ukraine', 'russia', 'poland', 'hungary', 'belarus', 'greece', 'cyprus', 'azerbaijan'],
         'Trump (X mirror) — Greenland/Ukraine/NATO/Belarus statements'),
-    ('secrubio.govmirrors.com',        1.1, ['greenland', 'ukraine', 'russia', 'poland', 'hungary', 'belarus', 'greece', 'cyprus', 'azerbaijan'],
-        'US SecState Rubio (X mirror) -- Europe/Arctic/Belarus/Hungary policy'),
-    ('modrussia.govmirrors.com',       1.1, ['russia', 'ukraine', 'belarus'],
-        'Russian MoD (X mirror) — official claims; Belarus deployment relevant'),
-    ('mfarussia.govmirrors.com',       1.0, ['russia', 'ukraine', 'belarus'],
-        'Russian MFA (X mirror) — diplomatic signaling; Union State commentary'),
 
     # -- Eastern Mediterranean / Caucasus spoke (Greece, Cyprus, Azerbaijan) --
     # Turkey-spoke + Iran-spoke expansion (Jun 2026). The '*' accounts above
     # (State Dept, NATO) plus the now-extended Rubio/Trump mirrors already give
     # these trackers real coverage. The country-specific MFA handles below are
     # unverified candidates and 404 harmlessly (graceful degradation pattern).
-    ('greekmfa.bsky.social',          1.0, ['greece', 'cyprus'],
-        'Greek MFA (if native, unverified) -- Aegean/Greece-Turkey/Cyprus signals'),
-    ('cyprusmfa.bsky.social',         1.0, ['cyprus', 'greece'],
-        'Cyprus MFA (if native, unverified) -- Eastern Med, buffer zone, hydrocarbons'),
     ('azerbaijanmfa.bsky.social',     0.9, ['azerbaijan'],
         'Azerbaijan MFA (if native, unverified) -- Caucasus, Iran-border, Karabakh'),
 ]
