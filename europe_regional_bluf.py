@@ -1,7 +1,7 @@
 """
 europe_regional_bluf.py
 Asifah Analytics -- Europe Backend Module
-v3.5.2 -- July 25, 2026 (shape-derived article count + vector levels)
+v3.5.4 -- July 25, 2026 (multi-dialect vectors + derived peak lift)
 
 Europe Regional BLUF (Bottom Line Up Front) Engine.
 
@@ -278,19 +278,96 @@ _NON_VECTOR_KEYS = {
 }
 
 
+# Band / posture / state vocabulary -> 0-5 ladder. Harvested from the live
+# Armenia, Kazakhstan and Poland interpreters (Jul 25 2026). Unknown strings
+# resolve to 0 rather than guessing -- add them here when a tracker coins one.
+_BAND_TO_LEVEL = {
+    # baseline
+    'quiet': 0, 'off': 0, 'none': 0, 'dormant': 0, 'baseline': 0, 'normal': 0,
+    'low': 0, 'stable': 0, 'anchored_west': 0, 'cooperative_buffer': 0,
+    'holding': 0, 'alignment': 0, 'unknown': 0, 'inactive': 0,
+    # watch
+    'watch': 1, 'rhetorical': 1, 'tilting': 1, 'drifting': 1,
+    'drifting_west': 1, 'friction': 1, 'moscow_pull': 1, 'approaching': 1,
+    # tension
+    'contested': 2, 'simmering': 2, 'elevated': 2, 'warning': 2,
+    'strained': 2, 'strained_buffer': 2, 'flipping_friction': 2,
+    # confrontation
+    'high': 3, 'active': 3, 'fracturing': 3, 'eroding': 3,
+    # incident
+    'acute': 4, 'severe': 4, 'critical': 4, 'breached': 4, 'rupture': 4,
+    # active conflict
+    'surge': 5, 'conflict': 5, 'war': 5,
+}
+
+# Fields that can carry a vector's level, in descending confidence order.
+_LEVEL_FIELDS_INT  = ('level', 'rung', 'threat_level', 'escalation_level')
+_LEVEL_FIELDS_BAND = ('band', 'threat_band', 'posture', 'state', 'relationship',
+                      'class', 'tier')
+_LEVEL_FIELDS_STAGE = ('stage', 'chain_stage')
+
+
+def _level_from_vector_obj(v):
+    """Read a vector object's level across every dialect in the platform.
+
+    Nine different field names carry this value in the wild:
+
+        level / rung          int, direct
+        band / threat_band    'quiet' | 'simmering' | 'contested' | ...
+        posture / state       same vocabulary
+        stage / chain_stage   'S1', '2/3', 2
+        active                bool -- clock/window vectors that are on or off
+
+    Reading only `level` surfaced exactly ONE of Armenia's six vectors
+    (turkey_normalization, the only one that happens to use that name) and
+    none of Poland's. Returns None when the object carries no level at all,
+    so non-vector dicts are skipped rather than defaulted to 0.
+    """
+    if not isinstance(v, dict):
+        return None
+    for f in _LEVEL_FIELDS_INT:
+        x = v.get(f)
+        if isinstance(x, bool):
+            continue
+        if isinstance(x, (int, float)):
+            return max(0, min(5, int(x)))
+    # No explicit int. Take the MAX across every remaining dialect rather than
+    # first-match: Armenia's TRIPP corridor carries stage 'S1' AND
+    # threat_band 'quiet', and first-match on threat_band would report L0 for a
+    # corridor that has visibly entered stage 1. A regional rollup should not
+    # under-read a vector that is saying something on any of its channels.
+    candidates = []
+    for f in _LEVEL_FIELDS_BAND:
+        x = v.get(f)
+        if isinstance(x, str) and x.strip():
+            mapped = _BAND_TO_LEVEL.get(x.strip().lower())
+            if mapped is not None:
+                candidates.append(mapped)
+    for f in _LEVEL_FIELDS_STAGE:
+        x = v.get(f)
+        if isinstance(x, (int, float)) and not isinstance(x, bool):
+            candidates.append(max(0, min(5, int(x))))
+        elif isinstance(x, str):
+            digits = ''.join(c for c in x if c.isdigit())
+            if digits:
+                candidates.append(max(0, min(5, int(digits[0]))))
+    # Clock / window / convergence vectors are simply on or off.
+    act = v.get('active')
+    if isinstance(act, bool):
+        candidates.append(2 if act else 0)
+    return max(candidates) if candidates else None
+
+
 def _extract_vector_levels(raw):
     """Vector levels, derived from payload SHAPE when no dict is provided.
 
-    Some trackers emit a tidy `vector_levels` map. Others (Armenia, and most
-    of the multi-vector spokes) emit each vector as its own top-level object:
+    Some trackers emit a tidy `vector_levels` map. Most multi-vector spokes
+    instead emit each vector as its own top-level object -- with NO shared
+    field name for the level. See _level_from_vector_obj.
 
-        'tripp_corridor':  {'level': 2, ...}
-        'russia_pressure': {'level': 1, ...}
-
-    Rather than maintain a per-country field list -- which is the hardcoded
-    roster problem one layer down -- scan for any top-level dict carrying an
-    integer `level`. A tracker that adds a seventh vector gets it surfaced with
-    no edit here.
+    Deriving from shape rather than a per-country field list keeps this from
+    becoming the hardcoded-roster problem one layer down: a tracker that adds
+    a seventh vector gets it surfaced with no edit here.
     """
     if not isinstance(raw, dict):
         return {}
@@ -301,11 +378,9 @@ def _extract_vector_levels(raw):
     for k, v in raw.items():
         if k in _NON_VECTOR_KEYS or not isinstance(v, dict):
             continue
-        lvl = v.get('level')
-        if isinstance(lvl, bool):
-            continue
-        if isinstance(lvl, (int, float)):
-            derived[k] = int(lvl)
+        lvl = _level_from_vector_obj(v)
+        if lvl is not None:
+            derived[k] = lvl
     return derived
 
 
@@ -347,6 +422,17 @@ def _normalize_tracker_data(theatre, raw_data):
     # (dual-panel spokes, Greece). Read both; absent -> 0 -> no-op.
     peak = max(_safe_int(raw_data.get('peak_wheel_level', 0)),
                _safe_int(raw_data.get('peak_vector_level', 0)))
+
+    # Most spokes never emit either field -- Kazakhstan does not, and its
+    # composite read L0 while its domestic tripwire chain sat at 2/3 SIMMERING
+    # with a commodity convergence ACTIVE. A weighted composite that dilutes a
+    # live tripwire to baseline is under-reading the theatre, so derive the
+    # peak from the vector map when the tracker does not publish one.
+    if peak == 0:
+        _vl = _extract_vector_levels(raw_data)
+        if _vl:
+            peak = max(_vl.values())
+
     if peak > threat:
         threat = peak
 
