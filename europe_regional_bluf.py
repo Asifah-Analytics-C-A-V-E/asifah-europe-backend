@@ -1,7 +1,7 @@
 """
 europe_regional_bluf.py
 Asifah Analytics -- Europe Backend Module
-v3.5.1 -- July 25, 2026 (convergence panel + hub-render fields)
+v3.5.2 -- July 25, 2026 (shape-derived article count + vector levels)
 
 Europe Regional BLUF (Bottom Line Up Front) Engine.
 
@@ -240,6 +240,75 @@ def _safe_str(val, default=''):
 # ============================================================
 # COMPATIBILITY SHIM -- v1.0
 # ============================================================
+def _extract_article_count(raw):
+    """Article count across every field name in the wild.
+
+    Trackers disagree: Russia/Greenland emit `article_count`, Armenia emits
+    `total_articles` plus an `articles_by_source` breakdown, others use
+    `articles_analyzed`. Reading only one name renders "-- articles" on the
+    hub page for every tracker that chose differently -- which looked like a
+    Redis failure and was really a vocabulary mismatch.
+    """
+    if not isinstance(raw, dict):
+        return 0
+    for field in ('article_count', 'total_articles', 'articles_analyzed',
+                  'articles_count', 'total_signals'):
+        v = raw.get(field)
+        if isinstance(v, int) and v > 0:
+            return v
+    abs_ = raw.get('articles_by_source')
+    if isinstance(abs_, dict):
+        tot = sum(v for v in abs_.values() if isinstance(v, int))
+        if tot:
+            return tot
+    arts = raw.get('articles')
+    if isinstance(arts, list):
+        return len(arts)
+    return 0
+
+
+# Structural fields that look like vectors but are not -- excluded from the
+# derived vector map so they never render as pills.
+_NON_VECTOR_KEYS = {
+    'so_what', 'red_lines', 'green_lines', 'diplomatic_track', 'delta',
+    'interpretation', 'articles_by_source', 'actor_summaries', 'rumint',
+    'dyad_read', 'cross_theater_fingerprints', 'contradiction_flags',
+    'corpus_health', 'compound_layers', 'compound_convergence', 'levels',
+    'spoke_reads', 'wheel_convergence', 'patron_subtags', 'raw',
+}
+
+
+def _extract_vector_levels(raw):
+    """Vector levels, derived from payload SHAPE when no dict is provided.
+
+    Some trackers emit a tidy `vector_levels` map. Others (Armenia, and most
+    of the multi-vector spokes) emit each vector as its own top-level object:
+
+        'tripp_corridor':  {'level': 2, ...}
+        'russia_pressure': {'level': 1, ...}
+
+    Rather than maintain a per-country field list -- which is the hardcoded
+    roster problem one layer down -- scan for any top-level dict carrying an
+    integer `level`. A tracker that adds a seventh vector gets it surfaced with
+    no edit here.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    vl = raw.get('vector_levels')
+    if isinstance(vl, dict) and vl:
+        return vl
+    derived = {}
+    for k, v in raw.items():
+        if k in _NON_VECTOR_KEYS or not isinstance(v, dict):
+            continue
+        lvl = v.get('level')
+        if isinstance(lvl, bool):
+            continue
+        if isinstance(lvl, (int, float)):
+            derived[k] = int(lvl)
+    return derived
+
+
 def _normalize_tracker_data(theatre, raw_data):
     """
     Convert raw Europe tracker cache into canonical shape.
@@ -566,12 +635,20 @@ def _read_all_trackers():
     for theatre, redis_key in TRACKER_KEYS.items():
         raw = _redis_get(redis_key)
         # DIAGNOSTIC: dump what BLUF actually reads for Belarus + Ukraine + Turkey
-        if theatre in ('belarus', 'ukraine', 'turkey'):
+        # Widened Jul 25 2026 to cover the trackers that read as blank on the hub
+        # page. Set BLUF_DIAG_THEATRES to override (comma-separated).
+        _diag = [t.strip() for t in os.environ.get(
+            'BLUF_DIAG_THEATRES',
+            'belarus,ukraine,turkey,armenia,kazakhstan,poland').split(',') if t.strip()]
+        if theatre in _diag:
             if raw:
                 top_keys = list(raw.keys())[:15] if isinstance(raw, dict) else 'NOT A DICT'
                 print(f'[Europe BLUF DIAG] {theatre} raw type={type(raw).__name__} top_keys={top_keys}')
                 if isinstance(raw, dict):
-                    print(f'[Europe BLUF DIAG] {theatre} theatre_score={raw.get("theatre_score")!r} alert_level={raw.get("alert_level")!r}')
+                    print(f'[Europe BLUF DIAG] {theatre} theatre_score={raw.get("theatre_score")!r} '
+                          f'alert_level={raw.get("alert_level")!r} '
+                          f'articles={_extract_article_count(raw)} '
+                          f'vectors={list(_extract_vector_levels(raw).items())[:6]}')
             else:
                 print(f'[Europe BLUF DIAG] {theatre} raw is None/empty')
         if raw:
@@ -1180,8 +1257,8 @@ def build_regional_bluf(force=False):
                 # endpoint. Newly shipped trackers frequently do not expose one
                 # yet, which is why Armenia/Kazakhstan/Poland rendered blank.
                 'display':          THEATRE_DISPLAY.get(t, t.replace('_', ' ').title()),
-                'article_count':    (data.get('raw', {}) or {}).get('article_count', 0),
-                'vector_levels':    (data.get('raw', {}) or {}).get('vector_levels', {}) or {},
+                'article_count':    _extract_article_count(data.get('raw', {}) or {}),
+                'vector_levels':    _extract_vector_levels(data.get('raw', {}) or {}),
             }
 
         scores = [t.get('score', 0) for t in theatre_summary.values()]
