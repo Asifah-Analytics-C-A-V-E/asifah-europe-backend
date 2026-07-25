@@ -1,7 +1,7 @@
 """
 europe_regional_bluf.py
 Asifah Analytics -- Europe Backend Module
-v3.4.0 -- June 2026
+v3.5.0 -- July 24, 2026 (convergence panel)
 
 Europe Regional BLUF (Bottom Line Up Front) Engine.
 
@@ -52,6 +52,18 @@ import json
 import traceback
 from datetime import datetime, timezone
 import requests
+
+# ── Shared spoke-and-wheel reader (v1.0.0, Jul 24 2026) ──────────────
+# Byte-identical across ALL backends -- gdelt_gateway.py pattern. Reads the
+# spoke/wheel keyspace directly from shared Redis (no cross-backend HTTP).
+# Optional import: if the file is absent the BLUF still builds, minus the
+# convergence panel.
+try:
+    from spoke_wheel_reader import build_convergence_panel as _build_wheel_panel
+    _WHEEL_READER = True
+except ImportError:
+    _WHEEL_READER = False
+    print("[Europe BLUF] spoke_wheel_reader not available -- convergence panel disabled")
 
 
 # ============================================================
@@ -1072,6 +1084,39 @@ def _build_signals(posture, trackers):
 # ============================================================
 # MAIN BUILD FUNCTION
 # ============================================================
+# ============================================================
+# CONVERGENCE PANEL  (spoke & wheel -- bidirectional)
+# ============================================================
+# Europe HOSTS two hubs: Russia and Turkey. Their rims are read INBOUND --
+# spokes wherever they physically sit, including countries on other backends
+# (Syria on ME, Libya on ME, Cuba/Venezuela on WHA), because Upstash is shared.
+#
+# Europe's own countries also feed FOREIGN hubs -- Baku touches Iran and
+# Israel, Kazakhstan touches China. Those EMANATE outward and belong to the
+# global read, not the local one.
+#
+# NOTHING here is a hardcoded country list. `local_countries` is derived from
+# TRACKER_KEYS, so a new Europe tracker joins the emanating scan the moment
+# it is registered. Spokes and entire wheels are discovered by Redis SCAN in
+# the reader. Adding a country requires no edit here and none in the frontend.
+RESIDENT_HUBS = ['russia', 'turkey']
+
+
+def _build_convergence_panel():
+    """Bidirectional wheel read for the Europe payload. Never raises."""
+    if not _WHEEL_READER:
+        return None
+    try:
+        return _build_wheel_panel(
+            resident_hubs=RESIDENT_HUBS,
+            local_countries=list(TRACKER_KEYS.keys()),
+            region='europe',
+        )
+    except Exception as e:
+        print(f"[Europe BLUF] Convergence panel failed (non-fatal): {str(e)[:140]}")
+        return None
+
+
 def build_regional_bluf(force=False):
     """Build the Europe regional BLUF."""
     if not force:
@@ -1156,6 +1201,7 @@ def build_regional_bluf(force=False):
             'trackers_stale':     trackers_stale,    # B: served from last-known-good
             'trackers_missing':   trackers_missing,  # B: no live AND no last-known-good
             'picture_complete':   (len(trackers_missing) == 0),
+            'convergence_panel':  _build_convergence_panel(),
             'theatre_summary':    theatre_summary,
             'generated_at':       datetime.now(timezone.utc).isoformat(),
             'version':            '3.4.0',
@@ -1190,6 +1236,7 @@ def build_regional_bluf(force=False):
             'bluf':    'BLUF synthesis failed -- check backend logs for traceback.',
             'signals': [],
             'top_signals': [],
+            'convergence_panel': None,
             'posture_label': 'ERROR',
             'posture_color': '#6b7280',
         }
