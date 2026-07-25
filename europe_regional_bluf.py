@@ -1,7 +1,7 @@
 """
 europe_regional_bluf.py
 Asifah Analytics -- Europe Backend Module
-v3.5.4 -- July 25, 2026 (multi-dialect vectors + derived peak lift)
+v3.6.1 -- July 25, 2026 (two-axis rule: pressure != stability)
 
 Europe Regional BLUF (Bottom Line Up Front) Engine.
 
@@ -358,6 +358,91 @@ def _level_from_vector_obj(v):
     return max(candidates) if candidates else None
 
 
+# ══════════════════════════════════════════════════════════════════════
+# STABILITY BANDS  (canonical reference -- NOT applied in this file)
+# ══════════════════════════════════════════════════════════════════════
+# THE TWO-AXIS RULE (Jul 25 2026):
+#
+#   STABILITY  -- hard data. Economic, governance, humanitarian. Lives on the
+#                 stability pages. Answers "how close is this state to failing?"
+#                 These bands describe THAT number.
+#
+#   PRESSURE   -- signal interpretation. Rhetoric tempo, spoke/wheel reads,
+#                 hub penetration. Lives on the rhetoric trackers and in this
+#                 BLUF. Answers "what is being applied here, by whom, and what
+#                 does the pattern suggest?"
+#
+# They are ORTHOGONAL and must never be folded into one number. A country can be
+# economically sound and politically simmering; it can look entirely stable
+# while a hub quietly operates inside it. Collapsing pressure into a stability
+# score would erase precisely the early-warning value the spoke-and-wheel was
+# built for -- the whole point is to read what is under the surface BEFORE it
+# shows up in the hard data.
+#
+# The divergence is itself a finding: STABLE + PENETRATED is a distinct and
+# arguably more interesting read than UNSTABLE + QUIET.
+#
+# Kept here as the canonical definition for the stability pages to adopt. It is
+# deliberately NOT applied to any score in this file.
+#
+#     0-20    stable
+#    21-40    occasional upheaval
+#    41-60    simmering
+#    61-80    nodes of instability
+#   81-100    very unstable -- the closer to 100, the higher the likelihood
+#             of government collapse / state failure
+#
+# NOTE FOR THE CROSS-PLATFORM PASS: these bands describe STABILITY, while most
+# existing trackers compute a RHETORIC-PRESSURE composite. The two axes are not
+# the same -- Russia currently scores 100 on rhetoric pressure and is nowhere
+# near state failure. Reconciling them is a deliberate future exercise; this
+# constant encodes the target semantics so the work has something to converge on.
+STABILITY_BANDS = [
+    (0,  20,  'stable',               '#22c55e'),
+    (21, 40,  'occasional upheaval',  '#84cc16'),
+    (41, 60,  'simmering',            '#f59e0b'),
+    (61, 80,  'nodes of instability', '#f97316'),
+    (81, 100, 'very unstable',        '#dc2626'),
+]
+
+# Retained for the stability pages, which may want a level<->band correspondence
+# once stability scoring is formalised. NOT used on the pressure axis.
+LEVEL_TO_SCORE_FLOOR = {0: 0, 1: 21, 2: 41, 3: 61, 4: 81, 5: 81}
+
+
+def stability_band(score):
+    """(label, color) for a 0-100 composite. Never raises."""
+    try:
+        s = max(0, min(100, int(score or 0)))
+    except Exception:
+        s = 0
+    for lo, hi, label, color in STABILITY_BANDS:
+        if lo <= s <= hi:
+            return label, color
+    return 'stable', '#22c55e'
+
+
+# Calendar / clock / window vectors are MULTIPLIERS, never standalone signals
+# (Black Swan master plan, canonical). They may render as pills so the reader
+# sees the timing context, but they must NOT lift a theatre's level on their
+# own -- an active election clock is not an escalation, it is a coefficient.
+_MULTIPLIER_SUFFIXES = ('_clock', '_calendar', '_window', '_season')
+_MULTIPLIER_NAMES = {'election_clock', 'referendum_clock', 'winter_calendar',
+                     'volhynia_window', 'ramadan_calendar', 'anniversary_window'}
+
+
+def _is_multiplier_vector(name):
+    n = str(name).lower()
+    return n in _MULTIPLIER_NAMES or n.endswith(_MULTIPLIER_SUFFIXES)
+
+
+def _peak_signal_level(vector_levels):
+    """Highest level among SIGNAL vectors, excluding calendar multipliers."""
+    sig = {k: v for k, v in (vector_levels or {}).items()
+           if not _is_multiplier_vector(k)}
+    return max(sig.values()) if sig else 0
+
+
 def _extract_vector_levels(raw):
     """Vector levels, derived from payload SHAPE when no dict is provided.
 
@@ -431,9 +516,12 @@ def _normalize_tracker_data(theatre, raw_data):
     if peak == 0:
         _vl = _extract_vector_levels(raw_data)
         if _vl:
-            peak = max(_vl.values())
+            # Calendar multipliers excluded -- an active election clock is a
+            # coefficient on other pressure, not pressure itself.
+            peak = _peak_signal_level(_vl)
 
-    if peak > threat:
+    _lifted_by_peak = peak > threat
+    if _lifted_by_peak:
         threat = peak
 
     # ---- SCORE ----
@@ -446,6 +534,21 @@ def _normalize_tracker_data(theatre, raw_data):
                       raw_data.get('overall_score', 0)))))
     if score == 0 and threat:
         score = int(threat) * 20
+
+    # NOTE (Jul 25 2026): an earlier build lifted this score to a STABILITY band
+    # floor whenever a peak vector lifted the level. That was a category error
+    # and has been reverted.
+    #
+    # This score is PRESSURE, not stability. Kazakhstan reading 8 with a
+    # domestic tripwire at 2/3 is not incoherent -- it is the platform working:
+    # a stable state carrying real external pressure. Restating that pressure as
+    # an instability number would have destroyed exactly the signal the
+    # spoke-and-wheel exists to surface, because a country whose hard-data
+    # stability is fine while a hub has its fingers in the pie is the MOST
+    # interesting case, not a contradiction to smooth over.
+    #
+    # The LEVEL still lifts (see above) because level is a pressure reading and
+    # stays on the pressure axis. The score stays as the tracker computed it.
 
     # ---- INFLUENCE LEVEL (forward-ready) ----
     influence = raw_data.get('influence_level')
@@ -1343,6 +1446,9 @@ def build_regional_bluf(force=False):
                 # endpoint. Newly shipped trackers frequently do not expose one
                 # yet, which is why Armenia/Kazakhstan/Poland rendered blank.
                 'display':          THEATRE_DISPLAY.get(t, t.replace('_', ' ').title()),
+                # NO stability_band here on purpose -- see STABILITY_BANDS.
+                # This payload's `score` is pressure; labelling it with
+                # stability vocabulary would assert something it cannot know.
                 'article_count':    _extract_article_count(data.get('raw', {}) or {}),
                 'vector_levels':    _extract_vector_levels(data.get('raw', {}) or {}),
             }
