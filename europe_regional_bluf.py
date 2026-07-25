@@ -1,7 +1,7 @@
 """
 europe_regional_bluf.py
 Asifah Analytics -- Europe Backend Module
-v3.5.0 -- July 24, 2026 (convergence panel)
+v3.5.1 -- July 25, 2026 (convergence panel + hub-render fields)
 
 Europe Regional BLUF (Bottom Line Up Front) Engine.
 
@@ -1175,6 +1175,13 @@ def build_regional_bluf(force=False):
                 'is_dual_axis':     infl_lvl is not None,
                 'influence_label':  INFLUENCE_LABELS.get(infl_lvl, '') if infl_lvl is not None else None,
                 'influence_color':  INFLUENCE_COLORS.get(infl_lvl, '#6b7280') if infl_lvl is not None else None,
+                # v3.5.1 Jul 25 2026 -- enough for the hub page to render a
+                # tracker banner WITHOUT calling that tracker's own /summary
+                # endpoint. Newly shipped trackers frequently do not expose one
+                # yet, which is why Armenia/Kazakhstan/Poland rendered blank.
+                'display':          THEATRE_DISPLAY.get(t, t.replace('_', ' ').title()),
+                'article_count':    (data.get('raw', {}) or {}).get('article_count', 0),
+                'vector_levels':    (data.get('raw', {}) or {}).get('vector_levels', {}) or {},
             }
 
         scores = [t.get('score', 0) for t in theatre_summary.values()]
