@@ -856,12 +856,16 @@ GROUND_OPS_TRIGGERS = {
 }
 
 # ── Vector 3: NATO Flank Pressure ────────────────────────────
+# v1.4.0 Russian-language expansion -- was 59 terms, 0% Cyrillic.
 NATO_FLANK_TRIGGERS = {
     5: [
         'russia attacks nato country', 'russia fires at nato',
         'russian forces cross nato border', 'article 5 invoked',
         'nato at war russia', 'russia invades nato territory',
         'russia hits poland', 'russia attacks estonia',
+        'пятая статья',                 # "Article 5"
+        'нарушение границы НАТО',       # "violation of the NATO border"
+        'война с НАТО',                 # "war with NATO"
     ],
     4: [
         'russia threatens nato attack', 'russia ultimatum nato',
@@ -898,15 +902,22 @@ NATO_FLANK_TRIGGERS = {
 }
 
 # ── Vector 4: Arctic Signals ──────────────────────────────────
+# v1.4.0 Russian-language expansion -- was 36 terms, 0% Cyrillic.
 ARCTIC_TRIGGERS = {
     5: [
         'russia seizes arctic territory', 'russia svalbard invasion',
         'russia closes arctic to nato', 'arctic war russia',
         'russia sinks nato vessel arctic', 'russia attacks arctic',
+        'Шпицберген',            # Svalbard (Russian name)
+        'Арктика',               # "the Arctic"
+        'Северный флот',         # "Northern Fleet"
     ],
     4: [
         'northern fleet full deployment', 'ssbn surge russia',
         'russia arctic military buildup', 'russia closes arctic airspace',
+        'Северный морской путь',    # "Northern Sea Route"
+        'ледокол',                  # "icebreaker"
+        'учения в Арктике',         # "exercises in the Arctic"
         'russia svalbard military action', 'giuk gap blocked russia',
         'russia arctic territorial claim force',
         'russia arctic exercise full scale',
@@ -932,6 +943,15 @@ ARCTIC_TRIGGERS = {
 }
 
 # ── Vector 5: Hybrid / Cross-Theater ─────────────────────────
+# v1.4.0 RUSSIAN-LANGUAGE EXPANSION (Aug 2026)
+# HYBRID_TRIGGERS previously held 63 terms, ALL English -- i.e. Western
+# attribution language ('russia pipeline sabotage'), not what a Russian-language
+# source writes. RUSSIA_CHANNELS carries rybar, intelslava, mod_russia_en,
+# meduzaio, currenttime and pul_1, all Russian-language. This set was therefore
+# measuring how Western media DESCRIBES Russian hybrid activity rather than the
+# activity's own tempo -- which matters most here, because hybrid is the
+# DENIABLE category where Moscow never claims and doctrine says measure the
+# tape (attack/attribution/amplification), not the claim.
 HYBRID_TRIGGERS = {
     5: [
         'russia cyberattack nato infrastructure',
@@ -939,6 +959,9 @@ HYBRID_TRIGGERS = {
         'russia cuts undersea internet cables',
         'russia election interference confirmed nato',
         'wagner nato country', 'russia proxy nato attack',
+        'подводный кабель поврежден',   # "undersea cable damaged"
+        'отключение электроэнергии',    # "power outage"
+        'атака на критическую инфраструктуру',  # "attack on critical infrastructure"
     ],
     4: [
         'russia cyber attack europe', 'russia attacks energy europe',
@@ -949,6 +972,21 @@ HYBRID_TRIGGERS = {
         'iran weapons russia ukraine', 'russia iran military',
         'cuba russia military base', 'russia cuba espionage',
         'wagner africa expand', 'russia africa coup',
+        # v1.4.0 Russian -- sabotage / energy coercion / GPS
+        'диверсия',                 # "sabotage/diversion"
+        'диверсанты',               # "saboteurs"
+        'кибератака',               # "cyberattack"
+        'глушение GPS',             # "GPS jamming"
+        'радиоэлектронная борьба',  # "electronic warfare" (REB)
+        'теневой флот',             # "shadow fleet"
+        'повреждение кабеля',       # "cable damage"
+        'газовый вентиль',          # "the gas valve" -- energy-coercion idiom
+        'беспилотник над',          # "drone over [X]" -- the incursion phrasing
+        # v1.4.0 Hebrew -- Russia-Israel Syria deconfliction (narrow scope)
+        'תיאום רוסיה ישראל',        # "Russia-Israel coordination"
+        'מנגנון התיאום',            # "the deconfliction mechanism"
+        'רוסיה סוריה',              # "Russia Syria"
+        'הרוסים בסוריה',            # "the Russians in Syria"
     ],
     3: [
         'russia hybrid warfare', 'russia cyber europe',
@@ -995,16 +1033,32 @@ HYBRID_TRIGGERS = {
 # Feeds: arms_trade_realignment
 # Russia as the PRIMARY non-Western weapons exporter — Iran S-400,
 # DPRK shell deals, Venezuela air defense, Wagner/Africa Corps transfers
+# v1.4.0 HEBREW -- DELIBERATELY NARROW. abualiexpress and kann_news were added
+# to RUSSIA_CHANNELS/UKRAINE_CHANNELS for one specific signal: the Iran-Russia
+# materiel track, which Israeli sources frequently report first. These terms are
+# scoped to that axis and to Russia-Israel Syria deconfliction ONLY. They are
+# NOT general Ukraine-war vocabulary, and must not become that -- broad Hebrew
+# here would bleed ME content into the Ukraine score (the Hungary/Belarus lesson).
 RUSSIA_ARMS_EXPORT_TRIGGERS = {
     5: [
         'russia delivers s-400 iran', 'russia ships nuclear submarines abroad',
         'russia transfers strategic weapons', 'russia su-35 iran delivered',
         'تحویل اس-400 ایران', 'روسيا تسلم إس-400',
+        'רוסיה מספקת לאיראן',       # "Russia supplies Iran"
+        'סוחוי לאיראן',             # "Sukhoi to Iran"
     ],
     4: [
         'russia s-400 iran', 'russia su-35 iran',
         'russia arms iran', 'russia weapons iran',
         'russia advanced drones iran', 'russia air defense iran',
+        # v1.4.0 Hebrew -- Iran-Russia axis (Israeli-vantage reporting)
+        'רוסיה איראן',              # "Russia Iran"
+        'שיתוף פעולה רוסיה איראן',  # "Russia-Iran cooperation"
+        'רחפנים איראניים לרוסיה',   # "Iranian drones to Russia"
+        'שאהד',                     # Shahed (the drone family)
+        'טילים איראניים לרוסיה',    # "Iranian missiles to Russia"
+        'נשק רוסי לאיראן',          # "Russian weapons to Iran"
+        'הסכם רוסיה איראן',         # "Russia-Iran agreement"
         'russia weapons venezuela', 'russia air defense venezuela',
         'russia arms dprk', 'russia weapons north korea',
         'russia arms deal', 'russia weapons transfer',

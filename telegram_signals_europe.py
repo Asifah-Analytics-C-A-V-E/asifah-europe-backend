@@ -45,6 +45,139 @@ SESSION_NAME = 'asifah_session'
 
 # Core European conflict channels
 # v1.2.0: Audited April 2026 — removed all dead/invalid channels from logs
+# ============================================================
+# CHANNEL METADATA  (tier + language)   -- v2.0.0, Aug 2026
+# ============================================================
+# Mirrors the ME backend's telegram_signals.py v2.0.0 contract so both
+# backends emit identically-shaped provenance to the GPI.
+#
+# tier: official | wire | mainstream | aggregator | aligned | state | unverified
+# lang: en, ru, uk, he, tr, el, hu, pl, lt, lv, az, ro, no, ar
+#
+# WHY THIS MATTERS HERE SPECIFICALLY: RUSSIA_CHANNELS carries Russian MoD
+# official (mod_russia_en), Russian-aligned milbloggers (rybar, intelslava)
+# AND outlets aligned against Moscow (meduzaio, currenttime, nexta_tv).
+# Without a tier the GPI cannot distinguish "the Russian MoD announced it"
+# from "Meduza reported it" -- and would read a single claim echoed across
+# both blocs as corroboration rather than as an information contest.
+#
+# Alignment is DISCLOSED, never excluded.
+
+CHANNEL_META = {
+    # ---- Official government / military ----
+    'mod_russia_en':   {'tier': 'official', 'lang': ['en'],       'note': 'Russian MoD English'},
+    'V_Zelenskiy_official': {'tier': 'official', 'lang': ['uk'],  'note': 'Zelensky official'},
+    'mfaukraine':      {'tier': 'official', 'lang': ['uk','en'],  'note': 'Ukraine MFA'},
+    'Pravda_Gerashchenko': {'tier': 'aligned', 'lang': ['uk','ru'], 'note': 'Anton Gerashchenko -- former MoIA advisor; Ukrainian official-adjacent, not neutral'},
+    'ukrinform':       {'tier': 'official', 'lang': ['uk'],       'note': 'Ukrinform state agency'},
+    'NorwayMFA':       {'tier': 'official', 'lang': ['no','en'],  'note': 'Norwegian MFA'},
+    'CENTCOM':         {'tier': 'official', 'lang': ['en'],       'note': 'US CENTCOM'},
+    'StateDept':       {'tier': 'official', 'lang': ['en'],       'note': 'US State Department'},
+    'pul_1':           {'tier': 'official', 'lang': ['ru'],       'note': 'Pul Pervogo -- Lukashenko press pool'},
+    'BELTA_news':      {'tier': 'state',    'lang': ['ru'],       'note': 'BelTA -- Belarusian state agency'},
+    'EUvsDisinfo':     {'tier': 'official', 'lang': ['en'],       'note': 'EEAS disinformation task force'},
+
+    # ---- Wire / mainstream ----
+    'France24_en':     {'tier': 'wire',       'lang': ['en'],      'note': 'France 24 English'},
+    'bbcrussian':      {'tier': 'mainstream', 'lang': ['ru'],      'note': 'BBC Russian service'},
+    'KyivIndependent_official': {'tier': 'mainstream', 'lang': ['en'], 'note': 'Kyiv Independent'},
+    'KyivPost':        {'tier': 'mainstream', 'lang': ['en'],      'note': 'Kyiv Post'},
+    'ukrpravda_news':  {'tier': 'mainstream', 'lang': ['uk'],      'note': 'Ukrainska Pravda'},
+    'eurointegration': {'tier': 'mainstream', 'lang': ['uk'],      'note': 'European Pravda'},
+    'lrtlt':           {'tier': 'mainstream', 'lang': ['lt'],      'note': 'LRT Lithuania'},
+    'latvianpublichroadcasting': {'tier': 'mainstream', 'lang': ['lv'], 'note': 'LSM Latvia'},
+    'notesfrompoland': {'tier': 'mainstream', 'lang': ['en'],      'note': 'Notes from Poland'},
+    'tvpworld':        {'tier': 'state',      'lang': ['en'],      'note': 'TVP World -- Polish state broadcaster'},
+    'telex_hu':        {'tier': 'mainstream', 'lang': ['hu'],      'note': 'Telex -- independent Hungarian'},
+    'CyprusMail':      {'tier': 'mainstream', 'lang': ['en'],      'note': 'Cyprus Mail'},
+    'incyprus':        {'tier': 'mainstream', 'lang': ['en'],      'note': 'In-Cyprus'},
+    'GreekCityTimes':  {'tier': 'mainstream', 'lang': ['en'],      'note': 'Greek City Times'},
+    'arctictoday':     {'tier': 'mainstream', 'lang': ['en'],      'note': 'Arctic Today'},
+    'ArmenianUnified': {'tier': 'mainstream', 'lang': ['en'],      'note': 'Armenian news aggregator'},
+
+    # ---- Aggregators / OSINT ----
+    'OSINTdefender':   {'tier': 'aggregator', 'lang': ['en'],      'note': 'RUMINT anchor'},
+    'WarMonitors':     {'tier': 'aggregator', 'lang': ['en'],      'note': 'RUMINT anchor'},
+    'ClashReport':     {'tier': 'aggregator', 'lang': ['en','tr'], 'note': 'RUMINT anchor -- Turkish-linked'},
+    'C_Military1':     {'tier': 'aggregator', 'lang': ['en'],      'note': 'Conflict/military OSINT'},
+    'DeepStateUA':     {'tier': 'aggregator', 'lang': ['uk'],      'note': 'DeepState map -- Ukrainian front'},
+    'front_ukrainian': {'tier': 'aggregator', 'lang': ['uk'],      'note': 'Ukrainian front OSINT'},
+    'wartranslated':   {'tier': 'aggregator', 'lang': ['en','ru'], 'note': 'Translates Russian-side primary comms'},
+    'militarylandnet': {'tier': 'aggregator', 'lang': ['en'],      'note': 'Order of battle tracking'},
+    'UkraineWeaponsTracker': {'tier': 'aggregator', 'lang': ['en'],'note': 'Weapons/loss tracking'},
+    'GeoConfirmed':    {'tier': 'aggregator', 'lang': ['en'],      'note': 'Geolocation verification'},
+    'UkraineNow':      {'tier': 'aggregator', 'lang': ['en','uk'], 'note': 'Ukraine war updates'},
+    'HMIntelligence':  {'tier': 'aggregator', 'lang': ['en'],      'note': 'Ukraine/Russia OSINT'},
+    'RageIntel':       {'tier': 'aggregator', 'lang': ['en'],      'note': 'Combat OSINT -- verify handle'},
+    'disclosetv':      {'tier': 'aggregator', 'lang': ['en'],      'note': 'Breaking conflict news -- accuracy varies'},
+    'nuclearsecrecy':  {'tier': 'aggregator', 'lang': ['en'],      'note': 'Arms control / nuclear'},
+    'abualiexpress':   {'tier': 'aggregator', 'lang': ['he','ar'], 'note': 'Abu Ali Express -- Hebrew aggregator translating Arabic media; Israeli vantage on Iran-Russia'},
+
+    # ---- Openly aligned ----
+    'rybar':           {'tier': 'aligned', 'lang': ['ru'],      'note': 'Rybar -- Russian milblogger, MoD-adjacent'},
+    'intelslava':      {'tier': 'aligned', 'lang': ['ru','en'], 'note': 'Intel Slava Z -- Russian-aligned'},
+    'MiddleEastSpectator': {'tier': 'aligned', 'lang': ['en'],  'note': 'pro-Russia/Iran framing; ME-Russia axis'},
+    'meduzaio':        {'tier': 'aligned', 'lang': ['ru'],      'note': 'Meduza -- independent, aligned AGAINST Moscow (exile media)'},
+    'currenttime':     {'tier': 'aligned', 'lang': ['ru'],      'note': 'Current Time -- RFE/RL, US-funded'},
+    'nexta_tv':        {'tier': 'aligned', 'lang': ['ru'],      'note': 'NEXTA -- Belarusian opposition'},
+    'belamova':        {'tier': 'aligned', 'lang': ['ru'],      'note': 'Belarus opposition tracker'},
+    'sviatlanaTSlive': {'tier': 'aligned', 'lang': ['ru','en'], 'note': 'Tikhanovskaya -- opposition leader in exile'},
+    'kann_news':       {'tier': 'mainstream', 'lang': ['he'],   'note': 'Kan -- Israeli public broadcaster, Hebrew'},
+
+    # ---- State media of a party ----
+    'trtworld':        {'tier': 'state', 'lang': ['en'],      'note': 'TRT -- Turkish state'},
+    'dailysabah':      {'tier': 'state', 'lang': ['en'],      'note': 'Daily Sabah -- pro-government Turkish'},
+    'apa_az':          {'tier': 'state', 'lang': ['az','en'], 'note': 'APA -- Azerbaijani'},
+    'caliberaz':       {'tier': 'state', 'lang': ['az','en'], 'note': 'Caliber.az -- Azerbaijani, MoD-adjacent'},
+    'trendnewsagency': {'tier': 'state', 'lang': ['az','en'], 'note': 'Trend -- Azerbaijani'},
+
+    # ---- Unverified ----
+    'doureios':        {'tier': 'unverified', 'lang': ['el'], 'note': 'Greek defence blog -- not assessed'},
+    'pentapostagma':   {'tier': 'unverified', 'lang': ['el'], 'note': 'Greek outlet -- not assessed'},
+}
+
+DEFAULT_META = {'tier': 'unverified', 'lang': ['en'], 'note': 'No metadata entry'}
+
+
+def get_channel_meta(handle):
+    """Tier/language for a handle. Case-insensitive -- Telegram handles are."""
+    if handle in CHANNEL_META:
+        return CHANNEL_META[handle]
+    low = handle.lower()
+    for k, v in CHANNEL_META.items():
+        if k.lower() == low:
+            return v
+    return DEFAULT_META
+
+
+def channels_needing_verification():
+    """Handles that must NOT count as corroboration until reviewed."""
+    return sorted(k for k, v in CHANNEL_META.items() if v['tier'] == 'unverified')
+
+
+def get_language_coverage():
+    langs, tiers = {}, {}
+    for v in CHANNEL_META.values():
+        tiers[v['tier']] = tiers.get(v['tier'], 0) + 1
+        for lg in v['lang']:
+            langs[lg] = langs.get(lg, 0) + 1
+    return {'by_language': dict(sorted(langs.items(), key=lambda x: -x[1])),
+            'by_tier': dict(sorted(tiers.items(), key=lambda x: -x[1])),
+            'total_channels': len(CHANNEL_META)}
+
+
+# Per-channel message cap now scales with the window. A flat 50 silently
+# truncated fetch_russia_telegram_signals(hours_back=168) -- a SEVEN-DAY pull
+# capped at 50 messages per channel.
+MSGS_PER_HOUR = 4
+MSG_LIMIT_MIN = 50
+MSG_LIMIT_MAX = 200
+
+
+def _msg_limit(hours_back):
+    return max(MSG_LIMIT_MIN, min(MSG_LIMIT_MAX, int(hours_back) * MSGS_PER_HOUR))
+
+
 EUROPE_CHANNELS = [
     # ── Ukraine war — CONFIRMED WORKING ──────────────────────────
     'DeepStateUA',         # ✅ DeepState Map — Ukrainian front updates (16 msg)
@@ -217,6 +350,15 @@ RUSSIA_CHANNELS = [
     # ── Cross-theater (ME-Russia links) ───────────────────────────
     'MiddleEastSpectator', # ME-Russia axis signals
     'HMIntelligence',      # HM Intelligence -- Russia/Ukraine OSINT
+    # ── Israeli vantage on the ME-Russia axis (v2.0.0, NARROW scope) ──
+    # Added ONLY for the Iran-Russia military track, Russia-Israel Syria
+    # deconfliction, and aliyah-as-domestic-pressure. Hebrew is NOT a primary
+    # language of Russia/Ukraine reporting and these are not general war
+    # sources -- the paired Hebrew keywords in rhetoric_tracker_russia.py are
+    # deliberately scoped to that axis so this does not bleed into the
+    # Ukraine-war score (the Hungary/Belarus lesson).
+    'abualiexpress',       # Hebrew aggregator -- already used in TURKEY/GREECE lists
+    'kann_news',           # Kan -- Israeli public broadcaster, Hebrew
 ]
 
 # ── Belarus-specific channel list (v1.0.0 — Apr 29 2026) ──
@@ -367,6 +509,10 @@ UKRAINE_CHANNELS = [
     'MiddleEastSpectator',     # ME-Russia-Iran axis (Iranian drone supply context)
     'HMIntelligence',      # HM Intelligence -- heavy Ukraine war signaling
     'RageIntel',           # RageIntel -- Ukraine combat OSINT (added Jun 2026; verify exact handle)
+    # ── Israeli vantage (v2.0.0, NARROW scope) ──
+    # Iranian drone/missile supply to Russia is the specific signal; Israeli
+    # channels frequently report it first. Scoped keywords only.
+    'abualiexpress',       # Hebrew aggregator -- Iran-Russia materiel track
 ]
 
 
@@ -721,14 +867,31 @@ async def _async_fetch_messages(channels, hours_back=24):
             await client.disconnect()
             return []
 
-        print(f"[Telegram Europe] ✅ Connected, fetching from {len(channels)} channels...")
+        # v2.0.0: deduplicate case-insensitively -- Telegram handles are not
+        # case-sensitive, so 'RageIntel' and 'rageintel' are one channel.
+        seen = set()
+        unique_channels = []
+        for _ch in channels:
+            if _ch.lower() not in seen:
+                seen.add(_ch.lower())
+                unique_channels.append(_ch)
+        channels = unique_channels
+
+        limit = _msg_limit(hours_back)
+        _tiers = {}
+        for _ch in channels:
+            _t = get_channel_meta(_ch)['tier']
+            _tiers[_t] = _tiers.get(_t, 0) + 1
+        print(f"[Telegram Europe] ✅ Connected, fetching from {len(channels)} channels "
+              f"(limit {limit}/channel) -- tiers: {_tiers}")
 
         for channel in channels:
+            _meta = get_channel_meta(channel)
             try:
                 entity = await client.get_entity(channel)
                 history = await client(GetHistoryRequest(
                     peer=entity,
-                    limit=50,
+                    limit=limit,
                     offset_date=None,
                     offset_id=0,
                     max_id=0,
@@ -748,10 +911,16 @@ async def _async_fetch_messages(channels, hours_back=24):
                             'source': f'Telegram @{channel}',
                             'views': getattr(msg, 'views', 0) or 0,
                             'forwards': getattr(msg, 'forwards', 0) or 0,
+                            # --- v2.0.0 provenance (additive; existing
+                            # consumers reading title/url/source are unaffected)
+                            'channel': channel,
+                            'source_tier': _meta['tier'],
+                            'source_lang': _meta['lang'],
                         })
                         channel_count += 1
 
-                print(f"[Telegram Europe] @{channel}: {channel_count} messages (last {hours_back}h)")
+                print(f"[Telegram Europe] @{channel}: {channel_count} messages "
+                      f"[{_meta['tier']}/{'+'.join(_meta['lang'])}] (last {hours_back}h)")
 
             except FloodWaitError as e:
                 wait = e.seconds

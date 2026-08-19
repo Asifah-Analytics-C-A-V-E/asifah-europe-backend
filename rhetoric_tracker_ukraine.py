@@ -211,6 +211,18 @@ ACTORS = {
             'russian forces ukraine', 'russian troops ukraine',
             'russian advance', 'russian offensive ukraine',
             'shahed', 'shahed swarm', 'iranian-made drones',
+            # v1.2.0 HEBREW -- NARROW SCOPE (Aug 2026). abualiexpress was added
+            # to UKRAINE_CHANNELS for exactly one signal: the Iranian materiel
+            # track into Russia, which Israeli sources often report first.
+            # These terms are scoped to that axis and nothing else. Hebrew is
+            # not a primary language of Ukraine-war reporting and broadening
+            # this would bleed ME content into the Ukraine score.
+            'שאהד',                     # Shahed
+            'רחפנים איראניים',           # "Iranian drones"
+            'רחפנים איראניים לרוסיה',    # "Iranian drones to Russia"
+            'טילים איראניים לרוסיה',     # "Iranian missiles to Russia"
+            'איראן מספקת לרוסיה',        # "Iran supplies Russia"
+            'סיוע איראני לרוסיה',        # "Iranian assistance to Russia"
             'kalibr strike', 'kalibr missile', 'kinzhal strike',
             'tornado-s', 'glide bomb', 'fab-1500',
             'russian missile strike ukraine', 'russian shelling',
