@@ -371,6 +371,134 @@ TURKEY_TOPIC_KEYWORDS = [
 ]
 
 # ============================================================
+# EMPLACEMENT PRECURSOR TRIGGERS  (v1.3.0, Aug 2026)
+# ============================================================
+# THE PATTERN, reconstructed from Abu al-Duhur (18 Aug 2026):
+#
+#   1. DORMANT-FACILITY REACTIVATION -- a war monitor reports a hub
+#      rehabilitating an airfield out of service for years. Satellite-visible,
+#      OSINT-reported, WEEKS ahead.
+#   2. TECHNICAL DELEGATION -- officers visit; framed as "training and the
+#      exchange of expertise".
+#   3. CAPABILITY NAMING -- reporting stops saying "presence" and starts
+#      naming systems: radar, air-defence battery, troops.
+#   4. RIVAL RED-LINE RESTATEMENT -- the objecting hub publicly restates a
+#      red line, invoking an agreed "status quo", naming a SITE not a country.
+#   5. DENIAL by the emplacing hub, concurrently with 4.
+#
+#   Stages 4 + 5 co-occurring is the configuration that preceded action -- and
+#   the action struck the INFRASTRUCTURE (runway) before capability arrived,
+#   not the personnel. Denial before emplacement.
+#
+# WHY THIS IS NOT TURKEY-SPECIFIC: it is the generic shape of any hub placing
+# capability in a third country. Russia at Tobruk, Iran in Iraq, China at a
+# port. The vocabulary below is deliberately hub-agnostic apart from the
+# actor names, so cloning to another tracker is a keyword swap.
+#
+# DOCTRINE: these are PRECURSOR signals, not predictions. The output is a
+# TASKING TRIGGER -- stage 4 tempo rising means "go ask your sources about
+# this site", never "a strike is coming". An OSINT layer cannot see what an
+# intelligence service knows, and must not pretend the gap is not there.
+#
+# Levels follow the tracker's 1-5 convention: 5 = emplacement confirmed /
+# capability named at a site, 1 = generic basing chatter.
+
+EMPLACEMENT_PRECURSOR_TRIGGERS = {
+    5: [  # Capability named at a specific site, or emplacement under way
+        'radar deployment syria', 'air defense system syria',
+        'air defence system syria', 'turkish troops deploy syria',
+        'turkish forces deploy airbase', 'turkish radar syria',
+        'deploy air defense syria', 'station troops airbase',
+        # Broadened Aug 2026 after a functional test against the real
+        # pre-strike corpus: the phrase-specific forms above missed
+        # "Turkey sought to place a radar and an air defense system manned by
+        # Turkish troops" and "planned Turkish troop, radar presence". Short
+        # capability stems are safe here because the corpus is already
+        # Turkey-scoped upstream.
+        'radar presence', 'place a radar', 'station a radar',
+        'dispatch a radar', 'dispatch radar', 'radar and air defense',
+        'radar and an air defense', 'air defense system', 'air defence system',
+        'air defense battery', 'troops, radar', 'radar, troops',
+        'planned turkish troop', 'turkish troop presence',
+        'troops and air defense', 'manned by turkish troops',
+        'نشر رادار', 'منظومة دفاع جوي',        # AR: radar deployment, air-defence system
+        'استقدام قوات تركية',                    # AR: bringing in Turkish forces
+        'פריסת כוחות טורקיים',                   # HE: Turkish force deployment
+        'מכ"ם טורקי',                            # HE: Turkish radar
+    ],
+    4: [  # Technical delegation / basing agreement / host consent
+        'turkish military delegation', 'turkish officers visited',
+        'turkish delegation airbase', 'military cooperation agreement syria',
+        'joint defense agreement syria', 'defense pact syria',
+        'basing rights', 'base agreement syria', 'training mission syria',
+        'exchange of expertise', 'turkish engineers syria',
+        'damascus permits', 'syria allows turkish', 'grants access airbase',
+        'وفد عسكري تركي',                        # AR: Turkish military delegation
+        'اتفاق دفاعي',                           # AR: defence agreement
+        'تدريب وتبادل الخبرات',                   # AR: training and exchange of expertise
+        'משלחת צבאית טורקית',                    # HE: Turkish military delegation
+        'הסכם הגנה סוריה',                       # HE: Syria defence agreement
+    ],
+    3: [  # Facility reactivation -- the earliest OSINT-visible stage
+        'rehabilitating airbase', 'rehabilitation of airfield',
+        'restoring airbase', 'reopening airbase', 'airfield reconstruction',
+        'runway repair', 'airbase out of service', 'disused airbase',
+        'refurbish air base', 'upgrade airbase syria',
+        # Broadened Aug 2026 -- the SOHR line that was the EARLIEST public
+        # signal ("had been rehabilitating the airfield, which had sat out of
+        # service for years") matched none of the above. This is the stage
+        # worth catching most: it ran weeks ahead of everything else.
+        'rehabilitating the airfield', 'rehabilitating airfield',
+        'rehabilitating the base', 'rehabilitation of the airfield',
+        'rehabilitating an airfield', 'out of service for years',
+        'sat out of service', 'bringing the airfield back',
+        'repairing the runway', 'runway repairs',
+        'abu al-duhur', 'abu duhur', 'abu al duhur',   # the reference site
+        'تأهيل المطار', 'إعادة تأهيل قاعدة',      # AR: airport rehabilitation, base rehabilitation
+        'مطار أبو الضهور',                        # AR: Abu al-Duhur airport
+        'שיקום בסיס אווירי',                      # HE: airbase rehabilitation
+    ],
+    2: [  # Intent signalling / footprint expansion talk
+        'turkish military presence syria', 'turkish footprint syria',
+        'expand military presence', 'permanent presence syria',
+        'turkey military buildup syria', 'turkish base syria',
+        'وجود عسكري تركي',                        # AR: Turkish military presence
+        'قاعدة تركية',                            # AR: Turkish base
+        'נוכחות צבאית טורקית',                    # HE: Turkish military presence
+    ],
+    1: [  # Background basing chatter
+        'military cooperation', 'defense cooperation', 'joint exercise',
+        'security agreement', 'military advisors',
+        'تعاون عسكري', 'שיתוף פעולה צבאי',
+    ],
+}
+
+# Stage 5 of the pattern. A DENIAL is not an absence of signal -- when it runs
+# concurrently with a rival's restated red line, the pair IS the signal. Turkey
+# is a deniable actor here (mode='tape' in TEMPO_REGISTRY), so this stream is
+# measured as tempo, never read as a settled fact either way.
+EMPLACEMENT_DENIAL_TRIGGERS = [
+    'denies deployment', 'denies troop presence', 'no turkish presence',
+    'rejects claims', 'no military delegation', 'denied any plans',
+    'inventing pretexts', 'baseless claims',
+    'ينفي', 'لا وجود لقوات', 'يرفض المزاعم',      # AR: denies, no forces present, rejects claims
+    'מכחישה', 'אין נוכחות',                        # HE: denies, no presence
+]
+
+# Stage 4 as seen from the OBJECTING hub. Turkey's tracker carries these so a
+# restated red line about Turkish activity is visible on THIS wheel too --
+# the rival's warning is evidence about Turkey's footprint, not only about the
+# rival. Israel's own tracker measures the same stream in mode='actor'.
+RIVAL_REDLINE_TRIGGERS = [
+    'red line', 'redline', 'will not allow', 'will not permit',
+    'status quo in security', 'security status quo', 'breach the status quo',
+    'repeatedly warned', 'warned damascus', 'warned against deployment',
+    'ignored our warnings', 'unacceptable deployment',
+    'خط أحمر', 'لن نسمح', 'حذرنا مرارا',           # AR: red line, we will not allow, we warned repeatedly
+    'קו אדום', 'לא נאפשר', 'הזהרנו',                # HE: red line, we will not allow, we warned
+]
+
+# ============================================================
 # REDIS HELPERS
 # ============================================================
 
@@ -685,6 +813,60 @@ def _alert_level_from_score(score):
         return 'elevated'
     else:
         return 'normal'
+
+
+# ============================================================
+# TEMPO EMITTER  (v1.3.0 -- tempo_baseline.py contract)
+# ============================================================
+# Turkey is registered mode='tape', backend='europe'.
+#
+# WHY TAPE AND NOT ACTOR: Turkey denied the Abu al-Duhur delegation outright
+# ("no Turkish military delegation at the airbase before or during Israel's
+# attack"), while Damascus confirmed one had visited. Deniability is the
+# architecture, so there is no claiming actor to fall silent and measuring
+# "actor silence" would measure nothing. We measure the TAPE instead --
+# emplacement tempo, denial tempo, and the rival's red-line tempo, each
+# against its own baseline. Using mode='actor' here would produce confident
+# nonsense, exactly as tempo_baseline.py warns.
+#
+# This tracker only EMITS. The engine lives on the ME backend and the shared
+# Upstash Redis is the bus; nothing is computed here.
+
+def _emit_tempo_counts(articles, by_actor):
+    """Write raw daily counts + corpus health. No logic, no thresholds."""
+    try:
+        from tempo_baseline import emit_counts
+    except ImportError:
+        return False
+
+    def _hits(triggers):
+        n = 0
+        for a in (articles or []):
+            blob = ((a.get('title') or '') + ' ' + (a.get('description') or '')).lower()
+            if any(t.lower() in blob for t in triggers):
+                n += 1
+        return n
+
+    emplacement = sum(_hits(v) for v in EMPLACEMENT_PRECURSOR_TRIGGERS.values())
+    streams = {
+        'emplacement': emplacement,
+        'denial':      _hits(EMPLACEMENT_DENIAL_TRIGGERS),
+        'redline':     _hits(RIVAL_REDLINE_TRIGGERS),
+    }
+    # Corpus health denominator. Without this a dead RSS feed reads as an
+    # actor going quiet, and the platform hallucinates menace from its own
+    # outage -- the bug the engine exists to prevent.
+    corpus = {
+        'articles_seen': len(articles or []),
+        'sources_alive': len({a.get('source') for a in (articles or []) if a.get('source')}),
+    }
+    try:
+        emit_counts('turkey', streams, corpus)
+        print(f'[Turkey] tempo emitted: {streams} corpus={corpus}')
+        return True
+    except Exception as e:
+        print(f'[Turkey] tempo emit failed (non-fatal): {str(e)[:120]}')
+        return False
 
 
 def _write_cross_theater_fingerprints(fingerprints):
@@ -1022,6 +1204,7 @@ def run_turkey_rhetoric_scan(force=False):
 
     interpretation = interpret_signals(scan_data)
     projection = _build_projection_node()   # Slice 3: Erdogan Projection Node
+    _emit_tempo_counts(articles, by_actor)  # v1.3.0 -- tempo emitter (mode='tape')
     _write_cross_theater_fingerprints(
         interpretation.get('cross_theater_fingerprints') or {}
     )
@@ -1035,7 +1218,7 @@ def run_turkey_rhetoric_scan(force=False):
         'theatre_score':     score,
         'alert_level':       alert,
         'pressure_score':    score,
-        'tracker_version':   '1.0.0',
+        'tracker_version':   '1.3.0',
         'tracker_class':     'swing_state',
         'cached_at':         datetime.now(timezone.utc).isoformat(),
         'scan_duration_sec': elapsed,
