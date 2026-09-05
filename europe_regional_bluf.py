@@ -904,8 +904,26 @@ def _determine_regional_posture(trackers):
     arctic_elevated  = bool(russia_so_what.get('arctic_elevated', False))
 
     # Posture ladder
+    #
+    # LABEL NAMES THE CONDITION THAT ACTUALLY FIRED (Sep 2026). This rung was a
+    # fixed string listing THREE possible causes -- "MULTI-BREACH OR NUCLEAR
+    # SIGNALING" -- with no indication which one applied. On 5 Sep it read
+    # NUCLEAR SIGNALING while nuclear_elevated was False: the trigger was
+    # Greece at L5. A reader saw a nuclear warning on a cycle with no nuclear
+    # signal anywhere in Europe.
+    #
+    # Naming the live cause costs nothing and is the difference between a
+    # posture label and a menu of things that might be true.
     if total_breached >= 2 or max_level >= 5 or nuclear_elevated:
-        label, color = 'CRITICAL -- MULTI-BREACH OR NUCLEAR SIGNALING', '#dc2626'
+        _causes = []
+        if nuclear_elevated:
+            _causes.append('NUCLEAR SIGNALING')
+        if total_breached >= 2:
+            _causes.append('MULTI-BREACH (%d)' % total_breached)
+        if max_level >= 5:
+            _causes.append('L5 THEATRE')
+        label = 'CRITICAL -- ' + ' + '.join(_causes) if _causes else 'CRITICAL'
+        color = '#dc2626'
     elif total_breached >= 1 or max_level >= 4:
         label, color = 'ELEVATED -- INCIDENT OR RED LINE', '#ef4444'
     elif theatres_at_l3plus >= 2:
