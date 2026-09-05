@@ -512,6 +512,28 @@ def _score_actor(actor_id, actor_cfg, articles, telegram_msgs):
                 'matched_keywords': matched[:5],
             })
 
+    # ── RANK THE EVIDENCE (Sep 2026) ────────────────────────────────────
+    # `hits` is built in FEED ORDER, and top_articles[:5] took the first five.
+    # So the article displayed as evidence for a signal was whichever one
+    # happened to arrive first -- not the strongest match. On 5 Sep the Greece
+    # turkey_axis vector sat at L5 while its displayed evidence was a Greek
+    # WEATHER FORECAST ("Sunshine today, mercury up to 36 degrees") that had
+    # clipped a single keyword. The level was carried by aggregate hit_count
+    # across all articles; the prose was carried by an arbitrary one.
+    #
+    # Ranking by match COUNT then by SPECIFICITY (longer, multi-word keywords
+    # are the discriminating ones -- 'greece turkey delimitation' means
+    # something, 'aegean' alone does not) puts the article that actually
+    # justifies the reading in front of the reader.
+    #
+    # This does not change any LEVEL. It changes which article is shown as the
+    # basis for one -- the same auditability gap as the nuclear trigger phrase.
+    def _evidence_rank(h):
+        kws = h.get('matched_keywords') or []
+        return (-len(kws), -max((len(k) for k in kws), default=0))
+
+    hits.sort(key=_evidence_rank)
+
     tg_hits = 0
     for msg in telegram_msgs:
         body = (msg.get('title', '') or msg.get('body', '')).lower()
