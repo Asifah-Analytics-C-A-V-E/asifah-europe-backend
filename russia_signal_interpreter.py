@@ -1397,7 +1397,15 @@ def _build_so_what(scan_data, red_lines_triggered, historical_matches,
         'key_indicators':          indicators,
         'assessment':              ' '.join(assessment_parts),
         'watch_list':              watch_items[:6],
+        # EVIDENCE FOR THE FLAG (Sep 2026). `nuclear_elevated` forces the
+        # Europe posture to CRITICAL and fires the GPI's priority-15 narrative.
+        # A boolean that carries that much weight must be auditable: a reader
+        # has to be able to see WHAT fired it without reading the source.
         'nuclear_elevated':        nuclear_level >= 3,
+        'nuclear_level':           nuclear_level,
+        # Read from scan_data like nuclear_level itself -- the tracker now
+        # writes `nuclear_trigger` alongside it in both fingerprint payloads.
+        'nuclear_trigger':         scan_data.get('nuclear_trigger', ''),
         'arctic_elevated':         arctic_level >= 3,
         'maximum_pressure':        maximum_pressure,
         'high_vector_count':       high_vector_count,

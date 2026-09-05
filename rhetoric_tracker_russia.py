@@ -693,20 +693,52 @@ ACTORS = {
 
 # ── Vector 1: Nuclear Rhetoric ────────────────────────────────
 NUCLEAR_TRIGGERS = {
-    # v1.2 (May 24 2026): Added Oreshnik / IRBM-class signals.
-    # Rationale: Oreshnik is a nuclear-capable medium-range hypersonic
-    # ballistic missile (~5000km range). Russian use is a *doctrinal*
-    # escalation marker even when conventionally armed — it's the
-    # category of weapon nuclear-arms-control treaties (INF) once
-    # banned. Treating it as a nuclear-axis L3-4 signal even when used
-    # in conventional configuration. Reuters/Bellingcat/ISW consensus
-    # is that Oreshnik use signals nuclear-rung escalation intent.
+    # ══ RE-TIERED Sep 2026 ═══════════════════════════════════════════════
+    # WHY: nuclear_level >= 3 sets `nuclear_elevated`, which forces the Europe
+    # posture to "CRITICAL -- MULTI-BREACH OR NUCLEAR SIGNALING" and fires the
+    # GPI's priority-15 narrative -- the highest-stakes signal class on the
+    # platform. _score_vector takes the max level from a SINGLE phrase in a
+    # SINGLE article, so one match anywhere in the corpus drove all of that.
+    #
+    # The L3 tier had three classes of phrase that are not nuclear signals:
+    #
+    #   SPEAKER-NAME-ONLY  'medvedev says', 'medvedev statement',
+    #                      'putin warns west', 'kremlin threatens west'.
+    #                      Medvedev is the most prolific producer of belligerent
+    #                      commentary in Russian politics; these matched any
+    #                      article quoting him about anything at all.
+    #
+    #   CAPABILITY DESCRIPTORS  'kinzhal nuclear capable', 'oreshnik medium
+    #                      range', 'iskander nuclear russia'. "Nuclear-capable"
+    #                      is a STANDING ADJECTIVE, true every day for years.
+    #                      Every article describing a Kinzhal strike contains it.
+    #
+    #   COMMENTARY ABOUT THE TOPIC  'russia nuclear rhetoric', 'nuclear
+    #                      deterrence russia'. These match explainers and
+    #                      analysis pieces -- writing about the signal, not the
+    #                      signal.
+    #
+    # Those are now L1/L2, which are recorded but do NOT set elevated. L3+ now
+    # requires nuclear CONTENT plus a THREAT or POSTURE verb, not merely a
+    # Russian principal opening his mouth near the word nuclear.
+    #
+    # DOCTRINE: this axis should fire when a nuclear event is happening, or when
+    # the platform is seeing genuine precursor signals an analyst should be
+    # pointed at. It must not fire because Medvedev posted again.
+
+    # ── L5: nuclear USE. Not discussion, not threat -- use. ──
     5: [
         'russia uses nuclear weapon', 'nuclear detonation russia',
         'tactical nuclear strike', 'russia nuclear attack',
         'nuclear weapon used ukraine', 'dirty bomb russia confirmed',
         'russia launches nuclear', 'nuclear explosion russia',
     ],
+
+    # ── L4: FORCE POSTURE CHANGE -- a physical or doctrinal move, verifiable
+    #        and rare. Oreshnik ACTUAL USE sits here: a nuclear-capable IRBM
+    #        fired in anger is a doctrinal escalation marker even when
+    #        conventionally armed (ISW/Reuters/Bellingcat consensus). Note the
+    #        distinction from mere Oreshnik DISCUSSION, now demoted to L2.
     4: [
         'russia raises nuclear alert', 'nuclear forces combat readiness',
         'russia deploys nuclear weapons', 'tactical nuclear deployment',
@@ -715,71 +747,84 @@ NUCLEAR_TRIGGERS = {
         'russia places nuclear on alert', 'strategic forces alert',
         'nuclear weapons belarus deployed', 'sarmat test launch',
         'poseidon torpedo deployment', 'russia nuclear doctrine change',
-        # ── v1.2 — Oreshnik / IRBM-class doctrinal-escalation signals ──
+        'russia nuclear posture change', 'kremlin nuclear alert',
+        'belarus nuclear deployment', 'tactical nuclear belarus',
+        'suspends new start', 'withdraws from new start',
+        'nuclear test preparation', 'resumes nuclear testing',
+        'novaya zemlya test', 'nuclear warhead transfer',
+        # Oreshnik / IRBM-class: USE, not talk.
         'oreshnik strike confirmed', 'oreshnik launched ukraine',
         'oreshnik launch ukraine', 'oreshnik hits ukraine',
         'oreshnik used ukraine', 'russia launches oreshnik',
-        'russia fires hypersonic ballistic',
-        'russia hypersonic irbm launched', 'russia hypersonic launched',
-        'russia escalates ballistic', 'russia ballistic escalation',
-        # ── v1.3 (May 24 2026) news-language expansion ──
         'oreshnik missile launched', 'oreshnik fired', 'russia fires oreshnik',
         'oreshnik strike ukraine', 'oreshnik attack ukraine',
         'oreshnik used in attack', 'oreshnik in attack on',
         'putin orders oreshnik', 'russia oreshnik attack',
         'oreshnik missile attack', 'oreshnik missile strike',
-        'hypersonic missile launched ukraine', 'russia launches hypersonic',
-        'hypersonic strike on ukraine', 'hypersonic ballistic missile launched',
-        'russia uses hypersonic', 'russia hypersonic in attack',
-        'kinzhal launched ukraine', 'avangard deployment',
-        'belarus nuclear deployment', 'tactical nuclear belarus',
-        'russia nuclear posture change', 'kremlin nuclear alert',
     ],
+
+    # ── L3: EXPLICIT NUCLEAR THREAT by a named principal. This is the rung
+    #        that sets `nuclear_elevated`, so every phrase must carry BOTH
+    #        nuclear content AND a threat/conditional verb. A speaker name
+    #        alone is not enough and never was.
     3: [
-        'medvedev nuclear warning', 'russia nuclear threat nato',
-        'russia considers nuclear', 'nuclear option russia',
-        'russia nuclear if nato intervenes', 'nuclear weapons as option',
-        'russia escalate to nuclear', 'nuclear blackmail russia',
-        'kinzhal nuclear capable', 'iskander nuclear russia',
+        'russia nuclear threat nato', 'russia considers nuclear',
+        'russia nuclear if nato intervenes', 'russia escalate to nuclear',
+        'russia warns nuclear response', 'russia threatens nuclear',
+        'russia nuclear retaliation', 'nuclear retaliation russia',
+        'nuclear consequences nato', 'nuclear blackmail russia',
+        'putin warns nuclear', 'putin nuclear threat',
+        'putin threatens nuclear', 'putin nuclear warning',
+        'medvedev nuclear warning', 'medvedev nuclear threat',
+        'medvedev threatens nuclear', 'medvedev nuclear response',
+        'kremlin nuclear warning', 'kremlin nuclear threat',
+        'kremlin warns nuclear', 'lavrov nuclear threat',
+        'lavrov warns nuclear', 'nuclear option russia',
+        'nuclear weapons as option', 'russia nuclear use',
+        'lower nuclear threshold', 'nuclear threshold lowered',
+        # Exercises are a posture signal, not commentary.
         'russia nuclear exercise', 'strategic missile forces exercise',
-        'russia warns nuclear response', 'nuclear deterrence russia',
-        'russia hypersonic nuclear', 'russia nuclear rhetoric',
-        # ── v1.2 — Oreshnik / IRBM-class preparation / signaling ──
+        'nuclear drills russia', 'russia nuclear drill',
+        # Russian-language: explicit strike/threat language only.
+        '\u044f\u0434\u0435\u0440\u043d\u044b\u0439 \u0443\u0434\u0430\u0440',
+        '\u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u044f\u0434\u0435\u0440\u043d\u043e\u0433\u043e \u043e\u0440\u0443\u0436\u0438\u044f',
+    ],
+
+    # ── L2: nuclear DISCUSSION, capability descriptors, and analysis. Recorded
+    #        for tempo and context; does NOT set elevated. This is where the
+    #        old L3 contamination now lives.
+    2: [
+        'russia nuclear', 'nuclear warning russia', 'russia nuclear deterrent',
+        'nuclear capability russia', 'russia strategic weapons',
+        'medvedev nuclear', 'russia warns nuclear', 'nuclear signaling russia',
+        'russia nuclear rhetoric', 'russia nuclear signaling',
+        'nuclear deterrence russia', 'russia signals nuclear',
+        # Capability descriptors -- standing adjectives, true every day.
+        'kinzhal nuclear capable', 'iskander nuclear russia',
+        'oreshnik nuclear capable', 'oreshnik medium range',
+        'russia hypersonic nuclear', 'medium-range ballistic missile russia',
+        'intermediate-range ballistic russia', 'avangard deployment',
+        # Oreshnik TALK (as opposed to use, which is L4).
         'oreshnik preparation', 'russia preparing oreshnik',
         'oreshnik warning ukraine', 'oreshnik threat ukraine',
         'putin oreshnik warning', 'putin threatens oreshnik',
-        'russia hypersonic capability oreshnik',
-        'oreshnik nuclear capable', 'oreshnik medium range',
-        'russia irbm signaling', 'russia intermediate range signaling',
-        'оружие судного дня', 'орешник россия',
-        'ядерное оружие НАТО', 'ядерный удар',
-        # ── v1.3 (May 24 2026) news-language expansion ──
-        'putin nuclear warning', 'putin warns nuclear',
-        'putin nuclear threat', 'putin nuclear rhetoric',
-        'medvedev warns', 'medvedev threatens', 'medvedev statement',
-        'medvedev says', 'medvedev nuclear', 'medvedev nuclear response',
-        'kremlin nuclear warning', 'kremlin nuclear threat',
-        'kremlin warns nuclear', 'lavrov nuclear',
-        'russia nuclear response', 'russia nuclear retaliation',
-        'russia nuclear use', 'russia threatens nuclear',
-        'nuclear retaliation russia', 'nuclear consequences nato',
-        'medium-range ballistic missile russia',
-        'intermediate-range ballistic russia',
-        'oreshnik signaling', 'oreshnik doctrinal',
-        'putin warns west', 'medvedev warns west',
-        'russia signals nuclear', 'russia nuclear signaling',
-        'putin threatens west', 'kremlin threatens west',
+        'russia hypersonic capability oreshnik', 'oreshnik signaling',
+        'oreshnik doctrinal', 'russia irbm signaling',
+        'russia intermediate range signaling',
+        '\u044f\u0434\u0435\u0440\u043d\u043e\u0435 \u043e\u0440\u0443\u0436\u0438\u0435',
+        '\u044f\u0434\u0435\u0440\u043d\u043e\u0435 \u0441\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u043d\u0438\u0435',
+        '\u043e\u0440\u0435\u0448\u043d\u0438\u043a \u0440\u043e\u0441\u0441\u0438\u044f',
     ],
-    2: [
-        'russia nuclear', 'nuclear warning russia',
-        'russia nuclear deterrent', 'nuclear capability russia',
-        'russia strategic weapons', 'medvedev nuclear',
-        'russia warns nuclear', 'nuclear signaling russia',
-        'ядерное оружие', 'ядерное сдерживание',
-    ],
+
+    # ── L1: passing mention, and NON-NUCLEAR belligerence by a named principal.
+    #        'medvedev says' lives here now. It is worth counting -- rhetoric
+    #        tempo is a real signal -- but it is not a nuclear one.
     1: [
-        'nuclear russia', 'russia deterrent',
-        'strategic weapons', 'ядерный',
+        'nuclear russia', 'russia deterrent', 'strategic weapons',
+        'medvedev warns', 'medvedev threatens', 'medvedev statement',
+        'medvedev says', 'putin warns west', 'medvedev warns west',
+        'putin threatens west', 'kremlin threatens west',
+        '\u044f\u0434\u0435\u0440\u043d\u044b\u0439',
     ],
 }
 
@@ -2197,7 +2242,12 @@ def _write_crosstheater_fingerprint(actor_results, vectors, regime_signals=None)
     sanctions_evasion_cluster, dedollarization_drumbeat, and
     financial_system_fragmentation convergences.
     """
-    nuc_level, _ = vectors.get('nuclear',    (0, None))
+    # KEEP THE TRIGGER (Sep 2026). This was `nuc_level, _` -- the phrase that
+    # fired the nuclear axis was unpacked into a throwaway and discarded, which
+    # is why the GPI's priority-15 nuclear narrative could say only "at least one
+    # regional theater shows nuclear-doctrine-language" with nothing an analyst
+    # could check. The evidence existed one function up the whole time.
+    nuc_level, nuc_trigger = vectors.get('nuclear',    (0, None))
     arc_level, _ = vectors.get('arctic',     (0, None))
     hyb_level, _ = vectors.get('hybrid',     (0, None))
 
@@ -2229,6 +2279,10 @@ def _write_crosstheater_fingerprint(actor_results, vectors, regime_signals=None)
             'dprk_russia_active':    hyb_level >= 3,
             'arctic_elevated':       arc_level >= 3,
             'nuclear_signaling':     nuc_level >= 3,
+            # Evidence for the flag above. `nuclear_level` is already emitted
+            # a few lines up; the TRIGGER PHRASE is what was missing, and it is
+            # the only field that lets a reader audit a priority-15 alarm.
+            'nuclear_trigger':       nuc_trigger or '',
 
             # ── Regime Signals (May 7 2026) — Convergence Registry Consumer Surface ──
             # Per-dimension max levels for the 5 regime-signal sub-detection ladders.
@@ -2274,7 +2328,8 @@ def _write_canonical_spoke_fingerprint(actor_results, vectors, regime_signals=No
     def _al(actor_id):
         return actor_results.get(actor_id, {}).get('escalation_level', 0)
 
-    nuc_level, _ = vectors.get('nuclear',    (0, None))
+    # Trigger retained here too -- see the note in _write_crosstheater_fingerprint.
+    nuc_level, nuc_trigger = vectors.get('nuclear',    (0, None))
     gnd_level, _ = vectors.get('ground_ops', (0, None))
     flk_level, _ = vectors.get('nato_flank', (0, None))
     arc_level, _ = vectors.get('arctic',     (0, None))
@@ -2315,6 +2370,8 @@ def _write_canonical_spoke_fingerprint(actor_results, vectors, regime_signals=No
         'belarus_level':         _al('belarus'),
         'ukraine_level':         _al('ukraine'),
         'nuclear_signaling':     nuc_level >= 3,
+        'nuclear_level':         nuc_level,
+        'nuclear_trigger':       nuc_trigger or '',
         'arctic_elevated':       arc_level >= 3,
         'regime_signals_max':    regime_signals.get('max', 0),
         'regime_signals_active': regime_signals.get('active_count', 0),
