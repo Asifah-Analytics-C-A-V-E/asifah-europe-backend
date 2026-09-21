@@ -1520,7 +1520,9 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-REDDIT_USER_AGENT = "AsifahAnalytics-Europe/1.1.0 (OSINT monitoring tool)"
+REDDIT_USER_AGENT = "AsifahAnalytics-Europe/1.2.0 (OSINT monitoring tool)"
+# v1.2.0 (Sep 21 2026) -- per-target Reddit outcome, surfaced on /health.
+REDDIT_HEALTH = {'mechanism': 'search.rss', 'targets': {}, 'last_run': None}
 REDDIT_SUBREDDITS = {
     'greenland': ['Greenland', 'europe', 'geopolitics', 'worldnews', 'Denmark', 'Arctic', 'Mining', 'RareEarthMetals'],
     'ukraine': ['ukraine', 'UkraineWarVideoReport', 'UkrainianConflict', 'europe', 'geopolitics', 'worldnews'],
@@ -1535,6 +1537,10 @@ REDDIT_SUBREDDITS = {
     'belarus': ['belarus', 'europe', 'geopolitics', 'worldnews', 'CredibleDefense'],
     'turkmenistan': ['CentralAsia', 'geopolitics', 'worldnews', 'energy'],
     'kazakhstan': ['Kazakhstan', 'CentralAsia', 'geopolitics', 'worldnews', 'CredibleDefense'],
+    # v1.2.0 (Sep 21 2026) -- these three had reddit_keywords but no subreddits
+    'albania': ['albania', 'europe', 'geopolitics', 'worldnews'],
+    'belgium': ['belgium', 'europe', 'geopolitics', 'worldnews'],
+    'moldova': ['moldova', 'romania', 'europe', 'geopolitics', 'worldnews'],
 }
 
 # ========================================
@@ -2612,14 +2618,25 @@ def fetch_gdelt_articles(query, days=7, language='eng'):
 
 
 def fetch_reddit_posts(target, keywords, days=7):
-    """Fetch Reddit posts from relevant subreddits"""
-    print(f"[Europe v1.1] Reddit: Starting fetch for {target}")
+    """Fetch Reddit posts via search.rss (Atom). v1.2.0 -- Sep 21, 2026.
+
+    Was search.json. search.rss needs no OAuth and no UA games, and was
+    verified live Sep 20. Every non-200 is now RECORDED in REDDIT_HEALTH
+    instead of falling through in silence, and a 429 stands down the rest
+    of this target's subreddits rather than knocking on each one.
+    """
+    print(f"[Europe v1.2] Reddit: Starting fetch for {target}")
 
     subreddits = REDDIT_SUBREDDITS.get(target, [])
     if not subreddits:
+        REDDIT_HEALTH['targets'][target] = {
+            'status': 'no_subreddits_configured',
+            'at': datetime.now(timezone.utc).isoformat()}
         return []
 
+    from html import unescape as _unescape
     all_posts = []
+    atom = '{http://www.w3.org/2005/Atom}'
 
     if days <= 1:
         time_filter = "day"
@@ -2630,58 +2647,88 @@ def fetch_reddit_posts(target, keywords, days=7):
     else:
         time_filter = "year"
 
-    for subreddit in subreddits:
-        try:
-            query = " OR ".join(keywords[:3])
+    # NOTE: still the first 3 reddit_keywords (see handover 4.1 -- a
+    # deliberate precision guard until the keyword lists are restructured).
+    query = " OR ".join(keywords[:3])
+    counts = {'ok': 0, 'empty': 0, 'http_error': 0, 'rate_limited': 0,
+              'parse_error': 0, 'exception': 0, 'skipped_after_429': 0}
 
-            url = f"https://www.reddit.com/r/{subreddit}/search.json"
+    for i, subreddit in enumerate(subreddits):
+        if counts['rate_limited']:
+            counts['skipped_after_429'] = len(subreddits) - i
+            print(f"[Europe v1.2] Reddit: 429 earlier -- skipping "
+                  f"{len(subreddits) - i} remaining subreddits for {target}")
+            break
+        try:
+            url = f"https://www.reddit.com/r/{subreddit}/search.rss"
             params = {
                 "q": query,
-                "restrict_sr": "true",
+                "restrict_sr": "on",
                 "sort": "new",
                 "t": time_filter,
                 "limit": 25
             }
-
-            headers = {
-                "User-Agent": REDDIT_USER_AGENT
-            }
+            headers = {"User-Agent": REDDIT_USER_AGENT}
 
             time.sleep(2)
-
             response = requests.get(url, params=params, headers=headers, timeout=10)
 
-            if response.status_code == 200:
-                data = response.json()
+            if response.status_code == 429:
+                counts['rate_limited'] += 1
+                print(f"[Europe v1.2] Reddit r/{subreddit}: HTTP 429 rate limited")
+                continue
+            if response.status_code != 200:
+                counts['http_error'] += 1
+                print(f"[Europe v1.2] Reddit r/{subreddit}: HTTP {response.status_code}")
+                continue
 
-                if "data" in data and "children" in data["data"]:
-                    posts = data["data"]["children"]
+            try:
+                root = ET.fromstring(response.content)
+            except ET.ParseError:
+                counts['parse_error'] += 1
+                print(f"[Europe v1.2] Reddit r/{subreddit}: unparseable feed "
+                      f"({len(response.content)} bytes)")
+                continue
 
-                    for post in posts:
-                        post_data = post.get("data", {})
+            entries = root.findall(f'{atom}entry')
+            for entry in entries:
+                title = (entry.findtext(f'{atom}title') or '').strip()
+                link_el = entry.find(f'{atom}link')
+                link = link_el.get('href', '') if link_el is not None else ''
+                published = (entry.findtext(f'{atom}published')
+                             or entry.findtext(f'{atom}updated') or '')
+                raw_html = entry.findtext(f'{atom}content') or ''
+                text = _unescape(re.sub(r'<[^>]+>', ' ', raw_html))
+                text = re.sub(r'\s+', ' ', text).strip()
+                # Reddit's own boilerplate, not content
+                text = re.sub(r'submitted by\s+/u/\S+.*$', '', text).strip()
 
-                        normalized_post = {
-                            "title": post_data.get("title", "")[:200],
-                            "description": post_data.get("selftext", "")[:300],
-                            "url": f"https://www.reddit.com{post_data.get('permalink', '')}",
-                            "publishedAt": datetime.fromtimestamp(
-                                post_data.get("created_utc", 0),
-                                tz=timezone.utc
-                            ).isoformat(),
-                            "source": {"name": f"r/{subreddit}"},
-                            "content": post_data.get("selftext", ""),
-                            "language": "en"
-                        }
+                all_posts.append({
+                    "title": title[:200],
+                    "description": text[:300],
+                    "url": link,
+                    "publishedAt": published,
+                    "source": {"name": f"r/{subreddit}"},
+                    "content": text,
+                    "language": "en"
+                })
 
-                        all_posts.append(normalized_post)
-
-                    print(f"[Europe v1.1] Reddit r/{subreddit}: Found {len(posts)} posts")
+            if entries:
+                counts['ok'] += 1
+            else:
+                counts['empty'] += 1
+            print(f"[Europe v1.2] Reddit r/{subreddit}: Found {len(entries)} posts")
 
         except Exception as e:
-            print(f"[Europe v1.1] Reddit r/{subreddit} error: {str(e)}")
+            counts['exception'] += 1
+            print(f"[Europe v1.2] Reddit r/{subreddit} error: {str(e)[:120]}")
             continue
 
-    print(f"[Europe v1.1] Reddit: Total {len(all_posts)} posts")
+    REDDIT_HEALTH['targets'][target] = dict(
+        counts, posts=len(all_posts), subreddits=len(subreddits),
+        at=datetime.now(timezone.utc).isoformat())
+    REDDIT_HEALTH['last_run'] = datetime.now(timezone.utc).isoformat()
+    print(f"[Europe v1.2] Reddit: Total {len(all_posts)} posts | {counts}")
     return all_posts
 
 
@@ -4858,7 +4905,8 @@ def health():
         'version': '1.1.0-europe',
         'region': 'europe',
         'timestamp': datetime.now(timezone.utc).isoformat(),
-        'cache_entries': len(_cache)
+        'cache_entries': len(_cache),
+        'reddit': REDDIT_HEALTH
     })
 
 # Register Ukraine humanitarian endpoints
