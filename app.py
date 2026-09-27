@@ -1520,7 +1520,7 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-REDDIT_USER_AGENT = "AsifahAnalytics-Europe/1.3.0 (OSINT monitoring tool)"
+REDDIT_USER_AGENT = "AsifahAnalytics-Europe/1.4.0 (OSINT monitoring tool)"
 # v1.2.0 (Sep 21 2026) -- per-target Reddit outcome, surfaced on /health.
 # v1.3.0 (Sep 27 2026) -- ALSO written to Redis. This process gets OOM-killed
 # at 512MB every few days (Render events: Sep 23, Sep 26), and an in-memory
@@ -1549,6 +1549,44 @@ def _save_reddit_health_redis():
     except Exception as e:
         print(f"[Europe v1.3] Reddit health save error: {str(e)[:80]}")
         return False
+
+
+# ── Feed health (v1.4.0, Sep 27 2026) ─────────────────────────────────
+# Nine RSS fetchers in this file, each of them careful about a single bad
+# fetch and none of them keeping any history. A feed can therefore fail
+# every time, forever, and never look worse than a bad night -- which is
+# how feeds.reuters.com stayed in the config for days after Reuters
+# retired it. feed_health keeps the history in Upstash and says which of
+# quiet / silent / failing / dead a feed actually is.
+try:
+    from feed_health import record_fetch as _feed_record, feed_report as _feed_report
+    _FEED_HEALTH = True
+except ImportError:
+    _feed_record = None
+    _feed_report = None
+    _FEED_HEALTH = False
+    print("[Europe v1.4] feed_health not installed -- feed deaths will stay silent")
+
+
+def _rss_record(feed_url, label, items=0, http_status=None, error=None, t0=None):
+    """One line per fetch outcome. Never raises -- instrumentation must not
+    be able to break the thing it is measuring."""
+    if not _feed_record:
+        return
+    try:
+        _feed_record('europe', feed_url, items=items, label=label,
+                     http_status=http_status, error=error,
+                     duration_ms=((time.time() - t0) * 1000) if t0 else None)
+    except Exception as _e:
+        print(f"[Europe v1.4] feed_health record failed: {str(_e)[:80]}")
+
+
+def get_feed_health_report():
+    """Feed-by-feed status for /health. 'needs_attention' is the list to read."""
+    if not _feed_report:
+        return {'state': 'could_not_assess',
+                'reason': 'feed_health module not installed'}
+    return _feed_report('europe')
 
 
 def _load_reddit_health_redis():
@@ -2791,10 +2829,12 @@ def fetch_kyiv_independent_rss():
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
+        _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
         if response.status_code != 200:
             print(f"[Europe v1.1] Kyiv Independent: HTTP {response.status_code}")
+            _rss_record(feed_url, 'Kyiv Independent', http_status=response.status_code, t0=_t0)
             return []
 
         root = ET.fromstring(response.content)
@@ -2824,8 +2864,11 @@ def fetch_kyiv_independent_rss():
 
         print(f"[Europe v1.1] Kyiv Independent: ✓ Fetched {len(articles)} articles")
 
+        _rss_record(feed_url, 'Kyiv Independent', items=len(articles), http_status=200, t0=_t0)
+
     except Exception as e:
         print(f"[Europe v1.1] Kyiv Independent error: {str(e)[:100]}")
+        _rss_record(feed_url, 'Kyiv Independent', error=e, t0=_t0)
 
     return articles
 
@@ -2840,10 +2883,12 @@ def fetch_meduza_rss():
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
+        _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
         if response.status_code != 200:
             print(f"[Europe v1.1] Meduza: HTTP {response.status_code}")
+            _rss_record(feed_url, 'Meduza', http_status=response.status_code, t0=_t0)
             return []
 
         root = ET.fromstring(response.content)
@@ -2873,8 +2918,11 @@ def fetch_meduza_rss():
 
         print(f"[Europe v1.1] Meduza: ✓ Fetched {len(articles)} articles")
 
+        _rss_record(feed_url, 'Meduza', items=len(articles), http_status=200, t0=_t0)
+
     except Exception as e:
         print(f"[Europe v1.1] Meduza error: {str(e)[:100]}")
+        _rss_record(feed_url, 'Meduza', error=e, t0=_t0)
 
     return articles
 
@@ -2889,10 +2937,12 @@ def fetch_isw_rss():
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
+        _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
         if response.status_code != 200:
             print(f"[Europe v1.1] ISW: HTTP {response.status_code}")
+            _rss_record(feed_url, 'ISW', http_status=response.status_code, t0=_t0)
             return []
 
         root = ET.fromstring(response.content)
@@ -2922,8 +2972,11 @@ def fetch_isw_rss():
 
         print(f"[Europe v1.1] ISW: ✓ Fetched {len(articles)} articles")
 
+        _rss_record(feed_url, 'ISW', items=len(articles), http_status=200, t0=_t0)
+
     except Exception as e:
         print(f"[Europe v1.1] ISW error: {str(e)[:100]}")
+        _rss_record(feed_url, 'ISW', error=e, t0=_t0)
 
     return articles
 
@@ -2938,10 +2991,12 @@ def fetch_arctic_today_rss():
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
+        _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
         if response.status_code != 200:
             print(f"[Europe v1.1] Arctic Today: HTTP {response.status_code}")
+            _rss_record(feed_url, 'Arctic Today', http_status=response.status_code, t0=_t0)
             return []
 
         root = ET.fromstring(response.content)
@@ -2971,8 +3026,11 @@ def fetch_arctic_today_rss():
 
         print(f"[Europe v1.1] Arctic Today: ✓ Fetched {len(articles)} articles")
 
+        _rss_record(feed_url, 'Arctic Today', items=len(articles), http_status=200, t0=_t0)
+
     except Exception as e:
         print(f"[Europe v1.1] Arctic Today error: {str(e)[:100]}")
+        _rss_record(feed_url, 'Arctic Today', error=e, t0=_t0)
 
     return articles
 
@@ -2987,10 +3045,12 @@ def fetch_google_news_rss(query, source_label='Google News', max_articles=15):
 
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
         if response.status_code != 200:
             print(f"[{source_label}] HTTP {response.status_code}")
+            _rss_record(feed_url, source_label, http_status=response.status_code, t0=_t0)
             return []
 
         root = ET.fromstring(response.content)
@@ -3015,8 +3075,11 @@ def fetch_google_news_rss(query, source_label='Google News', max_articles=15):
 
         print(f"[{source_label}] ✓ {len(articles)} articles")
 
+        _rss_record(feed_url, source_label, items=len(articles), http_status=200, t0=_t0)
+
     except ET.ParseError as e:
         print(f"[{source_label}] XML parse error: {str(e)[:100]}")
+        _rss_record(feed_url, source_label, error=e, t0=_t0)
     except Exception as e:
         print(f"[{source_label}] Error: {str(e)[:100]}")
 
@@ -3031,10 +3094,12 @@ def fetch_daily_sabah_rss():
     try:
         print("[Europe v1.3] Daily Sabah: Fetching RSS...")
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
         if response.status_code != 200:
             print(f"[Europe v1.3] Daily Sabah: HTTP {response.status_code}")
+            _rss_record(feed_url, 'Daily Sabah', http_status=response.status_code, t0=_t0)
             return []
 
         root = ET.fromstring(response.content)
@@ -3062,8 +3127,11 @@ def fetch_daily_sabah_rss():
 
         print(f"[Europe v1.3] Daily Sabah: ✓ {len(articles)} articles")
 
+        _rss_record(feed_url, 'Daily Sabah', items=len(articles), http_status=200, t0=_t0)
+
     except Exception as e:
         print(f"[Europe v1.3] Daily Sabah error: {str(e)[:100]}")
+        _rss_record(feed_url, 'Daily Sabah', error=e, t0=_t0)
 
     return articles
 
@@ -3076,10 +3144,12 @@ def fetch_ukrinform_rss():
     try:
         print("[Europe v1.3] Ukrinform: Fetching RSS...")
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
         if response.status_code != 200:
             print(f"[Europe v1.3] Ukrinform: HTTP {response.status_code}")
+            _rss_record(feed_url, 'Ukrinform', http_status=response.status_code, t0=_t0)
             return []
 
         root = ET.fromstring(response.content)
@@ -3107,8 +3177,11 @@ def fetch_ukrinform_rss():
 
         print(f"[Europe v1.3] Ukrinform: ✓ {len(articles)} articles")
 
+        _rss_record(feed_url, 'Ukrinform', items=len(articles), http_status=200, t0=_t0)
+
     except Exception as e:
         print(f"[Europe v1.3] Ukrinform error: {str(e)[:100]}")
+        _rss_record(feed_url, 'Ukrinform', error=e, t0=_t0)
 
     return articles
 
@@ -3121,10 +3194,12 @@ def fetch_moscow_times_rss():
     try:
         print("[Europe v1.3] Moscow Times: Fetching RSS...")
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
         if response.status_code != 200:
             print(f"[Europe v1.3] Moscow Times: HTTP {response.status_code}")
+            _rss_record(feed_url, 'Moscow Times', http_status=response.status_code, t0=_t0)
             return []
 
         root = ET.fromstring(response.content)
@@ -3152,8 +3227,11 @@ def fetch_moscow_times_rss():
 
         print(f"[Europe v1.3] Moscow Times: ✓ {len(articles)} articles")
 
+        _rss_record(feed_url, 'Moscow Times', items=len(articles), http_status=200, t0=_t0)
+
     except Exception as e:
         print(f"[Europe v1.3] Moscow Times error: {str(e)[:100]}")
+        _rss_record(feed_url, 'Moscow Times', error=e, t0=_t0)
 
     return articles
   
@@ -3169,10 +3247,12 @@ def _fetch_native_rss(feed_url, source_name, language, log_prefix='[Europe v1.4]
     try:
         print(f"{log_prefix} {source_name}: Fetching RSS...")
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
         if response.status_code != 200:
             print(f"{log_prefix} {source_name}: HTTP {response.status_code}")
+            _rss_record(feed_url, source_name, http_status=response.status_code, t0=_t0)
             return []
 
         root = ET.fromstring(response.content)
@@ -3200,8 +3280,11 @@ def _fetch_native_rss(feed_url, source_name, language, log_prefix='[Europe v1.4]
 
         print(f"{log_prefix} {source_name}: ✓ {len(articles)} articles ({language})")
 
+        _rss_record(feed_url, source_name, items=len(articles), http_status=200, t0=_t0)
+
     except Exception as e:
         print(f"{log_prefix} {source_name} error: {str(e)[:100]}")
+        _rss_record(feed_url, source_name, error=e, t0=_t0)
 
     return articles
 
@@ -4962,6 +5045,7 @@ def health():
             __import__('resource').getrusage(
                 __import__('resource').RUSAGE_SELF).ru_maxrss / 1024.0, 1),
         'memory_ceiling_mb': 512,
+        'feeds': get_feed_health_report(),
         'cache_entries_memory': len(_cache),
         'cache_entries': len(_cache),          # kept for anything already reading it
         'reddit_this_process': REDDIT_HEALTH,
