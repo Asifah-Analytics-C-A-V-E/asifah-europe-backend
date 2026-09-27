@@ -1520,9 +1520,54 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-REDDIT_USER_AGENT = "AsifahAnalytics-Europe/1.2.0 (OSINT monitoring tool)"
+REDDIT_USER_AGENT = "AsifahAnalytics-Europe/1.3.0 (OSINT monitoring tool)"
 # v1.2.0 (Sep 21 2026) -- per-target Reddit outcome, surfaced on /health.
+# v1.3.0 (Sep 27 2026) -- ALSO written to Redis. This process gets OOM-killed
+# at 512MB every few days (Render events: Sep 23, Sep 26), and an in-memory
+# dict does not survive that. On Sep 27 /health reported last_run=null and
+# cache_entries=0 six hours after a clean 16-country scan, which read exactly
+# like "Europe never ran" -- for an hour, we believed it.
 REDDIT_HEALTH = {'mechanism': 'search.rss', 'targets': {}, 'last_run': None}
+REDDIT_HEALTH_REDIS_KEY = 'europe:reddit:health'
+PROCESS_STARTED_AT = datetime.now(timezone.utc).isoformat()
+
+
+def _save_reddit_health_redis():
+    """Persist the Reddit health block so a restart cannot erase the record."""
+    if not (UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN):
+        return False
+    try:
+        requests.post(
+            f"{UPSTASH_REDIS_URL}/set/{REDDIT_HEALTH_REDIS_KEY}",
+            headers={"Authorization": f"Bearer {UPSTASH_REDIS_TOKEN}",
+                     "Content-Type": "application/json"},
+            params={"EX": 7 * 24 * 3600},
+            data=json.dumps(REDDIT_HEALTH, default=str),
+            timeout=5,
+        )
+        return True
+    except Exception as e:
+        print(f"[Europe v1.3] Reddit health save error: {str(e)[:80]}")
+        return False
+
+
+def _load_reddit_health_redis():
+    """Read the persisted Reddit health block (survives OOM restarts)."""
+    if not (UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN):
+        return None
+    try:
+        r = requests.get(
+            f"{UPSTASH_REDIS_URL}/get/{REDDIT_HEALTH_REDIS_KEY}",
+            headers={"Authorization": f"Bearer {UPSTASH_REDIS_TOKEN}"},
+            timeout=5,
+        )
+        if r.ok:
+            raw = (r.json() or {}).get('result')
+            if raw:
+                return json.loads(raw) if isinstance(raw, str) else raw
+    except Exception as e:
+        print(f"[Europe v1.3] Reddit health load error: {str(e)[:80]}")
+    return None
 REDDIT_SUBREDDITS = {
     'greenland': ['Greenland', 'europe', 'geopolitics', 'worldnews', 'Denmark', 'Arctic', 'Mining', 'RareEarthMetals'],
     'ukraine': ['ukraine', 'UkraineWarVideoReport', 'UkrainianConflict', 'europe', 'geopolitics', 'worldnews'],
@@ -2728,6 +2773,7 @@ def fetch_reddit_posts(target, keywords, days=7):
         counts, posts=len(all_posts), subreddits=len(subreddits),
         at=datetime.now(timezone.utc).isoformat())
     REDDIT_HEALTH['last_run'] = datetime.now(timezone.utc).isoformat()
+    _save_reddit_health_redis()      # v1.3.0 -- survive the OOM restart
     print(f"[Europe v1.2] Reddit: Total {len(all_posts)} posts | {counts}")
     return all_posts
 
@@ -4905,8 +4951,23 @@ def health():
         'version': '1.1.0-europe',
         'region': 'europe',
         'timestamp': datetime.now(timezone.utc).isoformat(),
-        'cache_entries': len(_cache),
-        'reddit': REDDIT_HEALTH
+        # v1.3.0 -- in-memory counters are wiped by every OOM restart, so say
+        # WHEN this process started and report the Redis-backed record too.
+        # "restarted 20 minutes ago" and "never ran" must not look alike.
+        'process_started_at': PROCESS_STARTED_AT,
+        'process_uptime_min': round(
+            (datetime.now(timezone.utc)
+             - datetime.fromisoformat(PROCESS_STARTED_AT)).total_seconds() / 60, 1),
+        'peak_memory_mb': round(
+            __import__('resource').getrusage(
+                __import__('resource').RUSAGE_SELF).ru_maxrss / 1024.0, 1),
+        'memory_ceiling_mb': 512,
+        'cache_entries_memory': len(_cache),
+        'cache_entries': len(_cache),          # kept for anything already reading it
+        'reddit_this_process': REDDIT_HEALTH,
+        'reddit': (_load_reddit_health_redis() or
+                   {'state': 'could_not_assess',
+                    'reason': 'Redis unreachable or no scan recorded yet'}),
     })
 
 # Register Ukraine humanitarian endpoints
