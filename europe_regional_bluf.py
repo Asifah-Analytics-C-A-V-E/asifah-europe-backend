@@ -158,6 +158,26 @@ ESCALATION_COLORS = {
     5: '#dc2626',
 }
 
+# ── PLAIN-LANGUAGE STATE VOCABULARY (Oct 3 2026) ─────────────────────
+# ESCALATION_LABELS above is CHIP language -- it labels a pill next to a
+# legend. It is wrong for PROSE, where "peak escalation L4" tells a reader
+# who has never seen this platform precisely nothing.
+#
+# theatre_state.py carries the axis-aware vocabulary (a magnitude-9
+# earthquake is a legitimate L5, and calling it "active war footing" is not
+# imprecise, it is false). Rule: the state phrase LEADS, the level follows
+# in parentheses. Fails soft -- missing module keeps the old shape rather
+# than blanking the page.
+try:
+    from theatre_state import state_with_level as _ts_level, named_state as _ts_named
+except ImportError:
+    def _ts_level(level, category=None, pressure_type=None, upper=False):
+        return 'L%s' % level
+    def _ts_named(name, level, category=None, pressure_type=None):
+        return '%s (L%s)' % (name, level)
+
+
+
 INFLUENCE_LABELS = {
     0: 'Standby',
     1: 'Engaged',
@@ -744,7 +764,7 @@ def _synthesize_top_signals_legacy(theatre, raw_data, threat_int, score, so_what
             'short_text': raw_data.get('signal_text_short') or
                           f'{flag} {display} L{effective_level} — {tracker_label}',
             'long_text':  raw_data.get('signal_text_long') or
-                          f'{flag} {display} at L{effective_level} {tracker_label} (score {score}/100)',
+                          f'{flag} {display} at {_ts_level(effective_level)} -- {tracker_label} (score {score}/100)',
         })
 
     # Theatre-active (L1-L3 — rhetoric/warning/direct-threat tier) — v2.3.0 NEW
@@ -768,7 +788,7 @@ def _synthesize_top_signals_legacy(theatre, raw_data, threat_int, score, so_what
             'short_text': raw_data.get('signal_text_short') or
                           f'{flag} {display} L{threat_int} — {tracker_label}',
             'long_text':  raw_data.get('signal_text_long') or
-                          f'{flag} {display} at L{threat_int} {tracker_label} (score {score}/100)',
+                          f'{flag} {display} at {_ts_level(threat_int)} -- {tracker_label} (score {score}/100)',
         })
 
     # Russia-specific legacy fallbacks
@@ -973,7 +993,8 @@ def _build_bluf_prose(posture, trackers):
 
     n_live = len(trackers)
     parts.append(
-        f"Regional posture {posture['label']} -- peak escalation L{posture['peak_level']} "
+        f"Regional posture {posture['label']} -- peak theatre at "
+        f"{_ts_level(posture['peak_level'])} "
         f"across {n_live} live tracker{'s' if n_live != 1 else ''}."
     )
 
@@ -1028,7 +1049,7 @@ def _build_bluf_prose(posture, trackers):
         # ---- Turkey: swing-state framing, always named ----
         if theatre == 'turkey':
             sentence = (
-                f"Turkey (swing-state watch) at L{threat} {label.lower()}, "
+                f"Turkey (swing-state watch) at {_ts_level(threat)}, "
                 f"score {score}/100"
             )
             if lead:
@@ -1050,16 +1071,16 @@ def _build_bluf_prose(posture, trackers):
             nato    = _safe_int(raw.get('nato_flank_level'))
             arctic  = _safe_int(raw.get('arctic_level'))
             if threat >= 1 or nuclear >= 3 or nato >= 3:
-                sentence = f"Russia composite L{threat} ({label}, score {score}/100)"
+                sentence = f"Russia composite {_ts_level(threat)}, score {score}/100"
                 vector_phrases = []
                 if nuclear >= 3:
-                    vector_phrases.append(f"nuclear signaling L{nuclear}")
+                    vector_phrases.append(f"nuclear signaling at {_ts_level(nuclear)}")
                 if ground >= 3:
-                    vector_phrases.append(f"ground operations L{ground}")
+                    vector_phrases.append(f"ground operations at {_ts_level(ground)}")
                 if nato >= 3:
-                    vector_phrases.append(f"NATO-flank pressure L{nato}")
+                    vector_phrases.append(f"NATO-flank pressure at {_ts_level(nato)}")
                 if arctic >= 3:
-                    vector_phrases.append(f"Arctic posture L{arctic}")
+                    vector_phrases.append(f"Arctic posture at {_ts_level(arctic)}")
                 if vector_phrases:
                     sentence += " -- driven by " + ", ".join(vector_phrases)
                 elif lead:
@@ -1076,7 +1097,7 @@ def _build_bluf_prose(posture, trackers):
         if theatre == 'greenland':
             us_lvl = _safe_int(raw.get('us_pressure_level'))
             if threat >= 1 or us_lvl >= 3:
-                sentence = f"Greenland sovereignty L{threat} ({label}, score {score}/100)"
+                sentence = f"Greenland sovereignty {_ts_level(threat)}, score {score}/100"
                 if us_lvl >= 3:
                     sentence += (
                         f" -- inbound US pressure L{us_lvl}, a pattern "
@@ -1092,7 +1113,7 @@ def _build_bluf_prose(posture, trackers):
 
         # ---- Generic named sentence (Ukraine, Belarus, Hungary, future) ----
         if threat >= 1:
-            sentence = f"{name} L{threat} ({label}, score {score}/100)"
+            sentence = f"{name} -- {_ts_level(threat)}, score {score}/100"
             if lead:
                 sentence += f" -- lead signal: {lead}"
             # If the LEAD signal is diplomatic, the escalation tail would
@@ -1132,8 +1153,8 @@ def _build_bluf_prose(posture, trackers):
         greenland_threat = greenland_data['levels']['threat']
         if russia_arctic >= 3 and greenland_threat >= 3:
             parts.append(
-                f"Arctic convergence: Russia Arctic posture L{russia_arctic} "
-                f"simultaneous with Greenland sovereignty L{greenland_threat} -- "
+                f"Arctic convergence: Russia Arctic posture at {_ts_level(russia_arctic)} "
+                f"simultaneous with Greenland sovereignty at {_ts_level(greenland_threat)} -- "
                 f"a pairing consistent with Russia exploiting US-Denmark "
                 f"friction in the GIUK approaches."
             )
