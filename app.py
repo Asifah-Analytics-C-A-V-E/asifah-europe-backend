@@ -1520,7 +1520,27 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-REDDIT_USER_AGENT = "AsifahAnalytics-Europe/1.4.0 (OSINT monitoring tool)"
+EUROPE_BACKEND_VERSION = '1.4.1'
+
+# v1.4.1 (Oct 3 2026) -- ONE version, ONE User-Agent.
+# Europe was carrying both problems at once. The version: '/' said 1.1.0, the
+# dashboard said 1.2.0, the Reddit UA said 1.4.0, and the API banner said
+# v1.1.0 -- four answers to "which build is live?" from one process. The UA:
+# ten copies of a spoofed Chrome string, the largest concentration on the
+# platform.
+# Both now derive from the line above.
+REDDIT_USER_AGENT = f"AsifahAnalytics-Europe/{EUROPE_BACKEND_VERSION} (OSINT monitoring tool)"
+
+# WATCH AFTER DEPLOY -- Europe is the one to actually watch. Its feeds are
+# Meduza, The Moscow Times, Kyiv Independent, Ukrinform and ISW: exile and
+# wartime outlets that are themselves under attack and therefore the most
+# likely on the platform to sit behind hostile-bot filtering. If any of them
+# starts refusing an identified client, feed_health will name it, and the fix
+# is a documented per-feed exception at that call site -- NOT a quiet return
+# to ten disguises. An honest default with three named exceptions is a
+# position you can defend; ten anonymous ones is not.
+EUROPE_USER_AGENT = (f"AsifahAnalytics-Europe/{EUROPE_BACKEND_VERSION} "
+                     f"(OSINT monitoring tool; +https://asifahanalytics.com)")
 # v1.2.0 (Sep 21 2026) -- per-target Reddit outcome, surfaced on /health.
 # v1.3.0 (Sep 27 2026) -- ALSO written to Redis. This process gets OOM-killed
 # at 512MB every few days (Render events: Sep 23, Sep 26), and an in-memory
@@ -2827,7 +2847,7 @@ def fetch_kyiv_independent_rss():
     try:
         print("[Europe v1.1] Kyiv Independent: Fetching RSS...")
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': EUROPE_USER_AGENT,
         }
         _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
@@ -3044,7 +3064,7 @@ def fetch_google_news_rss(query, source_label='Google News', max_articles=15):
     feed_url = f"https://news.google.com/rss/search?q={query.replace(' ', '+')}&hl=en&gl=US&ceid=US:en"
 
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = {'User-Agent': EUROPE_USER_AGENT}
         _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
@@ -3496,7 +3516,7 @@ def fetch_notams_for_region(region_key):
                 'formatType': 1
             }
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'User-Agent': EUROPE_USER_AGENT,
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'Accept': 'application/json'
             }
@@ -4685,7 +4705,7 @@ def api_europe_dashboard():
         dashboard = {
             'success': True,
             'timestamp': datetime.now(timezone.utc).isoformat(),
-            'version': '1.2.0-europe',
+            'version': f'{EUROPE_BACKEND_VERSION}-europe',
             'countries': {}
         }
 
