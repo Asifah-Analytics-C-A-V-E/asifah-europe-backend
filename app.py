@@ -341,6 +341,24 @@ except ImportError as e:
     WEATHER_BUNDLE_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Weather bundle not available: {e}")
 
+# Corridor registry (v1.0.0, Oct 4 2026) -- route integrity as a STATE.
+# Lives here because the corridor is physically in Europe's theatre (Odesa,
+# Pivdennyi, Novorossiysk, Constanta, Gdansk/Gdynia) and Europe owns the
+# Russia + Ukraine trackers. ONE writer; ME and the GPI read the Redis keys.
+# Launches with every corridor in 'unknown' -- no leading instrument is wired
+# yet, and reporting 'open' because we cannot see is the one failure mode the
+# platform exists to prevent. See claude/CORRIDOR_SENSOR_SCOPING.md.
+try:
+    from corridor_registry import (
+        register_corridor_endpoints,
+        publish_corridors,
+    )
+    CORRIDOR_REGISTRY_AVAILABLE = True
+    print("[Europe Backend] ✅ Corridor registry module loaded")
+except ImportError as e:
+    CORRIDOR_REGISTRY_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Corridor registry not available: {e}")
+
 # Commodity proxy — pulls from ME backend, caches locally with 12hr TTL
 try:
     from commodity_proxy_europe import register_commodity_proxy
@@ -5203,6 +5221,20 @@ if WEATHER_BUNDLE_AVAILABLE:
     register_weather_endpoints(app)
     start_weather_refresh()
     print("[Europe Backend] ✅ Weather bundle routes registered + refresh started")
+
+# Register Corridor registry + publish the static baseline to Redis.
+# The publish is 5 idempotent SETs of structural data, so a second Render
+# instance doing it too is harmless. It runs at boot because phase 2 (ME
+# reading corridor state) needs the keys to EXIST before anything can read
+# them -- and a missing key and an open corridor must never look the same.
+# Wrapped: a Redis hiccup must not take the backend down over static data.
+if CORRIDOR_REGISTRY_AVAILABLE:
+    register_corridor_endpoints(app)
+    try:
+        _corr = publish_corridors()
+        print(f"[Europe Backend] ✅ Corridor registry registered — {_corr['summary']}")
+    except Exception as _e:
+        print(f"[Europe Backend] ⚠️ Corridor publish failed (endpoints still live): {_e}")
 
 # Register Commodity proxy + start 12hr background refresh
 if COMMODITY_PROXY_AVAILABLE:
