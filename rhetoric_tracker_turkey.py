@@ -1,8 +1,27 @@
 """
 =======================================================================
   ASIFAH ANALYTICS -- TURKEY RHETORIC TRACKER
-  v1.0.0 (Jun 11 2026)
+  v1.4.0 (Oct 4 2026)
 =======================================================================
+
+v1.4.0 (Oct 4 2026) -- SOURCE DISCIPLINE PASS
+  1. GDELT routes through gdelt_gateway, replacing this file's private
+     circuit breaker. The private breaker WORKED -- in the Oct 4 log Turkey
+     finished in 11.5s while Hungary, with no breaker, took 474.87s on the
+     same outage. That is precisely why it should be shared rather than
+     reimplemented per file: one breaker that every tracker trips and reads,
+     instead of nine that each learn the outage separately.
+  2. Reddit User-Agent is now descriptive, not bare. IMPORTANT NUANCE: this
+     file was ALREADY honest -- it sent 'AsifahAnalytics/1.0' -- and all
+     seven subreddits still returned 403. So the dividing line is not simply
+     honest-vs-spoofed. app.py's working UA carries a product, a version AND
+     a descriptive parenthetical with a contact URL; both the Chrome spoof
+     (other trackers) and the bare token (this one) were refused. The UA
+     below matches the shape that is actually getting answered.
+  3. RSS transport failures are visible; nine feeds were being read through
+     feedparser.parse(url), which reports a 403, a 404 and an empty feed
+     identically.
+  4. Absence-honest sensing block in the result payload.
 
 The platform's first SWING-STATE tracker. Multi-actor rhetoric tracker
 for Turkey, aggregating signals across:
@@ -85,6 +104,19 @@ BRAVE_BASE_URL       = 'https://api.search.brave.com/res/v1/news/search'
 REDIS_KEY_LATEST     = 'rhetoric:turkey:latest'
 REDIS_KEY_HISTORY    = 'rhetoric:turkey:history'
 REFRESH_INTERVAL_SEC = 6 * 3600
+
+TRACKER_VERSION = '1.4.0'
+
+TRACKER_USER_AGENT = (f'AsifahAnalytics-Europe-Turkey/{TRACKER_VERSION} '
+                      f'(OSINT monitoring tool; +https://asifahanalytics.com)')
+REDDIT_USER_AGENT = TRACKER_USER_AGENT
+
+try:
+    from gdelt_gateway import gdelt_fetch_probed as _gw_fetch_probed
+    GDELT_GATEWAY = True
+except ImportError:
+    GDELT_GATEWAY = False
+    print('[Turkey GDELT] gdelt_gateway unavailable -- direct calls (local breaker)')
 
 _scan_lock = threading.Lock()
 
@@ -566,10 +598,25 @@ def _parse_pub_date(pub_str):
 
 
 def _fetch_rss(url, source_name, weight=0.85, max_items=20):
+    """Fetch over requests FIRST so transport failures are visible.
+
+    The RSS_FEEDS comment above says "any feed returning zero gets its URL
+    researched, not trusted" -- but feedparser.parse(url) reported a 403, a
+    404 and a genuinely empty feed all as zero, so there was nothing to
+    research FROM. Now the status code is in the log.
+    """
     articles = []
     try:
-        feed = feedparser.parse(url)
-        for entry in feed.entries[:max_items]:
+        r = requests.get(url, headers={'User-Agent': TRACKER_USER_AGENT}, timeout=12)
+        if r.status_code != 200:
+            print(f'[Turkey RSS] {source_name}: HTTP {r.status_code} -- feed not read')
+            return articles
+        feed = feedparser.parse(r.content)
+        if getattr(feed, 'bozo', 0) and not (feed.entries or []):
+            print(f'[Turkey RSS] {source_name}: unparseable feed '
+                  f'({str(getattr(feed, "bozo_exception", ""))[:90]})')
+            return articles
+        for entry in (feed.entries or [])[:max_items]:
             articles.append({
                 'title':       entry.get('title', ''),
                 'description': entry.get('summary', '')[:400],
@@ -580,22 +627,55 @@ def _fetch_rss(url, source_name, weight=0.85, max_items=20):
                 'language':    'eng',
                 'published':   _parse_pub_date(entry.get('published')),
             })
+        print(f'[Turkey RSS] {source_name}: {len(articles)} items')
     except Exception as e:
-        print(f'[Turkey Rhetoric] RSS error ({source_name}): {str(e)[:80]}')
+        print(f'[Turkey RSS] {source_name}: {type(e).__name__}: {str(e)[:110]}')
     return articles
 
 
-# GDELT circuit breaker (canonical pattern): after the first failure,
-# short-circuit all remaining GDELT queries for 10 minutes. Eight
-# consecutive read-timeouts cost ~40s of scan time for zero articles.
+# Local GDELT circuit breaker -- RETAINED as the fallback path only.
+# This breaker is why Turkey finished in 11.5s on Oct 4 while Hungary took
+# 474.87s on the same outage. The shared gateway now does the same job for
+# every tracker at once, so a breaker tripped by Ukraine also protects Turkey.
 _GDELT_BREAKER = {'tripped_at': 0.0}
 _GDELT_BREAKER_COOLDOWN_SEC = 600
 
 
+def _shape_gdelt(raw, language):
+    """Gateway article dicts -> this tracker's article shape. Fields unchanged."""
+    out = []
+    for a in raw or []:
+        out.append({
+            'title':       a.get('title', ''),
+            'description': '',
+            'url':         a.get('url', ''),
+            'source':      a.get('source') or a.get('domain') or 'GDELT',
+            'source_type': 'gdelt',
+            'weight':      0.75,
+            'language':    language,
+            'published':   a.get('published') or a.get('seendate'),
+        })
+    return out
+
+
 def _fetch_gdelt(query, language='eng', days=7, max_records=25):
-    articles = []
+    """Returns (articles, sensed).
+
+    NOTE on the query shape: the direct path appended `sourcelang:<lang>` to
+    the query STRING. The gateway passes sourcelang as a request PARAMETER
+    instead, so the bare query goes through. Same filter, expressed the way
+    the GDELT doc API documents it -- and it avoids specifying the language
+    twice, which is what an inline term plus a param would do.
+    """
+    if GDELT_GATEWAY:
+        raw, probe = _gw_fetch_probed(query, language=language,
+                                      timespan=f'{days}d',
+                                      maxrecords=max_records,
+                                      label=f'turkey/{language}')
+        return _shape_gdelt(raw, language), bool(probe.get('sensed'))
+
     if time.time() - _GDELT_BREAKER['tripped_at'] < _GDELT_BREAKER_COOLDOWN_SEC:
-        return articles  # breaker open -- skip silently
+        return [], False   # breaker open -- NOT a sensed zero
     try:
         params = {
             'query':         f'{query} sourcelang:{language}',
@@ -605,24 +685,16 @@ def _fetch_gdelt(query, language='eng', days=7, max_records=25):
             'format':        'json',
             'sort':          'datedesc',
         }
-        r = requests.get(GDELT_BASE_URL, params=params, timeout=(5, 8))
-        if r.status_code == 200:
-            for item in (r.json().get('articles') or []):
-                articles.append({
-                    'title':       item.get('title', ''),
-                    'description': '',
-                    'url':         item.get('url', ''),
-                    'source':      item.get('domain', 'GDELT'),
-                    'source_type': 'gdelt',
-                    'weight':      0.75,
-                    'language':    language,
-                    'published':   item.get('seendate'),
-                })
+        r = requests.get(GDELT_BASE_URL, params=params, timeout=(10, 25))
+        if r.status_code != 200:
+            print(f'[Turkey Rhetoric] GDELT HTTP {r.status_code}')
+            return [], False
+        return _shape_gdelt(r.json().get('articles') or [], language), True
     except Exception as e:
         _GDELT_BREAKER['tripped_at'] = time.time()
         print(f'[Turkey Rhetoric] GDELT error ({query}): {str(e)[:80]} '
               f'-- breaker OPEN, skipping remaining GDELT queries for 10 min')
-    return articles
+        return [], False
 
 
 def _fetch_newsapi(query='turkey erdogan', max_records=40):
@@ -703,16 +775,26 @@ def _fetch_reddit():
             ('forbiddenbromance', True),  # canonical RUMINT concept-seeding venue
             ('syria', True)]              # post-Assad: Turkey's strongest expansion vector
     signals = []
-    headers = {'User-Agent': 'AsifahAnalytics/1.0'}
+    # v1.4.0: 'AsifahAnalytics/1.0' was honest but BARE, and in the Oct 4 log
+    # all seven of these subreddits returned 403 to it. The UA that is being
+    # answered on this backend carries product, version and a descriptive
+    # parenthetical with a contact URL. Honesty was never the problem; an
+    # unidentifiable token was.
+    headers = {'User-Agent': REDDIT_USER_AGENT, 'Accept': 'application/json'}
+    probe = {'attempted': 0, 'ok': 0, 'blocked': 0, 'status': {}}
     for sub, gate in subs:
+        probe['attempted'] += 1
         try:
             r = requests.get(
                 f'https://www.reddit.com/r/{sub}/hot.json?limit=20',
                 headers=headers, timeout=10
             )
             if r.status_code != 200:
+                probe['blocked'] += 1
+                probe['status'][sub] = r.status_code
                 print(f'[Turkey Rhetoric] Reddit r/{sub} HTTP {r.status_code}')
                 continue
+            probe['ok'] += 1
             for child in (r.json().get('data', {}).get('children') or []):
                 post = child.get('data', {})
                 title = (post.get('title') or '').lower()
@@ -727,18 +809,57 @@ def _fetch_reddit():
                     'created':   post.get('created_utc'),
                 })
         except Exception as e:
+            probe['blocked'] += 1
+            probe['status'][sub] = type(e).__name__
             print(f'[Turkey Rhetoric] Reddit error (r/{sub}): {str(e)[:80]}')
-    return signals
+    if probe['ok'] == 0:
+        print(f'[Turkey Rhetoric] Reddit NOT SENSED -- 0 of {probe["attempted"]} '
+              f'subreddits answered ({probe["status"]}). Missing data, not an '
+              f'absent conversation -- and r/lebanon is where the Lebanon vector '
+              f'surfaces first.')
+    else:
+        print(f'[Turkey Rhetoric] Reddit: {len(signals)} posts from '
+              f'{probe["ok"]}/{probe["attempted"]} subreddits')
+    return signals, probe
 
 
 def _fetch_all_articles():
+    """Returns (unique_articles, sensing)."""
     articles = []
+    sensing = {
+        'rss':     {'attempted': 0, 'ok': 0, 'empty': []},
+        'gdelt':   {'attempted': 0, 'sensed': 0},
+        'newsapi': {'attempted': 0, 'ok': 0},
+        'brave':   {'attempted': 0, 'ok': 0},
+    }
+
     for feed in RSS_FEEDS:
-        articles.extend(_fetch_rss(feed['url'], feed['name'], feed['weight']))
+        sensing['rss']['attempted'] += 1
+        got = _fetch_rss(feed['url'], feed['name'], feed['weight'])
+        if got:
+            sensing['rss']['ok'] += 1
+        else:
+            sensing['rss']['empty'].append(feed['name'])
+        articles.extend(got)
+
     for gq in GDELT_QUERIES:
-        articles.extend(_fetch_gdelt(gq['query'], gq['language']))
-    articles.extend(_fetch_newsapi())
-    articles.extend(_fetch_brave())
+        sensing['gdelt']['attempted'] += 1
+        got, sensed = _fetch_gdelt(gq['query'], gq['language'])
+        if sensed:
+            sensing['gdelt']['sensed'] += 1
+        articles.extend(got)
+
+    sensing['newsapi']['attempted'] += 1
+    got = _fetch_newsapi()
+    if got:
+        sensing['newsapi']['ok'] += 1
+    articles.extend(got)
+
+    sensing['brave']['attempted'] += 1
+    got = _fetch_brave()
+    if got:
+        sensing['brave']['ok'] += 1
+    articles.extend(got)
 
     # De-duplicate by URL
     seen, unique = set(), []
@@ -747,7 +868,14 @@ def _fetch_all_articles():
         if url and url not in seen:
             seen.add(url)
             unique.append(a)
-    return unique
+
+    sensing['any_sensed'] = bool(
+        sensing['rss']['ok'] or sensing['gdelt']['sensed']
+        or sensing['newsapi']['ok'] or sensing['brave']['ok'])
+    sensing['degraded'] = (
+        sensing['gdelt']['attempted'] > 0
+        and sensing['gdelt']['sensed'] == 0) or not sensing['any_sensed']
+    return unique, sensing
 
 
 # ============================================================
@@ -783,7 +911,12 @@ def _classify_articles(articles):
 def _compute_theatre_score(by_actor, articles):
     """Turkey baseline +8: a swing state under standing tension, not at
     war (Ukraine runs +12). The inbound and east-track actors weigh
-    heaviest -- they are where the swing shows first."""
+    heaviest -- they are where the swing shows first.
+
+    ABSENCE CAVEAT (v1.4.0): this is a volume metric. A blind scan scores
+    BASELINE and bands 'normal'. The math is UNCHANGED so historical series
+    stay comparable; the scan records result['sensing'] instead. The tempo
+    emitter already carries a corpus denominator for the same reason."""
     BASELINE = 8
     actor_weights = {
         'turkish_presidency':    1.00,
@@ -1144,8 +1277,18 @@ def run_turkey_rhetoric_scan(force=False):
     print('[Turkey Rhetoric] Starting fresh scan...')
     started = time.time()
 
-    articles = _fetch_all_articles()
-    print(f'[Turkey Rhetoric] Articles: {len(articles)}')
+    articles, sensing = _fetch_all_articles()
+    print(f'[Turkey Rhetoric] Articles: {len(articles)} '
+          f'(RSS {sensing["rss"]["ok"]}/{sensing["rss"]["attempted"]}, '
+          f'GDELT {sensing["gdelt"]["sensed"]}/{sensing["gdelt"]["attempted"]} sensed)')
+    if sensing['rss']['empty']:
+        print(f'[Turkey Rhetoric] Feeds returning nothing: '
+              f'{", ".join(sensing["rss"]["empty"])}')
+    if not sensing['any_sensed']:
+        print('[Turkey Rhetoric] BLIND -- no source family answered. The score '
+              'below is the BASELINE FLOOR, not a reading of a calm swing state.')
+    elif sensing['degraded']:
+        print('[Turkey Rhetoric] DEGRADED -- GDELT contributed nothing this scan.')
 
     telegram_messages = []
     if TELEGRAM_AVAILABLE:
@@ -1163,8 +1306,8 @@ def run_turkey_rhetoric_scan(force=False):
         except Exception as e:
             print(f'[Turkey Rhetoric] Bluesky fetch error: {str(e)[:120]}')
 
-    reddit_signals = _fetch_reddit()
-    print(f'[Turkey Rhetoric] Reddit: {len(reddit_signals)} posts')
+    reddit_signals, reddit_probe = _fetch_reddit()
+    sensing['reddit'] = reddit_probe
 
     by_actor = _classify_articles(articles)
     actor_summaries = {}
@@ -1218,7 +1361,12 @@ def run_turkey_rhetoric_scan(force=False):
         'theatre_score':     score,
         'alert_level':       alert,
         'pressure_score':    score,
-        'tracker_version':   '1.3.0',
+        'tracker_version':   TRACKER_VERSION,
+        # Absence-honest sensing record. any_sensed=False means nothing
+        # answered, and theatre_score is then the baseline floor.
+        'sensing':           sensing,
+        'sensing_degraded':  bool(sensing.get('degraded')),
+        'any_source_sensed': bool(sensing.get('any_sensed')),
         'tracker_class':     'swing_state',
         'cached_at':         datetime.now(timezone.utc).isoformat(),
         'scan_duration_sec': elapsed,

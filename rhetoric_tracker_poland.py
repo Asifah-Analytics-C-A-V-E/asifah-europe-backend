@@ -1,7 +1,7 @@
 """
 ═══════════════════════════════════════════════════════════════════════
   ASIFAH ANALYTICS — POLAND CONSENSUS TRACKER
-  rhetoric_tracker_poland.py  ·  v1.0.0 (Jul 12 2026)  ·  Europe backend w00t
+  rhetoric_tracker_poland.py  ·  v1.1.0 (Oct 4 2026)  ·  Europe backend
 ═══════════════════════════════════════════════════════════════════════
 
 Poland has been in NATO since MARCH 1999. It is not a recent accession, it is
@@ -39,6 +39,29 @@ WHAT IT WRITES
   - rhetoric:poland:latest / :history
   - crosstheater:poland:fingerprint  (node_class: inbound_target)
   - tempo:poland:counts:{date}       (attack / attribution / amplification)
+
+v1.1.0 (Oct 4 2026) -- SOURCE DISCIPLINE PASS
+  1. GDELT routes through gdelt_gateway, and is no longer run inside the
+     thread pool. Seven GDELT queries were being fired in parallel from an
+     8-worker pool alongside nine RSS fetches -- the stampede the gateway
+     exists to prevent. The gateway serialises them anyway, so parallelism
+     bought nothing and would have let blocked GDELT threads starve the RSS
+     fetches of worker slots. RSS stays parallel, where it genuinely helps.
+  2. The backend no longer calls ITSELF over its own public URL. The Oct 4
+     log carried:
+         [Poland Rhetoric] Financial read failed (non-fatal):
+         HTTPSConnectionPool(host='asifa-europe-backend.onrender.com', ...)
+     That is this process making an HTTPS round trip out to Render's edge and
+     back to itself -- which cannot work during boot, before the port is
+     bound, which is exactly when it was failing. Commodity now reads the
+     proxy IN-PROCESS (the pattern Kazakhstan and Moldova already use); the
+     refugee and financial reads go to loopback first and fall back to the
+     public URL only if loopback is unavailable.
+  3. Reddit User-Agent is honest and descriptive, and failures are COUNTED.
+     The old code sent a Chrome 124 impersonation and did a bare `continue`
+     on any non-200 -- no print, no counter. Reddit could have been refusing
+     all five subreddits for months and the log would have read "0 posts".
+  4. Absence-honest sensing block alongside the existing corpus_health.
 """
 
 import os
@@ -51,7 +74,27 @@ import feedparser
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-TRACKER_VERSION = '1.0.0'
+TRACKER_VERSION = '1.1.0'
+
+TRACKER_USER_AGENT = (f'AsifahAnalytics-Europe-Poland/{TRACKER_VERSION} '
+                      f'(OSINT monitoring tool; +https://asifahanalytics.com)')
+REDDIT_USER_AGENT = TRACKER_USER_AGENT
+
+try:
+    from gdelt_gateway import gdelt_fetch_probed as _gw_fetch_probed
+    GDELT_GATEWAY = True
+except ImportError:
+    GDELT_GATEWAY = False
+    print('[Poland GDELT] gdelt_gateway unavailable -- direct calls (unpaced)')
+
+# Commodity proxy, read IN-PROCESS -- same pattern as Kazakhstan and Moldova.
+try:
+    from commodity_proxy_europe import get_commodity_data as _get_commodity_data
+    COMMODITY_PROXY_AVAILABLE = True
+except ImportError:
+    COMMODITY_PROXY_AVAILABLE = False
+    _get_commodity_data = None
+    print('[Poland Rhetoric] Commodity proxy unavailable -- will try HTTP fallback')
 
 UPSTASH_REDIS_URL   = os.environ.get('UPSTASH_REDIS_URL')
 UPSTASH_REDIS_TOKEN = os.environ.get('UPSTASH_REDIS_TOKEN')
@@ -60,6 +103,30 @@ BRAVE_API_KEY       = os.environ.get('BRAVE_API_KEY')
 
 EUROPE_BACKEND = 'https://asifa-europe-backend.onrender.com'
 ME_BACKEND     = os.environ.get('ME_BACKEND_URL', 'https://asifah-backend.onrender.com')
+
+# Loopback to our OWN process. Reaching our own endpoints via EUROPE_BACKEND
+# meant a DNS lookup, a TLS handshake and a round trip out to Render's edge
+# and back -- and it fails outright during boot, before the port is bound.
+_LOCAL_BASE = f"http://127.0.0.1:{os.environ.get('PORT', '10000')}"
+
+
+def _self_get(path, timeout=10):
+    """GET one of our own endpoints: loopback first, public URL as fallback.
+
+    Returns the parsed JSON or None. Never raises -- every caller treats a
+    missing read as absence, not as an error worth failing a scan over.
+    """
+    for base, label in ((_LOCAL_BASE, 'loopback'), (EUROPE_BACKEND, 'public')):
+        try:
+            r = requests.get(f'{base}{path}', timeout=timeout,
+                             headers={'User-Agent': TRACKER_USER_AGENT})
+            if r.ok:
+                return r.json()
+            print(f'[Poland Rhetoric] {path} via {label}: HTTP {r.status_code}')
+        except Exception as e:
+            print(f'[Poland Rhetoric] {path} via {label} failed (non-fatal): '
+                  f'{type(e).__name__}')
+    return None
 
 REDIS_KEY_LATEST  = 'rhetoric:poland:latest'
 REDIS_KEY_HISTORY = 'rhetoric:poland:history'
@@ -287,8 +354,11 @@ def _acquire_scan_lock(ttl=1800):
 # FETCHERS
 # ════════════════════════════════════════════════════════════
 
-_UA = {'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                      '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')}
+# v1.1.0: was a Chrome 124 impersonation, used for RSS, GDELT and Reddit
+# alike. In the Oct 4 log every Reddit subreddit answered this file with
+# nothing, while app.py's descriptive AsifahAnalytics UA pulled real posts
+# from the same IP. Identify honestly and descriptively.
+_UA = {'User-Agent': TRACKER_USER_AGENT}
 
 _POLAND_GATE = re.compile(
     r'\b(poland|polish|warsaw|polska|polski|rzeszow|nawrocki|tusk|wroclaw|krakow)\b', re.I)
@@ -329,36 +399,72 @@ def _fetch_rss(url, source, weight=0.85, max_items=20):
     return out
 
 
-def _fetch_gdelt(query, language='eng', days=7, max_records=25):
+def _shape_gdelt(raw, language):
+    """Gateway article dicts -> this tracker's article shape. Note `lang`,
+    not `language`: the scan's language buckets key off it."""
     out = []
+    for a in raw or []:
+        out.append({
+            'title': a.get('title', ''), 'description': '',
+            'url': a.get('url', ''),
+            'source': a.get('source') or a.get('domain') or 'GDELT',
+            'source_type': 'gdelt', 'weight': 0.75,
+            'published': a.get('published') or a.get('seendate'),
+            'lang': language,
+        })
+    return out
+
+
+def _fetch_gdelt(query, language='eng', days=7, max_records=25):
+    """Returns (articles, sensed).
+
+    The direct path appended `sourcelang:<lang>` to the query STRING; the
+    gateway passes sourcelang as a request PARAMETER, which is how the GDELT
+    doc API documents it and avoids specifying the language twice.
+    """
+    if GDELT_GATEWAY:
+        raw, probe = _gw_fetch_probed(query, language=language,
+                                      timespan=f'{days * 24}h',
+                                      maxrecords=max_records,
+                                      label=f'poland/{language}')
+        return _shape_gdelt(raw, language), bool(probe.get('sensed'))
+
     try:
         r = requests.get('https://api.gdeltproject.org/api/v2/doc/doc', params={
             'query': f'{query} sourcelang:{language}', 'mode': 'ArtList',
             'maxrecords': max_records, 'format': 'json',
             'timespan': f'{days * 24}h',
-        }, timeout=(5, 15), headers=_UA)
+        }, timeout=(10, 25), headers=_UA)
         if r.status_code != 200:
-            return out
-        for a in (r.json().get('articles') or []):
-            out.append({
-                'title': a.get('title', ''), 'description': '',
-                'url': a.get('url', ''), 'source': a.get('domain', 'GDELT'),
-                'source_type': 'gdelt', 'weight': 0.75,
-                'published': a.get('seendate'), 'lang': language,
-            })
+            print(f'[Poland GDELT] {query[:28]} ({language}): HTTP {r.status_code}')
+            return [], False
+        return _shape_gdelt(r.json().get('articles') or [], language), True
     except Exception as e:
         print(f'[Poland GDELT] {query[:28]} ({language}): {str(e)[:60]}')
-    return out
+        return [], False
 
 
 def _fetch_reddit():
+    """Returns (posts, probe).
+
+    v1.1.0: the old body did a bare `continue` on any non-200 -- no print, no
+    counter. In the Oct 4 log this printed "[Poland Reddit] 0 posts across 5
+    subs", which is exactly what a quiet weekend looks like and exactly what a
+    total block looks like.
+    """
     out = []
+    probe = {'attempted': 0, 'ok': 0, 'blocked': 0, 'status': {}}
     for sub in REDDIT_SUBREDDITS:
+        probe['attempted'] += 1
         try:
             r = requests.get(f'https://www.reddit.com/r/{sub}/new.json?limit=25',
-                             timeout=10, headers=_UA)
+                             timeout=10, headers=dict(_UA, Accept='application/json'))
             if r.status_code != 200:
+                probe['blocked'] += 1
+                probe['status'][sub] = r.status_code
+                print(f'[Poland Reddit] r/{sub}: HTTP {r.status_code}')
                 continue
+            probe['ok'] += 1
             for c in (r.json().get('data', {}).get('children') or []):
                 p = c.get('data', {})
                 title = p.get('title', '')
@@ -371,10 +477,18 @@ def _fetch_reddit():
                     'source': f'reddit-{sub}', 'source_type': 'reddit', 'weight': 0.4,
                     'score': p.get('score', 0),
                 })
-        except Exception:
+        except Exception as e:
+            probe['blocked'] += 1
+            probe['status'][sub] = type(e).__name__
+            print(f'[Poland Reddit] r/{sub}: {type(e).__name__}')
             continue
-    print(f'[Poland Reddit] {len(out)} posts across {len(REDDIT_SUBREDDITS)} subs')
-    return out
+    if probe['ok'] == 0:
+        print(f'[Poland Reddit] NOT SENSED -- 0 of {probe["attempted"]} subreddits '
+              f'answered ({probe["status"]}). Missing data, not an absent conversation.')
+    else:
+        print(f'[Poland Reddit] {len(out)} posts from '
+              f'{probe["ok"]}/{probe["attempted"]} subs')
+    return out, probe
 
 
 # ════════════════════════════════════════════════════════════
@@ -388,11 +502,10 @@ def _read_refugee_data():
     The count itself is analytically inert. What matters is whether the RHETORIC
     ABOUT the count is heating up. The count is the dial; the rhetoric is the
     signal. The interpreter reads them together."""
+    d = _self_get('/api/europe/refugees/poland')
+    if d is None:
+        return None
     try:
-        r = requests.get(f'{EUROPE_BACKEND}/api/europe/refugees/poland', timeout=12)
-        if not r.ok:
-            return None
-        d = r.json() or {}
         total = d.get('total') or d.get('current_total') or d.get('refugees_total')
         if not total:
             return None
@@ -408,13 +521,14 @@ def _read_refugee_data():
 
 
 def _read_financial_data():
-    """The attrition tile — debt-financed defence spending, priced live."""
-    try:
-        r = requests.get(f'{EUROPE_BACKEND}/api/europe/financial/poland', timeout=12)
-        return r.json() if r.ok else None
-    except Exception as e:
-        print(f'[Poland Rhetoric] Financial read failed (non-fatal): {str(e)[:70]}')
-        return None
+    """The attrition tile — debt-financed defence spending, priced live.
+
+    v1.1.0: reads via _self_get (loopback first). The public-URL round trip
+    this replaces is the one that produced
+    "Financial read failed (non-fatal): HTTPSConnectionPool(host=
+    'asifa-europe-backend.onrender.com'...)" during boot on Oct 4.
+    """
+    return _self_get('/api/europe/financial/poland')
 
 
 def _read_commodity_data():
@@ -423,20 +537,36 @@ def _read_commodity_data():
     is the point: Ukrainian grain transits Poland, Polish farmers blockade over
     it, and the blockade severs the corridor AND widens the Poland-Ukraine wedge
     in a single motion, at no cost to Moscow. The commodity IS the weapon."""
-    try:
-        r = requests.get(f'{EUROPE_BACKEND}/api/europe/commodity/poland', timeout=12)
-        if not r.ok:
-            return None
-        d = r.json() or {}
-        return {
-            'present': True,
-            'pressure': d.get('pressure_score') or d.get('pressure'),
-            'alert': d.get('alert_level') or d.get('alert'),
-            'commodities': [c.get('commodity') for c in (d.get('commodities') or [])][:6],
-        }
-    except Exception as e:
-        print(f'[Poland Rhetoric] Commodity read failed (non-fatal): {str(e)[:70]}')
+    # IN-PROCESS first (the Kazakhstan / Moldova pattern). The proxy owns the
+    # absence-honest cascade, so we inherit it for free and pay no round trip.
+    if COMMODITY_PROXY_AVAILABLE and _get_commodity_data:
+        try:
+            d = _get_commodity_data('poland')
+            if isinstance(d, dict):
+                return {
+                    'present': True,
+                    'pressure': d.get('commodity_pressure') or d.get('pressure_score')
+                                or d.get('pressure'),
+                    'alert': d.get('alert_level') or d.get('alert'),
+                    'commodities': [(c.get('commodity') or c.get('name'))
+                                    for c in (d.get('commodity_summaries')
+                                              or d.get('commodities') or [])][:6],
+                    'stale': d.get('stale', False),
+                    'source': 'in_process',
+                }
+        except Exception as e:
+            print(f'[Poland Rhetoric] In-process commodity read failed: {str(e)[:70]}')
+
+    d = _self_get('/api/europe/commodity/poland')
+    if not isinstance(d, dict):
         return None
+    return {
+        'present': True,
+        'pressure': d.get('pressure_score') or d.get('pressure'),
+        'alert': d.get('alert_level') or d.get('alert'),
+        'commodities': [c.get('commodity') for c in (d.get('commodities') or [])][:6],
+        'source': 'http',
+    }
 
 
 # ════════════════════════════════════════════════════════════
@@ -554,14 +684,35 @@ def run_poland_rhetoric_scan(force=False):
     print('[Poland Rhetoric] Starting scan...')
 
     articles = []
+    sensing = {
+        'rss':   {'attempted': len(RSS_FEEDS), 'ok': 0},
+        'gdelt': {'attempted': 0, 'sensed': 0},
+    }
+
+    # RSS stays PARALLEL -- nine independent hosts, real wall-clock win.
     with ThreadPoolExecutor(max_workers=8) as ex:
         futs = [ex.submit(_fetch_rss, u, s, w) for u, s, w in RSS_FEEDS]
-        futs += [ex.submit(_fetch_gdelt, q, lang) for q, lang in GDELT_QUERIES]
         for f in as_completed(futs):
             try:
-                articles.extend(f.result() or [])
+                got = f.result() or []
             except Exception:
                 continue
+            if got:
+                sensing['rss']['ok'] += 1
+            articles.extend(got)
+
+    # GDELT runs SEQUENTIALLY. The gateway holds a process-wide semaphore, so
+    # parallel submission bought nothing -- and seven threads blocked on that
+    # semaphore inside an 8-worker pool could starve the RSS fetches of slots.
+    for q, lang in GDELT_QUERIES:
+        sensing['gdelt']['attempted'] += 1
+        got, sensed = _fetch_gdelt(q, lang)
+        if sensed:
+            sensing['gdelt']['sensed'] += 1
+        articles.extend(got)
+
+    sensing['any_sensed'] = bool(sensing['rss']['ok'] or sensing['gdelt']['sensed'])
+    sensing['degraded'] = (sensing['gdelt']['sensed'] == 0) or not sensing['any_sensed']
 
     # Dedupe by URL
     seen, deduped = set(), []
@@ -573,7 +724,14 @@ def run_poland_rhetoric_scan(force=False):
             seen.add(u)
         deduped.append(a)
     articles = deduped
-    print(f'[Poland Rhetoric] Articles: {len(articles)}')
+    print(f'[Poland Rhetoric] Articles: {len(articles)} '
+          f'(RSS {sensing["rss"]["ok"]}/{sensing["rss"]["attempted"]}, '
+          f'GDELT {sensing["gdelt"]["sensed"]}/{sensing["gdelt"]["attempted"]} sensed)')
+    if not sensing['any_sensed']:
+        print('[Poland Rhetoric] BLIND -- no source family answered. Consensus '
+              'integrity below is computed on an empty corpus, not on calm.')
+    elif sensing['degraded']:
+        print('[Poland Rhetoric] DEGRADED -- GDELT contributed nothing this scan.')
 
     telegram = []
     if TELEGRAM_AVAILABLE and fetch_poland_telegram_signals:
@@ -589,7 +747,8 @@ def run_poland_rhetoric_scan(force=False):
         except Exception as e:
             print(f'[Poland Rhetoric] Bluesky failed: {str(e)[:70]}')
 
-    reddit = _fetch_reddit()
+    reddit, reddit_probe = _fetch_reddit()
+    sensing['reddit'] = reddit_probe
     print(f'[Poland Rhetoric] Telegram: {len(telegram)} · Bluesky: {len(bluesky)} · '
           f'Reddit: {len(reddit)}')
 
@@ -690,6 +849,11 @@ def run_poland_rhetoric_scan(force=False):
         'commodity_snapshot': commodity_data,
         'tempo_baseline':     tempo_baseline,
         'corpus_health':      live_corpus,
+        # Absence-honest sensing record, alongside corpus_health. corpus_health
+        # counts what arrived; sensing records whether anyone ANSWERED.
+        'sensing':            sensing,
+        'sensing_degraded':   bool(sensing.get('degraded')),
+        'any_source_sensed':  bool(sensing.get('any_sensed')),
 
         'so_what':           interp.get('so_what'),
         'top_signals':       interp.get('top_signals') or [],
