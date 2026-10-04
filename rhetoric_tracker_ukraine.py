@@ -1,8 +1,26 @@
 """
 ═══════════════════════════════════════════════════════════════════════
   ASIFAH ANALYTICS — UKRAINE RHETORIC TRACKER
-  v1.0.0 (Apr 30 2026)
+  v1.1.0 (Oct 4 2026)
 ═══════════════════════════════════════════════════════════════════════
+
+v1.1.0 (Oct 4 2026) — SOURCE DISCIPLINE PASS
+  1. GDELT now routes through gdelt_gateway. This tracker was calling
+     api.gdeltproject.org directly with a 5s read timeout and no circuit
+     breaker, alongside five other trackers doing the same from the same
+     process on the same IP. A live log showed FOURTEEN consecutive
+     "Read timed out (read timeout=5)" lines from this file alone -- 70
+     seconds spent retrieving nothing, while the gateway sitting in the
+     same process already knew GDELT was unreachable.
+  2. Reddit User-Agent is now honest. The previous string impersonated
+     Chrome 124 on macOS. In the same log, every one of seven subreddits
+     returned 403 to this file, while app.py -- which carries a truthful
+     AsifahAnalytics UA -- got 429s and real posts from the same IP in the
+     same minute. The spoof was not helping; it was the thing being caught.
+  3. Absence-honest sensing. A scan that retrieves nothing now says so in
+     result['sensing'] instead of returning a baseline score that reads as
+     a quiet war. NOTE: the score itself still floors at BASELINE when
+     blind -- see the comment on _compute_theatre_score.
 
 Multi-actor rhetoric tracker for Ukraine. Aggregates signals across:
   - RSS (Kyiv Independent, Ukrainska Pravda EN, Ukrinform, ISW, Kiel)
@@ -73,6 +91,24 @@ BRAVE_BASE_URL       = 'https://api.search.brave.com/res/v1/news/search'
 REDIS_KEY_LATEST     = 'rhetoric:ukraine:latest'
 REDIS_KEY_HISTORY    = 'rhetoric:ukraine:history'
 REFRESH_INTERVAL_SEC = 6 * 3600
+
+TRACKER_VERSION = '1.1.0'
+
+# Honest identification. See v1.1.0 note 2 in the module docstring: the
+# browser impersonation this replaces was earning 403s, not avoiding them.
+TRACKER_USER_AGENT = (f'AsifahAnalytics-Europe-Ukraine/{TRACKER_VERSION} '
+                      f'(OSINT monitoring tool; +https://asifahanalytics.com)')
+REDDIT_USER_AGENT = TRACKER_USER_AGENT
+
+# GDELT goes through the shared gateway: one semaphore, paced, escalating
+# backoff, circuit breaker. Soft import so a backend without the module
+# degrades to the direct path instead of failing to start.
+try:
+    from gdelt_gateway import gdelt_fetch_probed as _gw_fetch_probed
+    GDELT_GATEWAY = True
+except ImportError:
+    GDELT_GATEWAY = False
+    print('[Ukraine GDELT] gdelt_gateway unavailable -- direct calls (unpaced)')
 
 _scan_lock = threading.Lock()
 
@@ -511,9 +547,23 @@ def _parse_pub_date(pub_str):
 
 
 def _fetch_rss(url, source_name, weight=0.85, max_items=20):
+    """Fetch over requests FIRST so transport failures are visible.
+
+    feedparser.parse(url) reports a 403, a 404, a dropped connection and a
+    genuinely empty feed identically: zero entries. A dead feed then reads
+    downstream as a quiet source.
+    """
     out = []
     try:
-        feed = feedparser.parse(url)
+        r = requests.get(url, headers={'User-Agent': TRACKER_USER_AGENT}, timeout=12)
+        if r.status_code != 200:
+            print(f'[Ukraine RSS] {source_name}: HTTP {r.status_code} -- feed not read')
+            return out
+        feed = feedparser.parse(r.content)
+        if getattr(feed, 'bozo', 0) and not (feed.entries or []):
+            print(f'[Ukraine RSS] {source_name}: unparseable feed '
+                  f'({str(getattr(feed, "bozo_exception", ""))[:90]})')
+            return out
         for entry in (feed.entries or [])[:max_items]:
             out.append({
                 'title':       entry.get('title', '')[:300],
@@ -524,12 +574,48 @@ def _fetch_rss(url, source_name, weight=0.85, max_items=20):
                 'source_type': 'rss',
                 'weight':      weight,
             })
+        print(f'[Ukraine RSS] {source_name}: {len(out)} items')
     except Exception as e:
-        print(f'[Ukraine RSS] {source_name}: {str(e)[:120]}')
+        print(f'[Ukraine RSS] {source_name}: {type(e).__name__}: {str(e)[:110]}')
+    return out
+
+
+def _shape_gdelt(raw, language):
+    """Gateway article dicts -> this tracker's article shape. Unchanged fields."""
+    out = []
+    for a in raw or []:
+        out.append({
+            'title':       (a.get('title') or '')[:300],
+            'description': '',
+            'url':         a.get('url', ''),
+            'published':   a.get('published') or a.get('seendate'),
+            'source':      a.get('source') or a.get('domain') or 'gdelt',
+            'source_type': 'gdelt',
+            'language':    language,
+            'weight':      0.7,
+        })
     return out
 
 
 def _fetch_gdelt(query, language='eng', days=7, max_records=25):
+    """
+    Returns (articles, sensed).
+
+    `sensed` is the absence-honest half: True only when GDELT actually
+    answered. An empty list with sensed=True is a real zero; an empty list
+    with sensed=False means we never got to look, and the caller must not
+    score it as quiet.
+    """
+    if GDELT_GATEWAY:
+        raw, probe = _gw_fetch_probed(query, language=language,
+                                      timespan=f'{days*24}h',
+                                      maxrecords=max_records,
+                                      label=f'ukraine/{language}')
+        return _shape_gdelt(raw, language), bool(probe.get('sensed'))
+
+    # Fallback only: no gateway on this backend. Timeout raised from 5s --
+    # GDELT routinely takes 10-20s under load, and a 5s ceiling guaranteed
+    # failure exactly when the service was busiest.
     params = {
         'query':      query,
         'mode':       'artlist',
@@ -540,29 +626,17 @@ def _fetch_gdelt(query, language='eng', days=7, max_records=25):
         'sourcelang': language,
     }
     try:
-        resp = requests.get(GDELT_BASE_URL, params=params, timeout=(5, 15))
+        resp = requests.get(GDELT_BASE_URL, params=params, timeout=(10, 25))
         if resp.status_code == 429:
-            print('[Ukraine GDELT] Rate limited (429) — backing off')
-            return []
+            print('[Ukraine GDELT] Rate limited (429) -- backing off')
+            return [], False
         if resp.status_code != 200:
-            return []
-        articles = resp.json().get('articles', []) or []
-        out = []
-        for a in articles:
-            out.append({
-                'title':       (a.get('title') or '')[:300],
-                'description': '',
-                'url':         a.get('url', ''),
-                'published':   a.get('seendate'),
-                'source':      a.get('domain', 'gdelt'),
-                'source_type': 'gdelt',
-                'language':    language,
-                'weight':      0.7,
-            })
-        return out
+            print(f'[Ukraine GDELT] HTTP {resp.status_code}')
+            return [], False
+        return _shape_gdelt(resp.json().get('articles') or [], language), True
     except Exception as e:
         print(f'[Ukraine GDELT] Query error: {str(e)[:120]}')
-        return []
+        return [], False
 
 
 def _fetch_newsapi(query='ukraine', max_records=40):
@@ -628,26 +702,31 @@ def _fetch_brave(query='ukraine war', max_records=20):
 
 def _fetch_reddit():
     """
-    Fetch Reddit posts for Ukraine topics.
+    Fetch Reddit posts for Ukraine topics. Returns (posts, probe).
 
-    v1.2 (May 24 2026): Replaced generic 'Asifah-Analytics/1.0' UA with a
-    browser-like UA. Reddit blocks generic/scripted user agents and returns
-    403 or 429 silently — previous code did `continue` on non-200 with NO
-    print, hiding the failure mode. Now we log every non-200 status code so
-    we can see when Reddit blocks/rate-limits us.
+    v1.1.0 (Oct 4 2026): the browser-impersonating UA is gone.
+
+    The May 2026 note that justified it -- "Reddit blocks generic/scripted
+    user agents" -- was a reasonable inference at the time and the October 4
+    log contradicts it. Every one of these seven subreddits returned 403 to
+    the spoofed UA, while app.py's REDDIT_USER_AGENT (a truthful
+    AsifahAnalytics string) drew 429s and real posts from the same IP in the
+    same scan cycle. Reddit now detects fake browser UAs from datacenter
+    ranges; a request that lies badly fares worse than one that does not lie.
+
+    If Reddit access matters enough to pay for, the real fix is a registered
+    OAuth app with the canonical 'platform:app_id:version (by /u/<name>)'
+    UA -- not a better disguise.
     """
     out = []
     subs = ['ukraine', 'CredibleDefense', 'LessCredibleDefence',
             'UkrainianConflict', 'ukrainewarvideoreport',
             'europe', 'geopolitics']
-    # Browser-like UA — Reddit accepts this; the previous 'Asifah-Analytics/1.0'
-    # was a known-blocked pattern. If we ever set up a Reddit OAuth app, replace
-    # this with 'platform:app_id:version (by /u/<username>)' canonical format.
-    ua = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-          'AppleWebKit/537.36 (KHTML, like Gecko) '
-          'Chrome/124.0.0.0 Safari/537.36')
+    ua = REDDIT_USER_AGENT
+    probe = {'attempted': 0, 'ok': 0, 'blocked': 0, 'status': {}}
     found_total = 0
     for sub in subs:
+        probe['attempted'] += 1
         try:
             url = f'https://www.reddit.com/r/{sub}/new.json?limit=25'
             r = requests.get(
@@ -656,9 +735,11 @@ def _fetch_reddit():
                 timeout=8
             )
             if r.status_code != 200:
-                print(f'[Ukraine Reddit] r/{sub}: HTTP {r.status_code} '
-                      f'(was silent before — UA blocked? rate-limited?)')
+                probe['blocked'] += 1
+                probe['status'][sub] = r.status_code
+                print(f'[Ukraine Reddit] r/{sub}: HTTP {r.status_code}')
                 continue
+            probe['ok'] += 1
             sub_count = 0
             for child in (r.json().get('data', {}).get('children') or []):
                 p = child.get('data', {})
@@ -683,31 +764,80 @@ def _fetch_reddit():
             print(f'[Ukraine Reddit] r/{sub}: {sub_count} matching posts '
                   f'({len(r.json().get("data", {}).get("children") or [])} scanned)')
         except Exception as e:
+            probe['blocked'] += 1
+            probe['status'][sub] = type(e).__name__
             print(f'[Ukraine Reddit] r/{sub}: {str(e)[:120]}')
         time.sleep(0.3)
-    print(f'[Ukraine Reddit] Total: {found_total} posts across {len(subs)} subreddits')
-    return out
+    if probe['ok'] == 0:
+        print(f'[Ukraine Reddit] NOT SENSED -- 0 of {probe["attempted"]} subreddits '
+              f'answered ({probe["status"]}). Missing data, not an absent conversation.')
+    else:
+        print(f'[Ukraine Reddit] Total: {found_total} posts from '
+              f'{probe["ok"]}/{probe["attempted"]} subreddits')
+    return out, probe
 
 
 def _fetch_all_articles():
+    """Returns (unique_articles, sensing).
+
+    `sensing` records which source families actually answered, so a caller can
+    tell an empty corpus from an unreachable one.
+    """
     articles = []
+    sensing = {
+        'rss':     {'attempted': 0, 'ok': 0, 'empty': []},
+        'gdelt':   {'attempted': 0, 'sensed': 0},
+        'newsapi': {'attempted': 0, 'ok': 0},
+        'brave':   {'attempted': 0, 'ok': 0},
+    }
+
     for feed in RSS_FEEDS:
-        articles.extend(_fetch_rss(feed['url'], feed['name'], feed['weight']))
+        sensing['rss']['attempted'] += 1
+        got = _fetch_rss(feed['url'], feed['name'], feed['weight'])
+        if got:
+            sensing['rss']['ok'] += 1
+        else:
+            sensing['rss']['empty'].append(feed['name'])
+        articles.extend(got)
+
+    # No sleep here any more: the gateway serialises and paces every GDELT
+    # call process-wide. A second delay on top of it was paying the toll twice.
     for lang, queries in GDELT_QUERIES.items():
         for q in queries:
-            articles.extend(_fetch_gdelt(q, language=lang, days=7))
-            time.sleep(0.5)
+            sensing['gdelt']['attempted'] += 1
+            got, sensed = _fetch_gdelt(q, language=lang, days=7)
+            if sensed:
+                sensing['gdelt']['sensed'] += 1
+            articles.extend(got)
+
     if len(articles) < 30:
-        articles.extend(_fetch_newsapi('ukraine', max_records=40))
+        sensing['newsapi']['attempted'] += 1
+        got = _fetch_newsapi('ukraine', max_records=40)
+        if got:
+            sensing['newsapi']['ok'] += 1
+        articles.extend(got)
+
     if len(articles) < 15:
-        articles.extend(_fetch_brave('ukraine war', max_records=20))
+        sensing['brave']['attempted'] += 1
+        got = _fetch_brave('ukraine war', max_records=20)
+        if got:
+            sensing['brave']['ok'] += 1
+        articles.extend(got)
+
     seen, unique = set(), []
     for a in articles:
         u = a.get('url')
         if u and u not in seen:
             seen.add(u)
             unique.append(a)
-    return unique
+
+    sensing['any_sensed'] = bool(
+        sensing['rss']['ok'] or sensing['gdelt']['sensed']
+        or sensing['newsapi']['ok'] or sensing['brave']['ok'])
+    sensing['degraded'] = (
+        sensing['gdelt']['attempted'] > 0
+        and sensing['gdelt']['sensed'] == 0) or not sensing['any_sensed']
+    return unique, sensing
 
 
 # ============================================================
@@ -770,7 +900,17 @@ def _classify_articles(articles):
 # ============================================================
 
 def _compute_theatre_score(by_actor, articles):
-    """Ukraine baseline +12 (active war, higher than Belarus)."""
+    """Ukraine baseline +12 (active war, higher than Belarus).
+
+    ABSENCE CAVEAT (v1.1.0): this is a volume metric. A scan that retrieves
+    nothing scores BASELINE and bands as 'elevated' -- indistinguishable from
+    a genuinely quiet day on the war floor. The score math is deliberately
+    UNCHANGED here so historical series stay comparable; instead the scan
+    records result['sensing'], and a consumer that treats a blind scan as an
+    observation is making the error, not this function. Wiring blindness into
+    the score itself is a scoring decision, taken once, with the GPI rollup
+    in view -- not smuggled in as part of a plumbing fix.
+    """
     BASELINE = 12
     actor_weights = {
         'ukrainian_government':       0.85,
@@ -886,8 +1026,15 @@ def run_ukraine_rhetoric_scan(force=False):
     print('[Ukraine Rhetoric] Starting fresh scan...')
     started = time.time()
 
-    articles = _fetch_all_articles()
-    print(f'[Ukraine Rhetoric] Articles: {len(articles)}')
+    articles, sensing = _fetch_all_articles()
+    print(f'[Ukraine Rhetoric] Articles: {len(articles)} '
+          f'(RSS {sensing["rss"]["ok"]}/{sensing["rss"]["attempted"]}, '
+          f'GDELT {sensing["gdelt"]["sensed"]}/{sensing["gdelt"]["attempted"]} sensed)')
+    if not sensing['any_sensed']:
+        print('[Ukraine Rhetoric] BLIND -- no source family answered. The score '
+              'below is the BASELINE FLOOR, not a measurement of a quiet war.')
+    elif sensing['degraded']:
+        print('[Ukraine Rhetoric] DEGRADED -- GDELT contributed nothing this scan.')
 
     telegram_messages = []
     if TELEGRAM_AVAILABLE:
@@ -905,8 +1052,9 @@ def run_ukraine_rhetoric_scan(force=False):
         except Exception as e:
             print(f'[Ukraine Rhetoric] Bluesky fetch error: {str(e)[:120]}')
 
-    reddit_signals = _fetch_reddit()
+    reddit_signals, reddit_probe = _fetch_reddit()
     print(f'[Ukraine Rhetoric] Reddit: {len(reddit_signals)} posts')
+    sensing['reddit'] = reddit_probe
 
     by_actor = _classify_articles(articles)
 
@@ -1079,7 +1227,13 @@ def run_ukraine_rhetoric_scan(force=False):
         'theatre_score':     score,
         'alert_level':       alert,
         'pressure_score':    score,
-        'tracker_version':   '1.0.0',
+        'tracker_version':   TRACKER_VERSION,
+        # Absence-honest sensing record. Read this before reading the score:
+        # any_sensed=False means nothing answered, and theatre_score is then
+        # the baseline floor rather than an observation.
+        'sensing':           sensing,
+        'sensing_degraded':  bool(sensing.get('degraded')),
+        'any_source_sensed': bool(sensing.get('any_sensed')),
         'cached_at':         datetime.now(timezone.utc).isoformat(),
         'scan_duration_sec': elapsed,
         'cache_status':      'fresh',

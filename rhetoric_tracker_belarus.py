@@ -1,8 +1,32 @@
 """
 ═══════════════════════════════════════════════════════════════════════
   ASIFAH ANALYTICS — BELARUS RHETORIC TRACKER
-  v1.0.0 (Apr 30 2026)
+  v1.1.0 (Oct 4 2026)
 ═══════════════════════════════════════════════════════════════════════
+
+v1.1.0 (Oct 4 2026) — SOURCE DISCIPLINE PASS
+  1. GDELT routes through gdelt_gateway. This file was calling
+     api.gdeltproject.org directly with a 5s read timeout and no circuit
+     breaker; a live log shows twelve-plus consecutive "Read timed out"
+     lines from it, in a process where the gateway already knew GDELT was
+     unreachable.
+  2. Reddit User-Agent is honest and failures are LOGGED. The old code sent
+     'Asifah-Analytics/1.0' and did a bare `continue` on any non-200 -- no
+     print, no counter. Reddit could have been refusing every request for
+     months and this tracker would have reported "0 posts" indistinguishably
+     from a quiet weekend.
+  3. RSS failures are VISIBLE. feedparser.parse(url) swallows the transport
+     layer: a 403, a 404 and a valid-but-empty feed all arrive as
+     `entries == []`. Six of the eight feeds below were failing this way --
+     Nasha Niva and Zviazda returning malformed XML, Euroradio and Viasna
+     403, NEXTA 404, Belsat dropping the connection -- and the tracker
+     recorded it as Belarus being quiet.
+  4. Absence-honest sensing block in the result payload.
+
+OPEN ITEM (Oct 4 2026): the broken feed URLs above are NOT fixed here.
+Replacement URLs were not verifiable at authoring time, and guessing a feed
+URL is how a tracker ends up silently reading nothing. They now fail LOUDLY
+with a status code so the roster can be repaired against evidence.
 
 Multi-actor rhetoric tracker for Belarus. Aggregates signals across:
   - RSS (NEXTA, Meduza, RFE/RL Belarus, Viasna, BelTA, Reuters)
@@ -70,6 +94,19 @@ BRAVE_BASE_URL       = 'https://api.search.brave.com/res/v1/news/search'
 REDIS_KEY_LATEST     = 'rhetoric:belarus:latest'
 REDIS_KEY_HISTORY    = 'rhetoric:belarus:history'
 REFRESH_INTERVAL_SEC = 6 * 3600   # 6h
+
+TRACKER_VERSION = '1.1.0'
+
+TRACKER_USER_AGENT = (f'AsifahAnalytics-Europe-Belarus/{TRACKER_VERSION} '
+                      f'(OSINT monitoring tool; +https://asifahanalytics.com)')
+REDDIT_USER_AGENT = TRACKER_USER_AGENT
+
+try:
+    from gdelt_gateway import gdelt_fetch_probed as _gw_fetch_probed
+    GDELT_GATEWAY = True
+except ImportError:
+    GDELT_GATEWAY = False
+    print('[Belarus GDELT] gdelt_gateway unavailable -- direct calls (unpaced)')
 
 _scan_lock = threading.Lock()
 
@@ -390,9 +427,24 @@ def _parse_pub_date(pub_str):
 
 
 def _fetch_rss(url, source_name, weight=0.85, max_items=20, language='eng'):
+    """Fetch over requests FIRST so transport failures are visible.
+
+    feedparser.parse(url) fetches internally and reports a 403, a 404, a
+    dropped connection and a genuinely empty feed all the same way: zero
+    entries. That is the absence-honesty problem in miniature -- six of this
+    tracker's feeds were dead and the logs said nothing.
+    """
     out = []
     try:
-        feed = feedparser.parse(url)
+        r = requests.get(url, headers={'User-Agent': TRACKER_USER_AGENT}, timeout=12)
+        if r.status_code != 200:
+            print(f'[Belarus RSS] {source_name}: HTTP {r.status_code} -- feed not read')
+            return out
+        feed = feedparser.parse(r.content)
+        if getattr(feed, 'bozo', 0) and not (feed.entries or []):
+            print(f'[Belarus RSS] {source_name}: unparseable feed '
+                  f'({str(getattr(feed, "bozo_exception", ""))[:90]})')
+            return out
         for entry in (feed.entries or [])[:max_items]:
             out.append({
                 'title':       entry.get('title', '')[:300],
@@ -404,13 +456,42 @@ def _fetch_rss(url, source_name, weight=0.85, max_items=20, language='eng'):
                 'weight':      weight,
                 'language':    language,
             })
+        print(f'[Belarus RSS] {source_name}: {len(out)} items')
     except Exception as e:
-        print(f'[Belarus RSS] {source_name}: {str(e)[:120]}')
+        print(f'[Belarus RSS] {source_name}: {type(e).__name__}: {str(e)[:110]}')
+    return out
+
+
+def _shape_gdelt(raw, language):
+    """Gateway article dicts -> this tracker's article shape. Fields unchanged."""
+    out = []
+    for a in raw or []:
+        out.append({
+            'title':       (a.get('title') or '')[:300],
+            'description': '',
+            'url':         a.get('url', ''),
+            'published':   a.get('published') or a.get('seendate'),
+            'source':      a.get('source') or a.get('domain') or 'gdelt',
+            'source_type': 'gdelt',
+            'language':    language,
+            'weight':      0.7,
+        })
     return out
 
 
 def _fetch_gdelt(query, language='eng', days=7, max_records=25):
-    """Single GDELT query."""
+    """Single GDELT query. Returns (articles, sensed).
+
+    sensed=False means GDELT never answered -- the caller must not read the
+    resulting empty list as an absence of Belarus news.
+    """
+    if GDELT_GATEWAY:
+        raw, probe = _gw_fetch_probed(query, language=language,
+                                      timespan=f'{days*24}h',
+                                      maxrecords=max_records,
+                                      label=f'belarus/{language}')
+        return _shape_gdelt(raw, language), bool(probe.get('sensed'))
+
     params = {
         'query':        query,
         'mode':         'artlist',
@@ -421,29 +502,17 @@ def _fetch_gdelt(query, language='eng', days=7, max_records=25):
         'sourcelang':   language,
     }
     try:
-        resp = requests.get(GDELT_BASE_URL, params=params, timeout=(5, 15))
+        resp = requests.get(GDELT_BASE_URL, params=params, timeout=(10, 25))
         if resp.status_code == 429:
-            print(f'[Belarus GDELT] Rate limited (429) — backing off')
-            return []
+            print('[Belarus GDELT] Rate limited (429) -- backing off')
+            return [], False
         if resp.status_code != 200:
-            return []
-        articles = resp.json().get('articles', []) or []
-        out = []
-        for a in articles:
-            out.append({
-                'title':       (a.get('title') or '')[:300],
-                'description': '',
-                'url':         a.get('url', ''),
-                'published':   a.get('seendate'),
-                'source':      a.get('domain', 'gdelt'),
-                'source_type': 'gdelt',
-                'language':    language,
-                'weight':      0.7,
-            })
-        return out
+            print(f'[Belarus GDELT] HTTP {resp.status_code}')
+            return [], False
+        return _shape_gdelt(resp.json().get('articles') or [], language), True
     except Exception as e:
         print(f'[Belarus GDELT] Query error: {str(e)[:120]}')
-        return []
+        return [], False
 
 
 def _fetch_newsapi(query='belarus', max_records=40):
@@ -509,20 +578,33 @@ def _fetch_brave(query='belarus politics', max_records=20):
 
 
 def _fetch_reddit():
-    """Belarus-relevant subreddits."""
+    """Belarus-relevant subreddits. Returns (posts, probe).
+
+    The old version sent 'Asifah-Analytics/1.0' and swallowed every non-200
+    with a bare `continue`. Reddit could have been refusing all six subreddits
+    for months and the tracker would have reported "0 posts" -- the exact
+    shape of a silence mistaken for calm.
+    """
     out = []
     subs = ['belarus', 'europe', 'CredibleDefense', 'LessCredibleDefence',
             'geopolitics', 'ukraine']
+    probe = {'attempted': 0, 'ok': 0, 'blocked': 0, 'status': {}}
     for sub in subs:
+        probe['attempted'] += 1
         try:
             url = f'https://www.reddit.com/r/{sub}/new.json?limit=25'
             r = requests.get(
                 url,
-                headers={'User-Agent': 'Asifah-Analytics/1.0'},
+                headers={'User-Agent': REDDIT_USER_AGENT,
+                         'Accept': 'application/json'},
                 timeout=8
             )
             if r.status_code != 200:
+                probe['blocked'] += 1
+                probe['status'][sub] = r.status_code
+                print(f'[Belarus Reddit] r/{sub}: HTTP {r.status_code}')
                 continue
+            probe['ok'] += 1
             for child in (r.json().get('data', {}).get('children') or []):
                 p = child.get('data', {})
                 title = (p.get('title') or '').lower()
@@ -543,32 +625,64 @@ def _fetch_reddit():
                     'weight':      0.65,
                 })
         except Exception as e:
+            probe['blocked'] += 1
+            probe['status'][sub] = type(e).__name__
             print(f'[Belarus Reddit] r/{sub}: {str(e)[:120]}')
         time.sleep(0.3)  # rate-limit politeness
-    return out
+    if probe['ok'] == 0:
+        print(f'[Belarus Reddit] NOT SENSED -- 0 of {probe["attempted"]} subreddits '
+              f'answered ({probe["status"]}). Missing data, not an absent conversation.')
+    else:
+        print(f'[Belarus Reddit] {len(out)} posts from '
+              f'{probe["ok"]}/{probe["attempted"]} subreddits')
+    return out, probe
 
 
 def _fetch_all_articles():
-    """Run all article fetchers, dedupe by URL, return single list."""
+    """Run all article fetchers, dedupe by URL. Returns (articles, sensing)."""
     articles = []
+    sensing = {
+        'rss':     {'attempted': 0, 'ok': 0, 'empty': []},
+        'gdelt':   {'attempted': 0, 'sensed': 0},
+        'newsapi': {'attempted': 0, 'ok': 0},
+        'brave':   {'attempted': 0, 'ok': 0},
+    }
 
-    # RSS
+    # RSS -- per-feed, so a dead feed is named rather than averaged away
     for feed in RSS_FEEDS:
-        articles.extend(_fetch_rss(feed['url'], feed['name'], feed['weight'], language=feed.get('language', 'eng')))
+        sensing['rss']['attempted'] += 1
+        got = _fetch_rss(feed['url'], feed['name'], feed['weight'],
+                         language=feed.get('language', 'eng'))
+        if got:
+            sensing['rss']['ok'] += 1
+        else:
+            sensing['rss']['empty'].append(feed['name'])
+        articles.extend(got)
 
-    # GDELT
+    # GDELT -- no local sleep: the gateway paces process-wide.
     for lang, queries in GDELT_QUERIES.items():
         for q in queries:
-            articles.extend(_fetch_gdelt(q, language=lang, days=7))
-            time.sleep(0.5)  # GDELT politeness
+            sensing['gdelt']['attempted'] += 1
+            got, sensed = _fetch_gdelt(q, language=lang, days=7)
+            if sensed:
+                sensing['gdelt']['sensed'] += 1
+            articles.extend(got)
 
     # NewsAPI fallback (only if RSS+GDELT thin)
     if len(articles) < 30:
-        articles.extend(_fetch_newsapi('belarus', max_records=40))
+        sensing['newsapi']['attempted'] += 1
+        got = _fetch_newsapi('belarus', max_records=40)
+        if got:
+            sensing['newsapi']['ok'] += 1
+        articles.extend(got)
 
     # Brave tertiary fallback (only if still thin)
     if len(articles) < 15:
-        articles.extend(_fetch_brave('belarus lukashenko', max_records=20))
+        sensing['brave']['attempted'] += 1
+        got = _fetch_brave('belarus lukashenko', max_records=20)
+        if got:
+            sensing['brave']['ok'] += 1
+        articles.extend(got)
 
     # Dedupe by URL
     seen = set()
@@ -579,7 +693,13 @@ def _fetch_all_articles():
             seen.add(u)
             unique.append(a)
 
-    return unique
+    sensing['any_sensed'] = bool(
+        sensing['rss']['ok'] or sensing['gdelt']['sensed']
+        or sensing['newsapi']['ok'] or sensing['brave']['ok'])
+    sensing['degraded'] = (
+        sensing['gdelt']['attempted'] > 0
+        and sensing['gdelt']['sensed'] == 0) or not sensing['any_sensed']
+    return unique, sensing
 
 
 # ============================================================
@@ -625,6 +745,12 @@ def _compute_theatre_score(by_actor, articles):
     """
     Derive a 0-100 'pressure' score for the theatre.
     Belarus baseline +9 per project memory (high-pressure tuning).
+
+    ABSENCE CAVEAT (v1.1.0): this is a volume metric. A blind scan scores
+    BASELINE and bands as 'normal' -- indistinguishable from a quiet Belarus.
+    The math is UNCHANGED so historical series stay comparable; the scan
+    records result['sensing'] instead. Wiring blindness into the score is a
+    scoring decision for the GPI rollup, not part of a plumbing fix.
     """
     BASELINE = 9
     actor_weights = {
@@ -753,8 +879,18 @@ def run_belarus_rhetoric_scan(force=False):
     started = time.time()
 
     # Articles
-    articles = _fetch_all_articles()
-    print(f'[Belarus Rhetoric] Articles: {len(articles)}')
+    articles, sensing = _fetch_all_articles()
+    print(f'[Belarus Rhetoric] Articles: {len(articles)} '
+          f'(RSS {sensing["rss"]["ok"]}/{sensing["rss"]["attempted"]}, '
+          f'GDELT {sensing["gdelt"]["sensed"]}/{sensing["gdelt"]["attempted"]} sensed)')
+    if sensing['rss']['empty']:
+        print(f'[Belarus Rhetoric] Feeds returning nothing: '
+              f'{", ".join(sensing["rss"]["empty"])}')
+    if not sensing['any_sensed']:
+        print('[Belarus Rhetoric] BLIND -- no source family answered. The score '
+              'below is the BASELINE FLOOR, not a measurement of a quiet Belarus.')
+    elif sensing['degraded']:
+        print('[Belarus Rhetoric] DEGRADED -- GDELT contributed nothing this scan.')
 
     # Telegram
     telegram_messages = []
@@ -775,8 +911,9 @@ def run_belarus_rhetoric_scan(force=False):
             print(f'[Belarus Rhetoric] Bluesky fetch error: {str(e)[:120]}')
 
     # Reddit
-    reddit_signals = _fetch_reddit()
+    reddit_signals, reddit_probe = _fetch_reddit()
     print(f'[Belarus Rhetoric] Reddit: {len(reddit_signals)} posts')
+    sensing['reddit'] = reddit_probe
 
     # Classify articles by actor
     by_actor = _classify_articles(articles)
@@ -834,7 +971,13 @@ def run_belarus_rhetoric_scan(force=False):
         'theatre_score':     score,
         'alert_level':       alert,
         'pressure_score':    score,
-        'tracker_version':   '1.0.0',
+        'tracker_version':   TRACKER_VERSION,
+        # Absence-honest sensing record. Read this before reading the score:
+        # any_sensed=False means nothing answered, and theatre_score is then
+        # the baseline floor rather than an observation.
+        'sensing':           sensing,
+        'sensing_degraded':  bool(sensing.get('degraded')),
+        'any_source_sensed': bool(sensing.get('any_sensed')),
         'cached_at':         datetime.now(timezone.utc).isoformat(),
         'scan_duration_sec': elapsed,
         'cache_status':      'fresh',
