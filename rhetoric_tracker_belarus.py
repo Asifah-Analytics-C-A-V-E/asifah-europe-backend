@@ -1,8 +1,53 @@
 """
 ═══════════════════════════════════════════════════════════════════════
   ASIFAH ANALYTICS — BELARUS RHETORIC TRACKER
-  v1.1.0 (Oct 4 2026)
+  v1.2.0 (Oct 4 2026)
 ═══════════════════════════════════════════════════════════════════════
+
+v1.2.0 (Oct 4 2026) — FEED ROSTER REPAIR, against measured evidence
+
+  Every feed below was probed from an INDEPENDENT NETWORK (not Render) on
+  2026-10-04, which is the only way to tell "this host blocks datacenters"
+  apart from "this feed is dead". Results:
+
+    Nasha Niva (BE)   200, 53,430 bytes   -> ALIVE
+    Zviazda (BE)      200, 225,358 bytes  -> ALIVE
+    Radio Svaboda(BE) 200, 22,689 bytes   -> ALIVE
+    RFE/RL BY         200, 11 BYTES       -> ZOMBIE (see below)
+    Viasna            403                 -> blocked on BOTH networks
+    Euroradio (BE)    403                 -> blocked on BOTH networks
+    BelTA EN          404                 -> gone
+    NEXTA             connection closed   -> gone (Render saw 404)
+
+  TWO FINDINGS WORTH RECORDING:
+
+  1. v1.1.0's claim that Nasha Niva and Zviazda return "malformed XML" was
+     WRONG, and wrong in an instructive way. They serve 53KB and 225KB of
+     perfectly good content. The old code called feedparser.parse(url),
+     which fetches with feedparser's own User-Agent; the "not well-formed
+     (invalid token): line 8" error is what you get when an HTML challenge
+     page is handed to an XML parser. We were not reading a broken feed --
+     we were reading a page that was not the feed at all. v1.1.0's switch to
+     requests + a descriptive UA is expected to have fixed both without any
+     URL change. Watch the next scan to confirm.
+
+  2. RFE/RL's Belarus feed answers HTTP 200 with an ELEVEN BYTE body. That is
+     the most dangerous failure shape on the roster -- worse than a 404,
+     because a 200 reads as healthy at every layer and the resulting "0 items"
+     is indistinguishable from a quiet news day in Belarus. A 404 at least
+     announces itself. Hence the zombie guard in _fetch_rss.
+
+  Four confirmed-dead feeds are now marked status='broken' and SKIPPED, but
+  they are still listed, dated, and reported in sensing['rss']['known_broken'].
+  Skipping a known-dead source is efficiency; forgetting it is how a roster
+  quietly shrinks to nothing and nobody notices the country went dark.
+
+  SOURCING-BIAS NOTE, which matters more than the weights suggest: BelTA is
+  the REGIME voice. With it gone, the live roster reads Belarus almost
+  entirely through opposition and exile outlets (Nasha Niva, Radio Svaboda),
+  with Zviazda the only state-affiliated survivor. That is a one-sided
+  corpus, and an analyst reading this tracker should know it. Replacing
+  BelTA is worth more than its 0.65 weight implies.
 
 v1.1.0 (Oct 4 2026) — SOURCE DISCIPLINE PASS
   1. GDELT routes through gdelt_gateway. This file was calling
@@ -17,16 +62,17 @@ v1.1.0 (Oct 4 2026) — SOURCE DISCIPLINE PASS
      from a quiet weekend.
   3. RSS failures are VISIBLE. feedparser.parse(url) swallows the transport
      layer: a 403, a 404 and a valid-but-empty feed all arrive as
-     `entries == []`. Six of the eight feeds below were failing this way --
-     Nasha Niva and Zviazda returning malformed XML, Euroradio and Viasna
-     403, NEXTA 404, Belsat dropping the connection -- and the tracker
-     recorded it as Belarus being quiet.
+     `entries == []`, so a dead feed read downstream as a quiet country.
+     (The specific diagnosis written here in v1.1.0 -- "Nasha Niva and
+     Zviazda returning malformed XML" -- was corrected by measurement in
+     v1.2.0 above. The mechanism was right; the attribution was not.)
   4. Absence-honest sensing block in the result payload.
 
-OPEN ITEM (Oct 4 2026): the broken feed URLs above are NOT fixed here.
-Replacement URLs were not verifiable at authoring time, and guessing a feed
-URL is how a tracker ends up silently reading nothing. They now fail LOUDLY
-with a status code so the roster can be repaired against evidence.
+OPEN ITEM (Oct 4 2026): replacement URLs for the four dead feeds are NOT in
+this file. They were not verifiable at authoring time, and guessing a feed
+URL is how a tracker ends up silently reading nothing. Each failure is now
+recorded with its status code and the date it was checked, so the repair is
+a bounded errand against evidence rather than a search.
 
 Multi-actor rhetoric tracker for Belarus. Aggregates signals across:
   - RSS (NEXTA, Meduza, RFE/RL Belarus, Viasna, BelTA, Reuters)
@@ -95,7 +141,7 @@ REDIS_KEY_LATEST     = 'rhetoric:belarus:latest'
 REDIS_KEY_HISTORY    = 'rhetoric:belarus:history'
 REFRESH_INTERVAL_SEC = 6 * 3600   # 6h
 
-TRACKER_VERSION = '1.1.0'
+TRACKER_VERSION = '1.2.0'
 
 TRACKER_USER_AGENT = (f'AsifahAnalytics-Europe-Belarus/{TRACKER_VERSION} '
                       f'(OSINT monitoring tool; +https://asifahanalytics.com)')
@@ -116,24 +162,45 @@ _scan_lock = threading.Lock()
 # ============================================================
 RSS_FEEDS = [
     # Independent / opposition (English)
-    {'name': 'NEXTA',                     'url': 'https://nexta.tv/en/rss',                                'weight': 0.95, 'language': 'eng'},
+    # BROKEN (verified 2026-10-04, independent network): connection closed
+    # unexpectedly. Render reported HTTP 404 the same day. URL retained so the
+    # roster records what we LOST, not a blank where a source used to be.
+    {'name': 'NEXTA',                     'url': 'https://nexta.tv/en/rss',                                'weight': 0.95, 'language': 'eng', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'connection closed / 404'},
     {'name': 'Meduza (English)',          'url': 'https://meduza.io/rss/en/all',                           'weight': 0.90, 'language': 'eng'},
-    {'name': 'RFE/RL Belarus Service',    'url': 'https://www.rferl.org/api/zypppgmm-en',                  'weight': 0.95, 'language': 'eng'},
-    {'name': 'Viasna Human Rights',       'url': 'https://spring96.org/en/rss',                            'weight': 0.95, 'language': 'eng'},
+    # ZOMBIE (verified 2026-10-04): HTTP 200 with an ELEVEN BYTE body. The most
+    # dangerous failure shape here -- a 200 reads as healthy everywhere, and
+    # "0 items" from a 200 is indistinguishable from a quiet news day.
+    {'name': 'RFE/RL Belarus Service',    'url': 'https://www.rferl.org/api/zypppgmm-en',                  'weight': 0.95, 'language': 'eng', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'HTTP 200, 11-byte empty body'},
+    # BROKEN (verified 2026-10-04): HTTP 403 from BOTH a residential IP and the
+    # Render host, so this is not a datacenter-IP block -- the path refuses us
+    # outright. Viasna is the human-rights record for Belarus; worth replacing.
+    {'name': 'Viasna Human Rights',       'url': 'https://spring96.org/en/rss',                            'weight': 0.95, 'language': 'eng', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'HTTP 403 (residential + datacenter)'},
     # International coverage (English)
     {'name': 'Reuters Europe',            'url': 'https://www.reutersagency.com/feed/?best-regions=europe&post_type=best',  'weight': 0.90, 'language': 'eng'},
     {'name': 'Politico Europe',           'url': 'https://www.politico.eu/feed/',                          'weight': 0.85, 'language': 'eng'},
     {'name': 'Euractiv',                  'url': 'https://www.euractiv.com/feed/',                         'weight': 0.80, 'language': 'eng'},
     # State / regime English (counter-narrative)
-    {'name': 'BelTA (state media, EN)',   'url': 'https://eng.belta.by/rss',                               'weight': 0.65, 'language': 'eng'},
+    # BROKEN (verified 2026-10-04): HTTP 404. BelTA is the REGIME voice -- see
+    # the sourcing-bias note in the module docstring. Its loss costs more than
+    # its 0.65 weight: without it the roster reads Belarus from one side only.
+    {'name': 'BelTA (state media, EN)',   'url': 'https://eng.belta.by/rss',                               'weight': 0.65, 'language': 'eng', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'HTTP 404'},
     # ───── BELARUSIAN-LANGUAGE NATIVE FEEDS (be) ─────
     # Nasha Niva — primary Belarusian-language opposition outlet (in exile, est. 1906; "extremist" per regime)
+    # VERIFIED ALIVE 2026-10-04: 200, 53,430 bytes. v1.1.0 called this feed
+    # malformed; it was not -- feedparser's own fetch was getting something
+    # other than the feed. See the v1.2.0 note in the module docstring.
     {'name': 'Nasha Niva (BE)',           'url': 'https://nashaniva.com/rss',                              'weight': 0.95, 'language': 'bel'},
     # Zviazda — oldest Belarusian-language publication (state-affiliated counter-narrative)
+    # VERIFIED ALIVE 2026-10-04: 200, 225,358 bytes. Same correction as above.
+    # Now the only state-affiliated voice left on the roster.
     {'name': 'Zviazda (BE)',              'url': 'https://zviazda.by/be/rss.xml',                          'weight': 0.65, 'language': 'bel'},
     # Euroradio Belarusian service — independent, Belarusian-language
-    {'name': 'Euroradio (BE)',            'url': 'https://euroradio.fm/be/rss',                            'weight': 0.90, 'language': 'bel'},
+    # BROKEN (verified 2026-10-04): HTTP 403 on both networks.
+    {'name': 'Euroradio (BE)',            'url': 'https://euroradio.fm/be/rss',                            'weight': 0.90, 'language': 'bel', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'HTTP 403 (residential + datacenter)'},
     # Radio Svaboda (RFE/RL Belarusian service) — Belarusian-language
+    # VERIFIED ALIVE 2026-10-04: 200, 22,689 bytes. Note that RFE/RL's ENGLISH
+    # Belarus feed above is the 11-byte zombie while this Belarusian-language
+    # one is healthy -- same organisation, two very different feed endpoints.
     {'name': 'Radio Svaboda (BE)',        'url': 'https://www.svaboda.org/api/epiqq',                      'weight': 0.95, 'language': 'bel'},
 ]
 
@@ -440,6 +507,14 @@ def _fetch_rss(url, source_name, weight=0.85, max_items=20, language='eng'):
         if r.status_code != 200:
             print(f'[Belarus RSS] {source_name}: HTTP {r.status_code} -- feed not read')
             return out
+        # ZOMBIE GUARD (v1.2.0, 2026-10-04): RFE/RL's Belarus feed answers 200
+        # with an ELEVEN BYTE body. A 200 reads as healthy at every layer above
+        # this one, and the resulting "0 items" is indistinguishable from a
+        # quiet news day. A real RSS document cannot be this small.
+        if len(r.content or b'') < 200:
+            print(f'[Belarus RSS] {source_name}: HTTP 200 but only '
+                  f'{len(r.content or b"")} bytes -- empty feed, NOT quiet news')
+            return out
         feed = feedparser.parse(r.content)
         if getattr(feed, 'bozo', 0) and not (feed.entries or []):
             print(f'[Belarus RSS] {source_name}: unparseable feed '
@@ -642,14 +717,22 @@ def _fetch_all_articles():
     """Run all article fetchers, dedupe by URL. Returns (articles, sensing)."""
     articles = []
     sensing = {
-        'rss':     {'attempted': 0, 'ok': 0, 'empty': []},
+        'rss':     {'attempted': 0, 'ok': 0, 'empty': [], 'known_broken': []},
         'gdelt':   {'attempted': 0, 'sensed': 0},
         'newsapi': {'attempted': 0, 'ok': 0},
         'brave':   {'attempted': 0, 'ok': 0},
     }
 
-    # RSS -- per-feed, so a dead feed is named rather than averaged away
+    # RSS -- per-feed, so a dead feed is named rather than averaged away.
+    # Feeds marked status='broken' are NOT fetched (four confirmed-dead URLs
+    # cost ~12s of every scan and filled the log with the same four errors),
+    # but they ARE still counted and named in sensing. Skipping a known-dead
+    # source is efficiency; forgetting it is how a roster quietly shrinks.
     for feed in RSS_FEEDS:
+        if feed.get('status') == 'broken':
+            sensing['rss']['known_broken'].append(
+                f"{feed['name']} ({feed.get('reason', 'unverified')})")
+            continue
         sensing['rss']['attempted'] += 1
         got = _fetch_rss(feed['url'], feed['name'], feed['weight'],
                          language=feed.get('language', 'eng'))
@@ -883,8 +966,11 @@ def run_belarus_rhetoric_scan(force=False):
     print(f'[Belarus Rhetoric] Articles: {len(articles)} '
           f'(RSS {sensing["rss"]["ok"]}/{sensing["rss"]["attempted"]}, '
           f'GDELT {sensing["gdelt"]["sensed"]}/{sensing["gdelt"]["attempted"]} sensed)')
+    if sensing['rss']['known_broken']:
+        print(f'[Belarus Rhetoric] Skipped {len(sensing["rss"]["known_broken"])} '
+              f'known-broken feed(s): {"; ".join(sensing["rss"]["known_broken"])}')
     if sensing['rss']['empty']:
-        print(f'[Belarus Rhetoric] Feeds returning nothing: '
+        print(f'[Belarus Rhetoric] Live feeds returning nothing: '
               f'{", ".join(sensing["rss"]["empty"])}')
     if not sensing['any_sensed']:
         print('[Belarus Rhetoric] BLIND -- no source family answered. The score '
