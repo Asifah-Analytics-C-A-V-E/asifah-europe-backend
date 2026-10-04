@@ -672,7 +672,13 @@ def _refresh_all_caches():
             print("[Background Refresh] Refreshing NOTAMs via FAA...")
             notam_data = _run_notam_scan()
             cache_set('notams', notam_data)
-            print(f"[Background Refresh] ✓ NOTAMs cached ({notam_data.get('total_notams', 0)} critical alerts)")
+            if notam_data.get('sensed'):
+                print(f"[Background Refresh] ✓ NOTAMs cached "
+                      f"({notam_data.get('total_notams')} critical alerts, "
+                      f"state={notam_data.get('state')})")
+            else:
+                print("[Background Refresh] ⚠ NOTAMs UNKNOWN -- FAA unreachable, "
+                      "cached as unknown rather than zero")
         except Exception as e:
             print(f"[Background Refresh] ✗ NOTAMs failed: {e}")
 
@@ -683,7 +689,12 @@ def _refresh_all_caches():
             print("[Background Refresh] Refreshing flights...")
             flight_data = _run_flight_scan()
             cache_set('flights', flight_data)
-            print(f"[Background Refresh] ✓ Flights cached ({flight_data.get('total_disruptions', 0)} disruptions)")
+            if flight_data.get('sensed'):
+                print(f"[Background Refresh] ✓ Flights cached "
+                      f"({flight_data.get('total_disruptions')} disruptions)")
+            else:
+                print("[Background Refresh] ⚠ Flights UNKNOWN -- no article corpus, "
+                      "cached as unknown rather than zero")
         except Exception as e:
             print(f"[Background Refresh] ✗ Flights failed: {e}")
 
@@ -3517,15 +3528,26 @@ FAA_NOTAM_URL = "https://notams.aim.faa.gov/notamSearch/search"
 
 
 def fetch_notams_for_region(region_key):
-    """Fetch real NOTAMs from FAA NOTAM Search for a region."""
+    """
+    Fetch real NOTAMs from FAA NOTAM Search for a region.
+
+    Returns (notams, probe).
+
+    The probe is what makes this absence-honest. A region that returns zero
+    NOTAMs because the FAA answered "nothing critical here" is NOT the same
+    as a region that returns zero because every request was refused. Without
+    the probe both look identical downstream -- and both read as calm.
+    """
     region = NOTAM_REGIONS.get(region_key)
+    probe = {'attempted': 0, 'reached': 0, 'failed': 0, 'failures': []}
     if not region:
-        return []
+        return [], probe
 
     notams = []
     icao_codes = region.get('icao_codes', [])[:3]  # Limit to 3 airports per region
 
     for code in icao_codes:
+        probe['attempted'] += 1
         try:
             payload = {
                 'searchType': 0,
@@ -3543,15 +3565,21 @@ def fetch_notams_for_region(region_key):
             response = requests.post(FAA_NOTAM_URL, data=payload, headers=headers, timeout=15)
 
             if response.status_code != 200:
+                probe['failed'] += 1
+                probe['failures'].append({'icao': code, 'reason': f'HTTP {response.status_code}'})
                 print(f"[NOTAM API] {code}: HTTP {response.status_code}")
                 continue
 
             try:
                 data = response.json()
             except (json.JSONDecodeError, ValueError):
+                probe['failed'] += 1
+                probe['failures'].append({'icao': code, 'reason': 'non-JSON body'})
                 print(f"[NOTAM API] {code}: Non-JSON response, skipping")
                 continue
 
+            # We got a parseable answer from the FAA. Only now is a zero a real zero.
+            probe['reached'] += 1
             items = data.get('notamList', [])
             print(f"[NOTAM API] {code}: {len(items)} raw NOTAMs returned")
 
@@ -3584,12 +3612,21 @@ def fetch_notams_for_region(region_key):
             time.sleep(1)  # Rate limit courtesy
 
         except requests.Timeout:
+            probe['failed'] += 1
+            probe['failures'].append({'icao': code, 'reason': 'timeout'})
             print(f"[NOTAM API] {code}: Timeout")
         except Exception as e:
+            probe['failed'] += 1
+            probe['failures'].append({'icao': code, 'reason': type(e).__name__})
             print(f"[NOTAM API] {code}: Error: {str(e)[:150]}")
 
-    print(f"[NOTAM API] {region_key}: {len(notams)} critical NOTAMs found via FAA")
-    return notams
+    if probe['reached'] == 0:
+        print(f"[NOTAM API] {region_key}: NOT SENSED -- {probe['failed']}/{probe['attempted']} "
+              f"requests refused. Missing data, NOT calm airspace.")
+    else:
+        print(f"[NOTAM API] {region_key}: {len(notams)} critical NOTAMs "
+              f"(sensed {probe['reached']}/{probe['attempted']} airports)")
+    return notams, probe
 
 
 def classify_notam(text):
@@ -3635,23 +3672,57 @@ def classify_notam(text):
 
 
 def scan_all_europe_notams():
-    """Scan NOTAMs for all European regions using real API data."""
+    """
+    Scan NOTAMs for all European regions using real API data.
+
+    Returns (all_notams, coverage). Coverage records how much of the airspace
+    we actually managed to look at, so a caller can tell "nothing is happening"
+    apart from "nobody looked".
+    """
     all_notams = []
+    coverage = {
+        'regions_total': len(NOTAM_REGIONS),
+        'regions_sensed': 0,
+        'regions_blind': 0,
+        'airports_attempted': 0,
+        'airports_reached': 0,
+        'blind_regions': [],
+        'failures': {},
+    }
 
     for region_key in NOTAM_REGIONS:
         try:
-            notams = fetch_notams_for_region(region_key)
+            notams, probe = fetch_notams_for_region(region_key)
             all_notams.extend(notams)
-            time.sleep(1)  # Rate limit courtesy
         except Exception as e:
             print(f"[NOTAM API] Scan failed for {region_key}: {e}")
+            probe = {'attempted': 0, 'reached': 0, 'failed': 0,
+                     'failures': [{'icao': '*', 'reason': type(e).__name__}]}
+
+        coverage['airports_attempted'] += probe['attempted']
+        coverage['airports_reached'] += probe['reached']
+        if probe['reached'] > 0:
+            coverage['regions_sensed'] += 1
+        else:
+            coverage['regions_blind'] += 1
+            coverage['blind_regions'].append(region_key)
+        if probe['failures']:
+            coverage['failures'][region_key] = probe['failures']
+
+        time.sleep(1)  # Rate limit courtesy
 
     # Sort by severity
     severity_order = {'red': 0, 'orange': 1, 'yellow': 2, 'purple': 3, 'blue': 4, 'gray': 5}
     all_notams.sort(key=lambda x: severity_order.get(x.get('type_color', 'gray'), 5))
 
-    print(f"[NOTAM API] Total critical NOTAMs across all regions: {len(all_notams)}")
-    return all_notams
+    if coverage['airports_reached'] == 0:
+        print(f"[NOTAM API] BLIND -- 0 of {coverage['airports_attempted']} airport queries "
+              f"were answered. Reporting unknown, not zero.")
+    else:
+        print(f"[NOTAM API] Total critical NOTAMs: {len(all_notams)} "
+              f"(sensed {coverage['airports_reached']}/{coverage['airports_attempted']} airports, "
+              f"{coverage['regions_sensed']}/{coverage['regions_total']} regions)")
+    return all_notams, coverage
 
 
 # ========================================
@@ -4503,16 +4574,44 @@ def _run_notam_scan():
 
     # Run fresh scan
     print("[NOTAM Scan] Running fresh NOTAM scan from FAA...")
-    notams = scan_all_europe_notams()
+    notams, coverage = scan_all_europe_notams()
+
+    # Carry forward when we LAST actually saw the airspace, even if this scan
+    # was blind. "unknown since 14:20Z" is a far more useful claim than "0".
+    last_sensed_at = None
+    if cached:
+        last_sensed_at = cached.get('last_sensed_at') or (
+            cached.get('timestamp') if cached.get('sensed') else None)
+
+    sensed = coverage['airports_reached'] > 0
+    if not sensed:
+        state = 'unknown'
+    elif coverage['regions_blind'] > 0:
+        state = 'partial'
+    else:
+        state = 'scanned'
+
+    if sensed:
+        last_sensed_at = datetime.now(timezone.utc).isoformat()
 
     result = {
         'success': True,
         'timestamp': datetime.now(timezone.utc).isoformat(),
-        'total_notams': len(notams),
+        # DOCTRINE: when nothing was sensed, total_notams is None -- NOT 0.
+        # A zero here would tell every downstream reader that European
+        # airspace is quiet, when the truth is that nobody got to look.
+        'total_notams': len(notams) if sensed else None,
         'notams': notams,
+        'sensed': sensed,
+        'state': state,
+        'coverage': coverage,
+        'last_sensed_at': last_sensed_at,
+        'unknown_reason': (None if sensed else
+                           'FAA NOTAM Search refused every request; '
+                           'airspace state is unknown, not clear'),
         'regions_scanned': list(NOTAM_REGIONS.keys()),
-        'data_source': 'Autorouter / Eurocontrol EAD',
-        'version': '1.2.0-europe',
+        'data_source': 'FAA NOTAM Search (notams.aim.faa.gov)',
+        'version': f'{EUROPE_BACKEND_VERSION}-europe',
         'cached': False
     }
 
@@ -4571,13 +4670,34 @@ def _run_flight_scan():
 
     disruptions = scan_european_flight_disruptions(unique_articles)
 
+    # DOCTRINE: this scan reads disruptions OUT OF ARTICLES. No articles means
+    # no corpus to read, which is blindness -- not an absence of disruption.
+    sensed = len(unique_articles) > 0
+    last_sensed_at = None
+    if cached:
+        last_sensed_at = cached.get('last_sensed_at') or (
+            cached.get('timestamp') if cached.get('sensed') else None)
+    if sensed:
+        last_sensed_at = datetime.now(timezone.utc).isoformat()
+
+    if not sensed:
+        print("[Flight Scan] BLIND -- 0 articles retrieved (NewsAPI + GDELT both "
+              "returned nothing). Reporting unknown, not zero disruptions.")
+
     result = {
         'success': True,
         'timestamp': datetime.now(timezone.utc).isoformat(),
-        'total_disruptions': len(disruptions),
+        'total_disruptions': len(disruptions) if sensed else None,
         'disruptions': disruptions,
         'cancellations': disruptions,
-        'version': '1.2.0-europe',
+        'sensed': sensed,
+        'state': 'scanned' if sensed else 'unknown',
+        'articles_scanned': len(unique_articles),
+        'last_sensed_at': last_sensed_at,
+        'unknown_reason': (None if sensed else
+                           'no articles retrieved from NewsAPI or GDELT; '
+                           'flight disruption state is unknown, not clear'),
+        'version': f'{EUROPE_BACKEND_VERSION}-europe',
         'cached': False
     }
 
@@ -4857,7 +4977,11 @@ def api_europe_notams():
             'success': False,
             'error': str(e),
             'notams': [],
-            'total_notams': 0
+            # The scan threw. We know nothing about the airspace -- say so.
+            'total_notams': None,
+            'sensed': False,
+            'state': 'unknown',
+            'unknown_reason': 'NOTAM scan raised an exception; airspace state unknown'
         }), 500
 
 
