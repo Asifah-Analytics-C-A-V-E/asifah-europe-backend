@@ -1217,7 +1217,24 @@ def _fetch_commodity_pressure_via_proxy(commodity_id):
             'oil':    'russia',
             'gas':    'russia',
             'nickel': 'russia',
-            # Add more anchors as new convergences land
+            # v3.5.2 (Oct 6 2026) -- two anchors that were missing, each of
+            # which made a live registry entry report commodity_unreadable
+            # every cycle rather than firing.
+            #
+            # uranium -> kazakhstan. Kazakhstan is the #1 global producer
+            # (~40% of supply) and commodity_tracker lists it first in
+            # uranium's top_producers, so the anchor resolves to a country
+            # whose summaries genuinely carry uranium.
+            #
+            # diamonds -> russia. Alrosa. Without this,
+            # diamonds_sanctions_regime has been reporting
+            # commodity_unreadable on this backend since the registry landed.
+            'uranium':  'kazakhstan',
+            'diamonds': 'russia',
+            # Add more anchors as new convergences land. An anchor MUST be a
+            # country whose commodity_summaries actually contain the
+            # commodity -- a wrong anchor reads as unreadable, not as quiet,
+            # but it still never fires.
         }
         anchor = ANCHOR_TARGETS.get(commodity_id)
         if not anchor:
@@ -1718,7 +1735,7 @@ def build_regional_bluf(force=False):
             'layer2':             _l2,
             'theatre_summary':    theatre_summary,
             'generated_at':       datetime.now(timezone.utc).isoformat(),
-            'version':            '3.5.1',
+            'version':            '3.5.2',
             'methodology_note':   (
                 'How to read this: country scores are rhetoric-signal '
                 'composites -- weighted volume and severity of classified '
@@ -1732,7 +1749,7 @@ def build_regional_bluf(force=False):
 
         _bluf_ttl = BLUF_INCOMPLETE_TTL if (trackers_missing or trackers_stale) else BLUF_CACHE_TTL
         _redis_set(BLUF_CACHE_KEY, result, ttl=_bluf_ttl)
-        print(f"[Europe BLUF v3.5.1] Built: posture={posture['label']}, "
+        print(f"[Europe BLUF v3.5.2] Built: posture={posture['label']}, "
               f"max_level=L{posture['peak_level']}, "
               f"breached={posture['breached_count']}, "
               f"signals={len(top_signals)}, "

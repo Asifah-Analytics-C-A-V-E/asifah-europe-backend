@@ -687,7 +687,39 @@ POLE_WEST = [
 ]
 
 
-def _score_hedging_integrity(scan_data):
+def _score_hedging_integrity(scan_data, russia=None, china=None):
+    """Three-pole balance -- WITH direction.
+
+    v1.1.0 (Oct 6 2026) -- THE POLARITY BUG.
+    ----------------------------------------
+    This function counted pole-signal VOLUME and nothing else. Volume is
+    attention, not direction, and the two come apart exactly when the reading
+    matters most.
+
+    The case that exposed it: in October 2026 Kazakhstan tightened controls at
+    its Russian frontier over a suspected plague outbreak. That is a state
+    leaning AWAY from Moscow -- at real cost, since Kazakh crude and uranium
+    both transit Russia. Coverage of it says "Russia-Kazakhstan border", which
+    increments POLE_RUSSIA, which pushed the dominance maths toward Russia,
+    which this function then reported as the hedge TILTING TOWARD MOSCOW.
+
+    Exactly backwards, and confidently worded.
+
+    The information to fix it was already being computed one function away:
+    _score_russia_levers returns polarity (friction / alignment / balanced) and
+    _score_china_dual_track returns relationship (friction / alignment). They
+    were simply never consulted here.
+
+    THREE STATES ON DIRECTION, and the third is load-bearing:
+      toward   the dominant pole\'s own vector reads alignment
+      away     it reads friction -- dominance is ATTENTION, not attraction
+      unread   no directional vector exists for that pole (the West pole has
+               none today) -- never silently treated as "toward"
+
+    Volume maths is UNCHANGED, so the divergence series stays comparable with
+    everything recorded before today. Only the direction field and the prose
+    are new.
+    """
     ru = _check_keywords(scan_data, POLE_RUSSIA)
     cn = _check_keywords(scan_data, POLE_CHINA)
     we = _check_keywords(scan_data, POLE_WEST)
@@ -695,27 +727,70 @@ def _score_hedging_integrity(scan_data):
 
     poles = {'russia': ru, 'china': cn, 'west': we}
 
+    # Direction per pole, read from the vectors that already measure it.
+    def _dir_from(vec, key):
+        if not isinstance(vec, dict):
+            return 'unread'
+        val = vec.get(key)
+        if val == 'friction':
+            return 'away'
+        if val == 'alignment':
+            return 'toward'
+        if val == 'balanced':
+            return 'balanced'
+        return 'unread'
+
+    pole_direction = {
+        'russia': _dir_from(russia, 'polarity'),
+        'china':  _dir_from(china, 'relationship'),
+        # No West-pole directional vector exists yet. UNREAD, never 'toward' --
+        # a pole with no sensor must not inherit a direction by default.
+        'west':   'unread',
+    }
+
     if total == 0:
         return {
             'integrity': 'unread', 'poles': poles, 'total_signals': 0,
             'dominant_pole': None, 'dominance_pct': 0, 'divergence': 0,
+            'pole_direction': pole_direction, 'dominant_direction': 'unread',
             'reading': 'Insufficient pole signal this cycle to read the hedge. Absence stays honest.',
         }
 
     dominant = max(poles, key=lambda k: poles[k])
     dominance_pct = round((poles[dominant] / total) * 100)
-    # Divergence from perfect three-way equilibrium (33/33/33).
+    # Divergence from perfect three-way equilibrium (33/33/33). UNCHANGED.
     divergence = round(sum(abs((v / total) * 100 - 33.3) for v in poles.values()) / 2)
+
+    direction = pole_direction.get(dominant, 'unread')
+    DIR_PHRASE = {
+        'away': ('and the direction on that pole reads FRICTION -- so this is the tape paying '
+                 'ATTENTION to that capital, not Astana moving toward it. A hedge can lean away '
+                 'from a pole and generate more coverage of it than ever, and this is what that '
+                 'looks like.'),
+        'toward': 'and the direction on that pole reads ALIGNMENT -- dominance and attraction agree.',
+        'balanced': ('and the direction on that pole is BALANCED -- friction and cooperation '
+                     'reporting are running at similar tempo, so the volume says little about '
+                     'which way it is moving.'),
+        'unread': ('and NO directional vector exists for that pole, so this reading is volume '
+                   'only. Dominance here means the tape is talking about it, which is not the '
+                   'same as leaning toward it.'),
+    }
+    dir_clause = DIR_PHRASE[direction]
 
     if divergence >= 40:
         integrity = 'strained'
         reading = (f'Hedge reading STRAINED: the {dominant.upper()} pole carries {dominance_pct}% of '
-                   'pole-signal this cycle, well outside the balance Astana sells to all three '
-                   'capitals at once. Sustained single-pole dominance is the condition that has '
-                   'historically preceded either a public rebalancing gesture or a concession.')
+                   f'pole-signal this cycle, well outside the balance Astana sells to all three '
+                   f'capitals at once -- {dir_clause} Sustained single-pole dominance is the '
+                   'condition that has historically preceded either a public rebalancing gesture '
+                   'or a concession.')
     elif divergence >= 22:
         integrity = 'tilting'
-        reading = (f'Hedge reading TILTING toward the {dominant} pole ({dominance_pct}% of pole-signal). '
+        # NOTE the wording: "tilting toward" is only said when the direction
+        # actually supports it. That sentence was the bug.
+        lean = ('TILTING toward the %s pole' % dominant if direction == 'toward'
+                else 'CONCENTRATED on the %s pole' % dominant)
+        reading = (f'Hedge reading {lean} ({dominance_pct}% of pole-signal) -- {dir_clause} '
                    'Within historical range, but the tape is no longer balanced.')
     else:
         integrity = 'holding'
@@ -726,7 +801,12 @@ def _score_hedging_integrity(scan_data):
     return {
         'integrity': integrity, 'poles': poles, 'total_signals': total,
         'dominant_pole': dominant, 'dominance_pct': dominance_pct,
-        'divergence': divergence, 'reading': reading,
+        'divergence': divergence,
+        # v1.1.0 -- direction travels with the reading so no consumer has to
+        # infer attraction from volume the way this function used to.
+        'pole_direction': pole_direction,
+        'dominant_direction': direction,
+        'reading': reading,
     }
 
 
@@ -1115,7 +1195,9 @@ def _build_top_signals(red_lines, green_lines, corridor, russia, china, domestic
             'priority': 2 if hedge['integrity'] == 'strained' else 3,
             'category': 'hedging_integrity',
             'short_text': (f"Hedge {hedge['integrity'].upper()}: {hedge['dominant_pole']} pole "
-                           f"{hedge['dominance_pct']}% of pole-signal"),
+                           f"{hedge['dominance_pct']}% of pole-signal"
+                           + (' (direction: FRICTION -- attention, not attraction)'
+                              if hedge.get('dominant_direction') == 'away' else '')),
             'long_text': hedge['reading'],
             'pressure_type': 'diplomatic',
         })
@@ -1195,6 +1277,11 @@ def _build_fingerprints(corridor, russia, china, domestic, hedge, succession,
             'dominant_pole': hedge['dominant_pole'],
             'divergence':    hedge['divergence'],
             'poles':         hedge['poles'],
+            # v1.1.0 -- the Russia wheel reads this fingerprint. Without
+            # direction it could only ever see that Kazakhstan was talking
+            # about Moscow, never which way.
+            'dominant_direction': hedge.get('dominant_direction', 'unread'),
+            'pole_direction':     hedge.get('pole_direction', {}),
         },
         'middle_corridor': {
             'corridor_name':  corridor['corridor_name'],
@@ -1255,7 +1342,9 @@ def interpret_signals(scan_data):
         russia     = _score_russia_levers(scan_data)
         china      = _score_china_dual_track(scan_data)
         domestic   = _score_domestic_tripwire(scan_data)
-        hedge      = _score_hedging_integrity(scan_data)
+        # v1.1.0 -- hedge is computed AFTER russia and china because it now
+        # consults their direction rather than inferring it from volume.
+        hedge      = _score_hedging_integrity(scan_data, russia=russia, china=china)
         succession = _score_succession(scan_data)
         turkic     = _score_turkic(scan_data)
 
@@ -1350,7 +1439,8 @@ def interpret_signals(scan_data):
                                   'chain_links': [], 'reading': ''},
             'hedging_integrity': {'integrity': 'unread', 'poles': {}, 'total_signals': 0,
                                   'dominant_pole': None, 'dominance_pct': 0,
-                                  'divergence': 0, 'reading': ''},
+                                  'divergence': 0, 'reading': '',
+                                  'dominant_direction': 'unread', 'pole_direction': {}},
             'succession':        {'band': 'quiet', 'hits': 0, 'reading': ''},
             'turkic_integration': {'band': 'quiet', 'hits': 0, 'reading': ''},
             'commodity_convergence': {'active': False, 'gate': 'error', 'pressure': 0,
