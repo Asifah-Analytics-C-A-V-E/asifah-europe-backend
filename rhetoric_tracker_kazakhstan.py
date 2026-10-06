@@ -108,7 +108,7 @@ SPOKE_KEY_CHINA     = 'spoke:china:kazakhstan'      # <-- first China-wheel spok
 SCAN_LOCK_KEY       = 'lock:rhetoric:kazakhstan:scan'
 REFRESH_INTERVAL_SEC = 6 * 3600
 
-TRACKER_VERSION = '1.1.0'
+TRACKER_VERSION = '1.2.0'
 
 TRACKER_USER_AGENT = (f'AsifahAnalytics-Europe-Kazakhstan/{TRACKER_VERSION} '
                       f'(OSINT monitoring tool; +https://asifahanalytics.com)')
@@ -309,6 +309,44 @@ ACTORS = {
             '\u0442\u0443\u0440\u0446\u0438\u044f \u043a\u0430\u0437\u0430\u0445\u0441\u0442\u0430\u043d',
         ],
     },
+    'health_border': {
+        'name': 'Health / Border Control (Russian Frontier)',
+        'flag': '\U0001f6a7',
+        'icon': '\U0001f9a0',
+        'color': '#f97316',
+        'role': 'Sanitary and movement restrictions at the Russia border; epidemic response',
+        'description': (
+            'Added Oct 6 2026, when Kazakhstan, Uzbekistan and Kyrgyzstan tightened '
+            'controls at the Russian frontier within forty-eight hours of a suspected '
+            'pneumonic plague death at the Irkutsk anti-plague institute. This tracker '
+            'had no actor that could see it. THE READ IS NOT EPIDEMIOLOGICAL: Kazakhstan '
+            'shares roughly 7,600 km of border with Russia, its crude leaves through '
+            'Russian territory via CPC and its uranium transits Russia too. A state that '
+            'restricts movement at that frontier is paying a real price and risking real '
+            'irritation in Moscow. Doing it anyway is a judgement about the quality of '
+            'information coming out of Russia -- made by a party with costs to bear and '
+            'no motive to overstate, which is what makes it worth more than any '
+            'announcement. Watch: whether measures are framed as sanitary or as transit '
+            'policy, whether rail and air follow the road crossings, and whether the '
+            'other three neighbours move in the same week.'
+        ),
+        'keywords': [
+            'border closed russia', 'border closure russia', 'tighten border controls',
+            'border controls plague', 'checkpoint closed russia', 'crossing closed russia',
+            'movement restrictions border', 'quarantine border kazakhstan',
+            'sanitary control border', 'sanitary quarantine', 'health screening border',
+            'thermal screening border', 'rospotrebnadzor', 'plague kazakhstan',
+            'pneumonic plague', 'bubonic plague', 'anti-plague institute',
+            'epidemic restrictions', 'outbreak russia border', 'disease outbreak russia',
+            'rail traffic suspended russia', 'flights suspended russia',
+            'transit restricted russia', 'veterinary controls border',
+            '\u0437\u0430\u043a\u0440\u044b\u0442\u0438\u0435 \u0433\u0440\u0430\u043d\u0438\u0446\u044b',
+            '\u043a\u0430\u0440\u0430\u043d\u0442\u0438\u043d',
+            '\u0447\u0443\u043c\u0430',
+            '\u0441\u0430\u043d\u0438\u0442\u0430\u0440\u043d\u044b\u0439 \u043a\u043e\u043d\u0442\u0440\u043e\u043b\u044c',
+            '\u044d\u043f\u0438\u0434\u0435\u043c\u0438\u044f',
+        ],
+    },
     'commodity_complex': {
         'name': 'Commodity Complex',
         'flag': '\u2622\ufe0f',
@@ -354,6 +392,7 @@ GDELT_QUERIES = {
         '"kazakhstan" AND ("uranium" OR "kazatomprom" OR "oil export")',
         '"kazakhstan" AND ("sanctions" OR "re-export" OR "parallel import")',
         '"kazakhstan" AND ("election" OR "constitution" OR "kurultai")',
+        '"kazakhstan" AND ("border" OR "quarantine" OR "plague" OR "outbreak")',
     ],
     'kaz': [
         '"\u049b\u0430\u0437\u0430\u049b\u0441\u0442\u0430\u043d"',
@@ -362,6 +401,7 @@ GDELT_QUERIES = {
     'rus': [
         '"\u043a\u0430\u0437\u0430\u0445\u0441\u0442\u0430\u043d" AND ("\u0442\u043e\u043a\u0430\u0435\u0432" OR "\u0430\u0441\u0442\u0430\u043d\u0430")',
         '"\u043a\u0430\u0437\u0430\u0445\u0441\u0442\u0430\u043d" AND ("\u043f\u0440\u043e\u0442\u0435\u0441\u0442" OR "\u043a\u0442\u043a" OR "\u0441\u0430\u043d\u043a\u0446\u0438\u0438")',
+        '"\u043a\u0430\u0437\u0430\u0445\u0441\u0442\u0430\u043d" AND ("\u0433\u0440\u0430\u043d\u0438\u0446\u0430" OR "\u043a\u0430\u0440\u0430\u043d\u0442\u0438\u043d" OR "\u0447\u0443\u043c\u0430")',
     ],
 }
 
@@ -374,6 +414,8 @@ KAZAKHSTAN_TOPIC_KEYWORDS = [
     'kazakhstan', 'kazakh', 'astana', 'almaty', 'tokayev', 'nazarbayev',
     'kazatomprom', 'zhanaozen', 'mangystau', 'aktau', 'khorgos', 'baikonur',
     'middle corridor', 'central asia', 'tengiz', 'kashagan',
+    # v1.2.0 -- the Oct 2026 border-health axis
+    'plague', 'quarantine', 'border closure', 'rospotrebnadzor', 'irkutsk',
     '\u043a\u0430\u0437\u0430\u0445\u0441\u0442\u0430\u043d', '\u0430\u0441\u0442\u0430\u043d\u0430',
     '\u049b\u0430\u0437\u0430\u049b\u0441\u0442\u0430\u043d',
 ]
@@ -828,6 +870,10 @@ def _compute_theatre_score(by_actor, articles):
         'corridor_logistics': 0.60,
         'west_anchor':        0.60,
         'turkic_axis':        0.50,
+        # v1.2.0 -- a sanitary closure at the Russian frontier is a state ACTION
+        # with economic cost, not commentary. Weighted just under the Jan-2022
+        # domestic class and above the Russia-lever tempo it interacts with.
+        'health_border':      0.90,
         'commodity_complex':  0.00,   # DISPLAY-ONLY — see convergence gate
     }
     score = BASELINE
@@ -997,7 +1043,9 @@ def run_kazakhstan_rhetoric_scan(force=False):
     _rl = (interpretation.get('red_lines') or {}).get('triggered') or []
     _structural = sum(1 for r in _rl if r.get('status') == 'BREACHED'
                       and r.get('id') in ('mass_unrest', 'fuel_price_unrest',
-                                          'cpc_disruption', 'russian_irredentist'))
+                                          'cpc_disruption', 'russian_irredentist',
+                                          # v1.2.0 -- a closed frontier is structural
+                                          'border_health_closure'))
     _RANK = {'normal': 0, 'elevated': 1, 'high': 2, 'critical': 3}
     if _structural >= 2:
         score = max(score, 70)

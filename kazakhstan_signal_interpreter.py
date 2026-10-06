@@ -54,7 +54,7 @@ The reader completes the inference. Absence stays honest.
 
 from datetime import datetime, timezone
 
-INTERPRETER_VERSION = '1.0.0'
+INTERPRETER_VERSION = '1.1.0'
 
 CONVERGENCE_DISCLAIMER = (
     'This composite is a CONVERGENCE indicator, NOT a probability of action. '
@@ -160,6 +160,70 @@ RED_LINES = [
             'protect russian speakers kazakhstan', 'russian language kazakhstan status',
             'северный казахстан', 'территориальные претензии казахстан',
             'подарок россии', 'русскоязычные казахстан',
+        ],
+    },
+    {
+        # ── v1.1.0 (Oct 6 2026) ──
+        # Added during the Irkutsk plague event, when Kazakhstan, Uzbekistan and
+        # Kyrgyzstan tightened controls at the Russian frontier within 48 hours
+        # of a suspected pneumonic plague death at a Siberian anti-plague
+        # institute. This tracker had eight actors and seven red lines and could
+        # not see any of it.
+        #
+        # WHY IT IS A RED LINE AND NOT A HEALTH CARD: the analytical content is
+        # not epidemiological. A state that restricts movement at the Russian
+        # border pays a real economic price -- Kazakh crude and uranium both
+        # transit Russia -- and has every incentive not to antagonise Moscow.
+        # Acting anyway is a judgement about the quality of information coming
+        # out of Russia, made by a party with costs to bear and no motive to
+        # overstate. That is a hedging-integrity event, which is this tracker\'s
+        # subject.
+        #
+        # It is ALSO the emitter for ca_containment_kazakhstan in the convergence
+        # registry. severity 4 -> level 4 clears the entry\'s
+        # trigger_signal_min_level of 3 through the Europe Layer 2 regime gate.
+        'id': 'border_health_closure',
+        'category': 'Border / Movement Restriction at the Russian Frontier',
+        'severity': 4,
+        'breach_threshold': 2,
+        'description': ('Border, transit, quarantine or movement restriction applied at the '
+                        'Russian frontier on health or sanitary grounds. Reported as STATE '
+                        'ACTION, never as evidence of outbreak severity -- precautionary '
+                        'closure on thin information is correct behaviour for a neighbour.'),
+        'keywords': [
+            # PHRASES THAT ACTUALLY APPEAR. A first draft of this list used
+            # fully-qualified strings like 'tighten border controls russia',
+            # and the real Oct 6 wire copy -- "Kazakhstan, Uzbekistan and
+            # Kyrgyzstan tighten border controls over suspected plague outbreak
+            # in Russia" -- matched ONE of twenty-four. _check_keywords is a
+            # substring scan; it cannot bridge the words a sub-editor puts in
+            # the middle.
+            #
+            # SCOPING WITHOUT OVER-FITTING: bare 'border closure' and 'border
+            # restrictions' are deliberately NOT here. Kazakhstan has live
+            # border stories with China and Kyrgyzstan that have nothing to do
+            # with this axis, and a generic border word would fire this red
+            # line on a customs dispute. Every entry below is either
+            # health-specific (sanitary, quarantine, screening, plague) or
+            # explicitly names the Russian frontier.
+            'tighten border controls', 'tightens border controls',
+            'tighten borders', 'tightens borders', 'tightened border',
+            'border with russia', 'russian border', 'border crossings with russia',
+            'closed its border with russia', 'suspends border traffic',
+            'sanitary control', 'sanitary measures', 'sanitary cordon',
+            'sanitary and epidemiological', 'epidemic restrictions',
+            'quarantine measures', 'hospitals quarantined', 'placed under quarantine',
+            'health screening', 'thermal screening', 'medical screening at',
+            'movement restrictions', 'transit restrictions',
+            'plague outbreak', 'pneumonic plague', 'bubonic plague',
+            'suspected plague', 'plague case', 'anti-plague institute',
+            'rospotrebnadzor',
+            '\u0437\u0430\u043a\u0440\u044b\u0442\u0438\u0435 \u0433\u0440\u0430\u043d\u0438\u0446\u044b',
+            '\u0443\u0441\u0438\u043b\u0435\u043d\u0438\u0435 \u043a\u043e\u043d\u0442\u0440\u043e\u043b\u044f',
+            '\u043a\u0430\u0440\u0430\u043d\u0442\u0438\u043d',
+            '\u0447\u0443\u043c\u0430',
+            '\u0441\u0430\u043d\u0438\u0442\u0430\u0440\u043d\u044b\u0439 \u043a\u043e\u043d\u0442\u0440\u043e\u043b\u044c',
+            '\u044d\u043f\u0438\u0434\u0435\u043c\u0438\u044f',
         ],
     },
     {
@@ -939,14 +1003,71 @@ def _build_so_what(red_lines, green_lines, corridor, russia, china, domestic,
 # TOP SIGNALS
 # ============================================================
 
+# ═════════════════════════════════════════════════════════════
+# v1.1.0 (Oct 6 2026) -- EVERY TOP SIGNAL CARRIES A LEVEL
+#
+# THE BLOCKER THIS FIXES. These signals ride into europe_regional_bluf, whose
+# _build_signals sets priority / category / theatre / icon / colour / text --
+# and NOT level. convergence_layer2\'s regime gate reads sig[\'level\'], and its
+# _level() returns None for a missing field rather than 0, which is correct:
+# a signal with no level is UNREADABLE, not quiet. The consequence was that
+# every registry entry triggered by a Kazakh category would report
+# trigger_level_unreadable forever and never fire.
+#
+# So the tracker stamps its own level, because the tracker is the only layer
+# that actually knows the severity. Red lines already carry severity 1-5; that
+# number was being computed and then thrown away at this boundary.
+#
+# NOTHING IS INVENTED. Every level is derived from a field the interpreter
+# already measured, and `level_basis` travels with it so a derived level is
+# never mistaken for a measured one downstream.
+# ═════════════════════════════════════════════════════════════
+
+# A signal that did not come from a red line has no severity of its own. Its
+# PRIORITY is a real measured field, so the level derives from that -- capped
+# below 5, because nothing without a breached red line behind it should reach
+# the top of the platform ladder on a volume read.
+_PRIORITY_TO_LEVEL = {1: 4, 2: 3, 3: 2}
+
+
+def _level_from_red_line(rl):
+    """BREACHED carries the line\'s own severity; APPROACHING is two rungs below.
+
+    A breached severity-5 line (mass unrest) reads L5. The same line approaching
+    reads L3 -- present, not firing. Never below 1.
+    """
+    sev = int(rl.get('severity') or 3)
+    if rl.get('status') == 'BREACHED':
+        return max(1, min(5, sev)), 'red_line_severity'
+    return max(1, min(5, sev - 2)), 'red_line_severity_approaching'
+
+
+def _stamp_levels(signals):
+    """Give every emitted signal a level and say where the level came from.
+
+    Runs once, at the end of _build_top_signals, so a future signal type cannot
+    be added without one -- the failure mode that produced this fix.
+    """
+    for sg in signals:
+        if 'level' in sg and sg['level'] is not None:
+            sg.setdefault('level_basis', 'set_by_builder')
+            continue
+        lvl = _PRIORITY_TO_LEVEL.get(sg.get('priority'), 2)
+        sg['level'] = lvl
+        sg['level_basis'] = 'derived_from_priority'
+    return signals
+
+
 def _build_top_signals(red_lines, green_lines, corridor, russia, china, domestic,
                        hedge, succession, turkic, commodity):
     signals = []
 
     for r in red_lines:
         if r['status'] == 'BREACHED':
+            _lvl, _basis = _level_from_red_line(r)
             signals.append({
                 'priority': 1, 'category': r['id'],
+                'level': _lvl, 'level_basis': _basis,
                 'short_text': f"RED LINE BREACHED: {r['category']} ({r['hits']} signals)",
                 'long_text': f"{r['description']} {r['hits']} matched signals this cycle -- "
                              'a level consistent with the tripwire condition being live.',
@@ -956,8 +1077,10 @@ def _build_top_signals(red_lines, green_lines, corridor, russia, china, domestic
             })
     for r in red_lines:
         if r['status'] == 'APPROACHING':
+            _lvl, _basis = _level_from_red_line(r)
             signals.append({
                 'priority': 2, 'category': r['id'],
+                'level': _lvl, 'level_basis': _basis,
                 'short_text': f"Approaching: {r['category']}",
                 'long_text': f"{r['description']} Early signals present ({r['hits']}), below "
                              'breach threshold.',
@@ -1057,7 +1180,7 @@ def _build_top_signals(red_lines, green_lines, corridor, russia, china, domestic
         })
 
     signals.sort(key=lambda s: s['priority'])
-    return signals[:8]
+    return _stamp_levels(signals[:8])
 
 
 # ============================================================
