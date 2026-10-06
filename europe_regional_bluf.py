@@ -1247,86 +1247,123 @@ def _fetch_commodity_pressure_via_proxy(commodity_id):
 
 def _apply_convergence_enrichments_europe(signals):
     """
-    Layer 2 enrichment for Europe BLUF — registry-driven cross-regional convergence.
+    Layer 2 for Europe. Stamps {convergence_id}_active + convergence_states onto
+    published Europe signals so the GPI's Layer 1 can detect a convergence.
 
-    Walks the convergence registry. For any convergence whose `regions` list includes
-    'europe', AND whose commodity is currently at the configured threshold, locate
-    the relevant signal in this region's `signals` list (by theatre or commodity tag)
-    and stamp the {convergence_id}_active flag onto it.
+    v3.5.0 (Oct 6 2026) -- REPLACES EUROPE'S OWN THIRD IMPLEMENTATION.
 
-    This mirrors the ME BLUF Layer 2 enrichment pattern. The downstream effect:
-      - GPI's _detect_convergences_from_registry sees the flag on the Europe signal
-      - Cross-regional convergences emit Tier-1 narratives in GPI
-      - Adding a new Europe-relevant convergence is zero code change here
+    Until now this backend carried its own Layer 2, written region-keyed. It
+    walked every registry entry whose `regions` list mentioned europe, and began
+    with:
 
-    Architecture note: commodity state is fetched via commodity_proxy_europe
-    (which round-trips to ME backend over HTTP). This keeps commodity_tracker
-    as the single source of truth on the ME backend.
-
-    Mutates `signals` in place; returns the list for convenience.
-    """
-    try:
-        from convergence_registry import (
-            CONVERGENCE_REGISTRY,
-            alert_meets_threshold,
-            format_enrichment_text,
-        )
-    except ImportError:
-        # convergence_registry not deployed to Europe backend yet — silent no-op
-        return signals
-
-    for entry in CONVERGENCE_REGISTRY:
-        # Only process convergences whose region list includes Europe
-        regions = entry.get('regions', [])
-        if 'europe' not in regions:
-            continue
-
-        # Check current commodity state via Europe backend's proxy module
         commodity_id = entry.get('commodity')
         if not commodity_id:
             continue
-        cs = _fetch_commodity_pressure_via_proxy(commodity_id)
-        if not cs:
+
+    That single line is why Europe's ONE own-region convergence has never fired.
+    `arms_trade_realignment` is regime-axis -- its commodity is None -- so the
+    loop skipped it every cycle since May without a word in the log.
+
+    It is now the shared `convergence_layer2`, deployed byte-identical to the ME,
+    Asia and Europe backends. Two gates: commodity threshold where the entry
+    names a commodity, trigger-signal level where it does not.
+
+    WHAT THIS DELIBERATELY DOES NOT DO
+    ----------------------------------
+    The old function also tried to stamp OTHER regions' convergences (ME's wheat
+    entries, Africa's diamonds) onto a Europe signal, as a fallback for the GPI
+    in case ME's BLUF went stale. That path could never run, for three
+    independent reasons:
+
+      1. convergence_registry has never been deployed to this backend, so the
+         import at the top of the old function raised ImportError and the whole
+         function returned unchanged -- every cycle, silently, since May.
+      2. It looked for a signal whose category contains the word 'commodity'.
+         Europe emits no such category. Its vocabulary is theatre_active,
+         theatre_high, red_line_breached, nuclear_signaling, us_pressure_high,
+         green_line_active, diplomatic_track_active, arctic_convergence.
+      3. The commodity proxy's ANCHOR_TARGETS has no entry for diamonds, so the
+         one non-wheat cross-regional entry could not have been read either.
+
+    Rebuilding a stamping path that has no signal to stamp would be inventing a
+    reading. So the fallback is now an AUDIT: every cycle it reports, by name,
+    which cross-regional entries Europe cannot carry and why. If a Europe tracker
+    ever starts emitting a commodity-tagged signal, the report says so on the
+    first scan and the path can be built then, against something real.
+
+    Mutates `signals` in place. Returns the Layer 2 report (or None), which
+    build_regional_bluf publishes on the payload -- because a report that exists
+    only on stdout is a report Render can drop.
+    """
+    try:
+        from convergence_layer2 import enrich_signals, log_report
+    except ImportError:
+        print('[Europe BLUF] convergence_layer2 not deployed -- no convergence '
+              'flags set this cycle. Europe registry entries cannot fire until '
+              'it is, and neither can the GPI narratives that read them.')
+        return None
+
+    try:
+        report = enrich_signals(
+            signals, 'europe',
+            commodity_fetch=_fetch_commodity_pressure_via_proxy,
+            redis_get=_redis_get, redis_set=_redis_set,
+        )
+        report['cross_regional_audit'] = _cross_regional_audit_europe(signals)
+        log_report(report, 'Europe BLUF Layer2')
+        for row in report['cross_regional_audit']:
+            print('[Europe BLUF Layer2]   xreg   %-34s %s'
+                  % (row['id'], row['reason']))
+        return report
+    except Exception as _l2_err:
+        print('[Europe BLUF] Layer 2 error (non-fatal): %s' % str(_l2_err)[:200])
+        return None
+
+
+def _cross_regional_audit_europe(signals):
+    """Report-only. Which OTHER regions' convergences could Europe carry as a
+    GPI fallback, and what is stopping each one?
+
+    Stamps nothing. The GPI's Layer 1 walks [trigger_region] + regions[] and
+    takes the first region carrying the flag, so a Europe stamp only ever
+    matters when the primary region's BLUF is missing. That is worth having --
+    but only against a real signal. This names the gap instead of filling it
+    with a guess.
+    """
+    rows = []
+    try:
+        from convergence_registry import CONVERGENCE_REGISTRY
+    except ImportError:
+        return rows
+
+    has_commodity_signal = any(
+        isinstance(s, dict) and 'commodity' in (s.get('category') or '').lower()
+        for s in (signals or [])
+    )
+    for entry in CONVERGENCE_REGISTRY:
+        if entry.get('trigger_region') == 'europe':
+            continue                    # own-region: handled by the real gate above
+        if 'europe' not in (entry.get('regions') or []):
             continue
-        if not alert_meets_threshold(cs['alert_level'], entry.get('commodity_threshold', 'elevated')):
-            continue
-
-        # Find the Europe-side signal that should carry the flag.
-        # Strategy: prefer a commodity signal from the source-side theatre (e.g.
-        # ukraine for wheat). If none, fall back to ANY commodity-tagged signal.
-        # If still none, no Europe signal to enrich — convergence will still be
-        # detected via ME side (this is belt-and-suspenders cross-regional).
-        target_signal = None
-        for sig in signals:
-            cat = (sig.get('category') or '').lower()
-            if 'commodity' in cat:
-                # Prefer signal from ukraine (the Black Sea source)
-                if sig.get('theatre') == 'ukraine':
-                    target_signal = sig
-                    break
-                # Otherwise hold onto first commodity signal as fallback
-                if target_signal is None:
-                    target_signal = sig
-
-        if not target_signal:
-            continue
-
-        # Stamp the flag and convergence state for GPI
-        active_flag = f'{entry["id"]}_active'
-        target_signal[active_flag] = True
-        states = target_signal.setdefault('convergence_states', {})
-        states[entry['id']] = {
-            'alert_level':  cs['alert_level'],
-            'signal_count': cs['signal_count'],
-        }
-        # Append enrichment text to long_text for display
-        enrichment = format_enrichment_text(entry, cs['alert_level'], cs['signal_count'])
-        existing_long = target_signal.get('long_text', '') or target_signal.get('short_text', '')
-        target_signal['long_text'] = (existing_long + ' ' + enrichment).strip()
-        print(f'[Europe BLUF] Convergence stamped: {entry["id"]} on signal {target_signal.get("category")} '
-              f'(theatre={target_signal.get("theatre")}, commodity={commodity_id}, alert={cs["alert_level"]})')
-
-    return signals
+        eid = entry.get('id') or '?'
+        if not entry.get('commodity'):
+            rows.append({'id': eid, 'reason': 'regime_axis_no_europe_proxy',
+                         'note': ('Regime-axis entry. Its trigger category is '
+                                  'published in %s, not here, and there is no '
+                                  'Europe-side proxy for it.'
+                                  % entry.get('trigger_region'))})
+        elif not has_commodity_signal:
+            rows.append({'id': eid, 'reason': 'no_europe_commodity_signal',
+                         'commodity': entry.get('commodity'),
+                         'note': ('Europe publishes no commodity-tagged signal '
+                                  'to carry the flag. Not quiet -- no carrier.')})
+        else:
+            rows.append({'id': eid, 'reason': 'carrier_available_not_wired',
+                         'commodity': entry.get('commodity'),
+                         'note': ('A Europe commodity signal now exists. The '
+                                  'cross-regional fallback can be built against '
+                                  'it -- it is deliberately not stamped yet.')})
+    return rows
 
 
 def _build_signals(posture, trackers):
@@ -1363,13 +1400,13 @@ def _build_signals(posture, trackers):
                               f'Russia exploiting US-Denmark friction; classic GIUK pressure window.',
             })
 
-    # Layer 2: Apply cross-regional convergence enrichments from CONVERGENCE_REGISTRY.
-    # This stamps {convergence_id}_active flags onto Europe-side signals (typically the
-    # Ukraine commodity signal) when the Europe side of a registered convergence is
-    # active. GPI detector reads the flag and emits a Tier-1 narrative.
-    # Architecture: commodity state is fetched via commodity_proxy_europe (HTTP to ME
-    # backend). Single source of truth for commodity data stays on ME backend.
-    all_signals = _apply_convergence_enrichments_europe(all_signals)
+    # v3.5.0 (Oct 6 2026) -- LAYER 2 MOVED OUT OF THIS FUNCTION.
+    # It used to run HERE, before the sort/dedupe/quota below. A signal stamped
+    # with a convergence flag could then be dropped by the per-theatre quota a
+    # few lines down, and the flag went with it -- the GPI was left looking for a
+    # flag on a signal that was never published. Layer 2 now runs in
+    # build_regional_bluf against the list this function RETURNS, so what gets
+    # stamped is what gets published.
 
     # Sort + dedupe with per-theatre quota (v2.4.0 May 21 2026)
     # Per-tracker quota: max MAX_PER_THEATRE signals per country tracker.
@@ -1474,6 +1511,13 @@ def build_regional_bluf(force=False):
         posture     = _determine_regional_posture(trackers)
         bluf        = _build_bluf_prose(posture, trackers)
         all_signals = _build_signals(posture, trackers)            # v2.3.0: full pool
+
+        # ── LAYER 2 (v3.5.0 Oct 6 2026) ──────────────────────────────────
+        # Runs on the published pool, before the display cap, so a convergence
+        # can be triggered by a signal that does not make the top twelve.
+        # Mutates all_signals in place and hands back the report.
+        _l2 = _apply_convergence_enrichments_europe(all_signals)
+
         top_signals = all_signals[:TOP_SIGNALS_COUNT]                # v2.3.0: capped for display
 
         trackers_live = len(trackers)
@@ -1536,9 +1580,13 @@ def build_regional_bluf(force=False):
             'trackers_missing':   trackers_missing,  # B: no live AND no last-known-good
             'picture_complete':   (len(trackers_missing) == 0),
             'convergence_panel':  _build_convergence_panel(),
+            # v3.5.0 -- the Layer 2 report rides the payload, not just stdout.
+            # Render has been observed dropping log lines emitted in the same
+            # millisecond; a diagnostic you cannot rely on reading is not one.
+            'layer2':             _l2,
             'theatre_summary':    theatre_summary,
             'generated_at':       datetime.now(timezone.utc).isoformat(),
-            'version':            '3.4.0',
+            'version':            '3.5.0',
             'methodology_note':   (
                 'How to read this: country scores are rhetoric-signal '
                 'composites -- weighted volume and severity of classified '
@@ -1552,7 +1600,7 @@ def build_regional_bluf(force=False):
 
         _bluf_ttl = BLUF_INCOMPLETE_TTL if (trackers_missing or trackers_stale) else BLUF_CACHE_TTL
         _redis_set(BLUF_CACHE_KEY, result, ttl=_bluf_ttl)
-        print(f"[Europe BLUF v3.4] Built: posture={posture['label']}, "
+        print(f"[Europe BLUF v3.5] Built: posture={posture['label']}, "
               f"max_level=L{posture['peak_level']}, "
               f"breached={posture['breached_count']}, "
               f"signals={len(top_signals)}, "
