@@ -342,6 +342,18 @@ RUSSIA_CHANNELS = [
     'meduzaio',            # Meduza — independent Russian journalism
     'nexta_tv',            # NEXTA — Belarus/Russia opposition
     'currenttime',         # Current Time — RFE/RL Russian service
+    # ── v2.1.0 (Oct 6 2026) ───────────────────────────────────────
+    # RageIntel was in CHANNEL_META and in UKRAINE_CHANNELS but NOT here, so
+    # the Russia tracker never saw a message from it. Added during the Irkutsk
+    # plague event, where the Telegram and social read ran roughly a day ahead
+    # of the wires: Central Asian border tightening was circulating there
+    # before Reuters, Pravda.ru and Greek City Times carried it on Oct 6.
+    #
+    # It is tier 'aggregator' in CHANNEL_META and that tier travels with every
+    # message as source_tier. Fast is not the same as corroborated, and the
+    # consumer is expected to say "RageIntel reports X", never "X".
+    'RageIntel',           # Combat/breaking OSINT -- EARLY, tier=aggregator
+    'HMIntelligence',      # (already present below; kept for the health axis)
     # ── Nuclear / strategic ───────────────────────────────────────
     'nuclearsecrecy',      # Nuclear Secrecy — arms control signals
     # ── Arctic / NATO flank ───────────────────────────────────────
@@ -869,6 +881,30 @@ async def _async_fetch_messages(channels, hours_back=24):
 
         # v2.0.0: deduplicate case-insensitively -- Telegram handles are not
         # case-sensitive, so 'RageIntel' and 'rageintel' are one channel.
+        # v2.1.0 (Oct 6 2026) -- NORMALISE THE ENTRY SHAPE FIRST.
+        # Every list here is a list of handle STRINGS except MOLDOVA_CHANNELS,
+        # which is a list of (handle, weight, note) tuples. A tuple has no
+        # .lower(), so the dedupe below raised AttributeError, the outer
+        # handler caught it, and fetch_moldova_telegram_signals returned []
+        # EVERY SCAN while printing "Connection error" -- a dead pipe
+        # reporting itself as a network problem. The weight and note are
+        # carried through rather than discarded, so a caller can use them.
+        norm, _weights, _notes = [], {}, {}
+        for _ch in (channels or []):
+            if isinstance(_ch, (tuple, list)):
+                if not _ch:
+                    continue
+                _h = str(_ch[0])
+                if len(_ch) > 1:
+                    _weights[_h] = _ch[1]
+                if len(_ch) > 2:
+                    _notes[_h] = _ch[2]
+            else:
+                _h = str(_ch)
+            if _h:
+                norm.append(_h)
+        channels = norm
+
         seen = set()
         unique_channels = []
         for _ch in channels:
@@ -916,6 +952,11 @@ async def _async_fetch_messages(channels, hours_back=24):
                             'channel': channel,
                             'source_tier': _meta['tier'],
                             'source_lang': _meta['lang'],
+                            # v2.1.0 -- present only for lists that declare one
+                            # (Moldova today). None means "no weight declared",
+                            # never "weight zero".
+                            'source_weight': _weights.get(channel),
+                            'channel_note': _notes.get(channel),
                         })
                         channel_count += 1
 
