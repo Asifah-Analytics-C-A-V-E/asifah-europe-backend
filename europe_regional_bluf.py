@@ -532,9 +532,30 @@ def _normalize_tracker_data(theatre, raw_data):
     # Convert to integer level using canonical map.
     ALERT_TO_LEVEL = {'normal': 0, 'elevated': 1, 'high': 2, 'critical': 4}
     alert_level_str = (raw_data.get('alert_level') or '').lower()
-    threat = _safe_int(raw_data.get('theatre_level',
-                       raw_data.get('overall_level',
-                       raw_data.get('threat_level', 0))))
+    # ════════════════════════════════════════════════════
+    # v3.5.3 (Oct 6 2026) -- PREFER A TRACKER'S PLATFORM TRANSLATION.
+    #
+    # This function reads an integer off a tracker payload and then labels it
+    # from ESCALATION_LABELS, where 5 = "Active Conflict". That assumes every
+    # tracker's integers are rungs on THIS ladder. They are not.
+    #
+    # rhetoric_tracker_greece runs its own six-rung ladder whose 5 is RUPTURE --
+    # "detente collapse, ambassadorial recall". On 6 Oct 2026 that 5 arrived
+    # here, got labelled from this table, and the BLUF published
+    # "Greece -- active war footing (L5)". Greece was not at war.
+    #
+    # A tracker that publishes `theatre_level_platform` has done the translation
+    # itself, at the only place that knows what its own rungs mean. Read that
+    # when it is offered. Trackers that do not publish one are unchanged, so
+    # this is additive and no other tracker is touched.
+    # ════════════════════════════════════════════════════
+    _plat = raw_data.get('theatre_level_platform')
+    if _plat is not None:
+        threat = _safe_int(_plat)
+    else:
+        threat = _safe_int(raw_data.get('theatre_level',
+                           raw_data.get('overall_level',
+                           raw_data.get('threat_level', 0))))
     if threat == 0 and alert_level_str in ALERT_TO_LEVEL:
         threat = ALERT_TO_LEVEL[alert_level_str]
 
@@ -544,8 +565,16 @@ def _normalize_tracker_data(theatre, raw_data):
     # regional rollup does not under-read breadth. Two field names exist:
     # peak_wheel_level (four-wheel tracker, Azerbaijan) and peak_vector_level
     # (dual-panel spokes, Greece). Read both; absent -> 0 -> no-op.
-    peak = max(_safe_int(raw_data.get('peak_wheel_level', 0)),
-               _safe_int(raw_data.get('peak_vector_level', 0)))
+    # v3.5.3 -- same rule for the peak: a published platform translation wins
+    # over the native rung. `peak_vector_level_platform` is what Greece now
+    # emits; everything else falls through to the native fields unchanged.
+    _peak_plat = raw_data.get('peak_vector_level_platform')
+    if _peak_plat is not None:
+        peak = max(_safe_int(raw_data.get('peak_wheel_level', 0)),
+                   _safe_int(_peak_plat))
+    else:
+        peak = max(_safe_int(raw_data.get('peak_wheel_level', 0)),
+                   _safe_int(raw_data.get('peak_vector_level', 0)))
 
     # Most spokes never emit either field -- Kazakhstan does not, and its
     # composite read L0 while its domestic tripwire chain sat at 2/3 SIMMERING
@@ -1735,7 +1764,7 @@ def build_regional_bluf(force=False):
             'layer2':             _l2,
             'theatre_summary':    theatre_summary,
             'generated_at':       datetime.now(timezone.utc).isoformat(),
-            'version':            '3.5.2',
+            'version':            '3.5.3',
             'methodology_note':   (
                 'How to read this: country scores are rhetoric-signal '
                 'composites -- weighted volume and severity of classified '
@@ -1749,7 +1778,7 @@ def build_regional_bluf(force=False):
 
         _bluf_ttl = BLUF_INCOMPLETE_TTL if (trackers_missing or trackers_stale) else BLUF_CACHE_TTL
         _redis_set(BLUF_CACHE_KEY, result, ttl=_bluf_ttl)
-        print(f"[Europe BLUF v3.5.2] Built: posture={posture['label']}, "
+        print(f"[Europe BLUF v3.5.3] Built: posture={posture['label']}, "
               f"max_level=L{posture['peak_level']}, "
               f"breached={posture['breached_count']}, "
               f"signals={len(top_signals)}, "

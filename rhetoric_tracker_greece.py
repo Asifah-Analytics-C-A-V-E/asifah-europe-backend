@@ -119,6 +119,70 @@ ESCALATION_LEVELS = {
 }
 
 
+# ════════════════════════════════════════════════════════════
+# PLATFORM TRANSLATION  (v1.1.0, Oct 6 2026)
+#
+# THE BUG THIS EXISTS TO STOP: on 6 Oct 2026 the Europe BLUF rendered
+# "Greece -- active war footing (L5)". Greece was not at war.
+#
+# europe_regional_bluf line ~548 does:
+#     threat = max(threat, _safe_int(raw_data.get('peak_vector_level', 0)))
+# and then labels it from ITS ladder, where 5 = "Active Conflict".
+#
+# This tracker's 5 is RUPTURE: "detente collapse, ambassadorial recall". The
+# integer crossed the backend boundary; the meaning did not.
+#
+# TRANSLATE AT THE EMITTER. This tracker is the only module that knows what its
+# own rungs mean, so it is the only honest place to convert them. Consumers read
+# `*_platform` and never have to know this ladder exists.
+#
+# NOTE THE CAP: severity_canon maps BOTH rung 4 and rung 5 to platform 4,
+# because rung 5 conflates kinetic action with diplomatic rupture and this
+# tracker has no sensor that separates them. It therefore cannot assert ACTIVE
+# CONFLICT. That is filed in severity_canon.PENDING_RULINGS for Rachel.
+# ════════════════════════════════════════════════════════════
+GREECE_LADDER_ID = 'greece_vector_band'
+
+# Local fallback, used ONLY when severity_canon is not deployed on this backend.
+# Identical to the canon table by construction; if the two ever disagree the
+# canon wins and the basis says which was used.
+_LOCAL_TO_PLATFORM = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 4}
+
+try:
+    import severity_canon as _CANON
+    CANON_AVAILABLE = True
+except ImportError:
+    CANON_AVAILABLE = False
+    print('[Greece Rhetoric] severity_canon not deployed -- platform levels use the '
+          'local fallback table. Deploy severity_canon.py to this backend.')
+
+
+def _to_platform_level(native_level):
+    """Greece rung -> platform level. Returns (level, basis).
+
+    basis says WHERE the answer came from, so a reader can tell a canon ruling
+    from a local fallback from a failure. Never silently returns a number whose
+    provenance is unknown.
+    """
+    try:
+        native_level = int(native_level)
+    except (TypeError, ValueError):
+        return None, 'unreadable_native_level'
+    word = (ESCALATION_LEVELS.get(native_level, {}) or {}).get('label', '').lower()
+    if CANON_AVAILABLE and word:
+        try:
+            lvl = _CANON.to_platform(GREECE_LADDER_ID, word)
+            if lvl is not None:
+                return int(lvl), 'severity_canon:%s' % GREECE_LADDER_ID
+        except Exception:
+            pass
+    lvl = _LOCAL_TO_PLATFORM.get(native_level)
+    if lvl is None:
+        # An unknown rung is NOT a zero. Say so and let the caller decide.
+        return None, 'unknown_rung'
+    return lvl, 'local_fallback_table'
+
+
 # ============================================
 # ACTORS (six vectors -- 3 PRESSURES + 3 ANCHORS)
 # ============================================
@@ -535,16 +599,50 @@ def _score_actor(actor_id, actor_cfg, articles, telegram_msgs):
     hits.sort(key=_evidence_rank)
 
     tg_hits = 0
+    tg_msgs_matched = 0
     for msg in telegram_msgs:
         body = (msg.get('title', '') or msg.get('body', '')).lower()
         matched = [kw for kw in keywords if _kw_in_body(kw, body)]
         if matched:
             tg_hits += len(matched)
+            tg_msgs_matched += 1
             hit_count += len(matched)
 
     baseline  = actor_cfg.get('baseline_statements_per_week', 10)
     weight    = actor_cfg.get('weight', 1.0)
-    raw_score = min(100, int((hit_count / max(baseline, 1)) * 25 * weight))
+
+    # ═══════════════════════════════════════════════════════
+    # v1.1.0 (Oct 6 2026) -- THE UNIT BUG.
+    #
+    # The denominator is `baseline_statements_per_week` -- it counts STATEMENTS.
+    # The numerator was `hit_count`, which counts KEYWORD MATCHES. Numerator and
+    # denominator were in different units, and nothing said so.
+    #
+    # turkey_axis carries 59 keywords. One ordinary diplomacy story -- "Greece and
+    # Turkey discuss Aegean EEZ and continental shelf; Mitsotakis and Erdogan to
+    # meet on maritime delimitation" -- matches five of them. At baseline 14 and
+    # weight 1.4 the formula is raw = hits x 2.5, so SEVEN routine articles
+    # reached raw 85 and rung 5, which this tracker calls RUPTURE and the Europe
+    # BLUF printed as "active war footing".
+    #
+    # Worse: the matched phrases in that example are DETENTE vocabulary.
+    # 'mitsotakis erdogan' appears in BOTH this actor's keywords and
+    # DIPLOMATIC_KEYWORDS, so coverage of the two leaders meeting drove the
+    # reading that their relationship had ruptured.
+    #
+    # The fix is the unit, not the threshold: count the STATEMENTS the baseline
+    # was always written against. Keyword volume stays reported as
+    # `keyword_hits` and `keyword_density`, because it is useful -- it just is
+    # not the level.
+    #
+    # THIS CHANGES EVERY HISTORICAL LEVEL THIS TRACKER HAS EMITTED. The old
+    # series was measuring something else; `rhetoric:greece:history` before
+    # 6 Oct 2026 is not comparable with what comes after, and that is a real
+    # cost of the fix rather than a reason to keep the bug.
+    # ═══════════════════════════════════════════════════════
+    statement_count = len(hits) + tg_msgs_matched
+    raw_score = min(100, int((statement_count / max(baseline, 1)) * 25 * weight))
+    keyword_density = round(hit_count / max(statement_count, 1), 2)
 
     if raw_score >= 85:   level = 5
     elif raw_score >= 65: level = 4
@@ -554,6 +652,13 @@ def _score_actor(actor_id, actor_cfg, articles, telegram_msgs):
     else:                 level = 0
 
     level_info = ESCALATION_LEVELS[level]
+
+    # v1.1.0 -- the PLATFORM translation, made at the emitter.
+    # This tracker's integers are rungs on ITS OWN ladder. Translating here means
+    # no consumer has to know that, and no consumer can get it wrong by reading
+    # the raw number -- which is exactly what the Europe BLUF did.
+    platform_level, platform_basis = _to_platform_level(level)
+
     return {
         'actor':            actor_id,
         'name':             actor_cfg['name'],
@@ -569,6 +674,15 @@ def _score_actor(actor_id, actor_cfg, articles, telegram_msgs):
         'article_hits':     len(hits),
         'keyword_hits':     hit_count,
         'telegram_hits':    tg_hits,
+        # v1.1.0 -- the measured unit, named so nobody confuses it with the
+        # keyword count again.
+        'statement_count':  statement_count,
+        'keyword_density':  keyword_density,
+        # v1.1.0 -- native rung PLUS its platform translation, never one alone.
+        'level_native':     level,
+        'level_ladder':     'greece_vector_band',
+        'platform_level':   platform_level,
+        'platform_basis':   platform_basis,
         'top_articles':     hits[:5],
     }
 
@@ -714,6 +828,13 @@ def _compute_composite(actor_scores, military, migration, diplomatic):
     peak_vector_level = max(levels.values()) if levels else 0
     peak_vector = max(levels, key=lambda k: levels[k]) if levels else None
 
+    # v1.1.0 -- the platform translations. Published ALONGSIDE the native
+    # readings, never instead of them: this tracker's own page is internally
+    # consistent on its own ladder and stays that way.
+    peak_platform, peak_basis = _to_platform_level(peak_vector_level)
+    theatre_platform, theatre_basis = _to_platform_level(theatre_level)
+    platform_capped = (peak_vector_level == 5 and peak_platform == 4)
+
     # Active pressure / anchor stacking
     active_pressures = [v for v in PRESSURE_VECTORS if levels[v] >= 2]
     active_anchors   = [v for v in ANCHOR_VECTORS if levels[v] >= 2]
@@ -771,6 +892,24 @@ def _compute_composite(actor_scores, military, migration, diplomatic):
         # Hottest single vector -- regional rollup reads this when composite dilutes
         'peak_vector_level':        peak_vector_level,
         'peak_vector':              peak_vector,
+        # ── v1.1.0 PLATFORM CONTRACT ──
+        # Consumers on the platform ladder (Europe BLUF, GPI) read these.
+        # The *_native fields are this tracker's own ladder and are for this
+        # tracker's own page.
+        'peak_vector_level_platform':    peak_platform,
+        'peak_vector_level_native':      peak_vector_level,
+        'theatre_level_platform':        theatre_platform,
+        'theatre_level_native':          theatre_level,
+        'platform_level_basis':          peak_basis,
+        'platform_ladder':               GREECE_LADDER_ID,
+        # True when a native RUPTURE reading was held at platform Coercion
+        # because this ladder cannot tell kinetic from diplomatic. Surfaced so
+        # the cap is visible rather than silent.
+        'platform_level_capped':         platform_capped,
+        'platform_cap_note': ('Native rung 5 (RUPTURE) is capped at platform 4 (Coercion): '
+                              'this ladder conflates kinetic action with diplomatic rupture '
+                              'and has no sensor that separates them, so it does not assert '
+                              'ACTIVE CONFLICT.') if platform_capped else '',
         # Panel stacking
         'active_pressures':         active_pressures,
         'active_anchors':           active_anchors,
@@ -850,7 +989,7 @@ def run_greece_rhetoric_scan(days=5):
     result = {
         'success':               True,
         'theatre':               'Greece',
-        'version':               '1.0.0',
+        'version':               '1.1.0',
         'timestamp':             now,
         'scanned_at':            now,
         'scan_duration_seconds': elapsed,
