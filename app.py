@@ -2586,39 +2586,24 @@ def get_rate_limit_info():
 # ========================================
 # NEWS API FUNCTIONS
 # ========================================
-def fetch_newsapi_articles(query, days=7, language='en'):
-    """Fetch articles from NewsAPI"""
-    if not NEWSAPI_KEY:
-        print("[Europe v1.1] NewsAPI: No API key configured")
+# ── NewsAPI via the shared newsapi_gateway (Oct 18 2026) ──────────────
+# A FALLBACK, not a feed: real requests only when GDELT is blind (or have=
+# says this scan is thin); 24h cache; one 100/day key budgeted across all
+# five backends. [] is never "no news" -- the reason is in the log and at
+# GET /api/newsapi/health. Key: NEWSAPI_GATEWAY_KEY (NEWSAPI_KEY retired).
+try:
+    from newsapi_gateway import newsapi_fetch as _napi_fetch, register_newsapi_routes
+    register_newsapi_routes(app)
+except ImportError:
+    _napi_fetch = None
+    print("[Europe v1.1] newsapi_gateway missing -- NewsAPI off (no direct fallback, by design)")
+
+def fetch_newsapi_articles(query, days=7, language='en', label=None, have=None):
+    """NewsAPI through the gateway. NewsAPI-native dicts."""
+    if _napi_fetch is None:
         return []
-
-    from_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-
-    url = "https://newsapi.org/v2/everything"
-    params = {
-        'q': query,
-        'from': from_date,
-        'sortBy': 'publishedAt',
-        'language': language,
-        'apiKey': NEWSAPI_KEY,
-        'pageSize': 100
-    }
-
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            articles = data.get('articles', [])
-            for article in articles:
-                article['language'] = 'en'
-
-            print(f"[Europe v1.1] NewsAPI: Fetched {len(articles)} articles")
-            return articles
-        print(f"[Europe v1.1] NewsAPI: HTTP {response.status_code}")
-        return []
-    except Exception as e:
-        print(f"[Europe v1.1] NewsAPI error: {e}")
-        return []
+    return _napi_fetch(query, days=days, language=language, page_size=100,
+                       label=label, have=have, prefix='europe')
 
 
 # ── Shared GDELT gateway (Jul 23 2026) ────────────────────────────────
