@@ -449,63 +449,10 @@ def cache_clear(key=None):
 # ========================================
 # REDIS NOTAM CACHE (persistent across deploys)
 # ========================================
-def load_notam_cache_redis():
-    """Load NOTAM cache from Upstash Redis."""
-    if UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN:
-        try:
-            resp = requests.get(
-                f"{UPSTASH_REDIS_URL}/get/{NOTAM_REDIS_KEY}",
-                headers={"Authorization": f"Bearer {UPSTASH_REDIS_TOKEN}"},
-                timeout=5
-            )
-            data = resp.json()
-            if data.get("result"):
-                cache = json.loads(data["result"])
-                print(f"[NOTAM Cache] Loaded from Redis (cached_at: {cache.get('cached_at', 'unknown')})")
-                return cache
-        except Exception as e:
-            print(f"[NOTAM Cache] Redis load error: {e}")
-    return None
 
 
-def save_notam_cache_redis(data):
-    """Save NOTAM cache to Upstash Redis."""
-    data['cached_at'] = datetime.now(timezone.utc).isoformat()
-    if UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN:
-        try:
-            payload = json.dumps(data, default=str)
-            resp = requests.post(
-                f"{UPSTASH_REDIS_URL}/set/{NOTAM_REDIS_KEY}",
-                headers={
-                    "Authorization": f"Bearer {UPSTASH_REDIS_TOKEN}",
-                    "Content-Type": "application/json"
-                },
-                json={"value": payload},
-                timeout=10
-            )
-            if resp.status_code == 200:
-                print("[NOTAM Cache] ✅ Saved to Redis")
-            else:
-                print(f"[NOTAM Cache] Redis save HTTP {resp.status_code}")
-        except Exception as e:
-            print(f"[NOTAM Cache] Redis save error: {e}")
 
 
-def is_notam_cache_fresh():
-    """Check if NOTAM Redis cache is still valid (2-hour TTL)."""
-    cached = load_notam_cache_redis()
-    if not cached or 'cached_at' not in cached:
-        return False, None
-    try:
-        cached_at = datetime.fromisoformat(cached['cached_at'])
-        age = (datetime.now(timezone.utc) - cached_at).total_seconds()
-        if age < NOTAM_CACHE_TTL:
-            print(f"[NOTAM Cache] Fresh ({age/60:.0f}min old)")
-            return True, cached
-        print(f"[NOTAM Cache] Stale ({age/60:.0f}min old)")
-        return False, cached
-    except:
-        return False, None
 
 # ========================================
 # REDIS FLIGHT CACHE (persistent across deploys)
@@ -667,22 +614,7 @@ def _refresh_all_caches():
             # Small delay between targets to avoid hammering APIs
             time.sleep(5)
 
-        # Refresh NOTAMs (uses Redis + in-memory)
-        try:
-            print("[Background Refresh] Refreshing NOTAMs via FAA...")
-            notam_data = _run_notam_scan()
-            cache_set('notams', notam_data)
-            if notam_data.get('sensed'):
-                print(f"[Background Refresh] ✓ NOTAMs cached "
-                      f"({notam_data.get('total_notams')} critical alerts, "
-                      f"state={notam_data.get('state')})")
-            else:
-                print("[Background Refresh] ⚠ NOTAMs UNKNOWN -- FAA unreachable, "
-                      "cached as unknown rather than zero")
-        except Exception as e:
-            print(f"[Background Refresh] ✗ NOTAMs failed: {e}")
-
-        time.sleep(5)
+        # (Nov 1 2026) NOTAM refresh removed -- airspace_watch.py runs its own loop.
 
         # Refresh flight disruptions (Redis + in-memory)
         try:
@@ -1549,7 +1481,7 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-EUROPE_BACKEND_VERSION = '1.4.1'
+EUROPE_BACKEND_VERSION = '1.5.0'
 
 # v1.4.1 (Oct 3 2026) -- ONE version, ONE User-Agent.
 # Europe was carrying both problems at once. The version: '/' said 1.1.0, the
@@ -1559,6 +1491,23 @@ EUROPE_BACKEND_VERSION = '1.4.1'
 # platform.
 # Both now derive from the line above.
 REDDIT_USER_AGENT = f"AsifahAnalytics-Europe/{EUROPE_BACKEND_VERSION} (OSINT monitoring tool)"
+
+# ── v1.5.0 (Nov 1 2026) public ?force gate ─────────────────────────────
+# ?force=true on a public endpoint ran a live scan for anyone on the internet.
+# Now: one forced rescan per endpoint path per 15 minutes (Upstash SET NX EX).
+# Inside the window the request gets the cache. No Redis -> allowed (fail-open).
+def _public_force_allowed(key):
+    _url = os.environ.get('UPSTASH_REDIS_URL')
+    _tok = os.environ.get('UPSTASH_REDIS_TOKEN')
+    if not (_url and _tok):
+        return True
+    try:
+        _r = requests.get(f"{_url}/set/force_gate:europe:{key.strip('/').replace('/', ':')}/1/NX/EX/900",
+                          headers={'Authorization': f'Bearer {_tok}'}, timeout=4)
+        return _r.json().get('result') == 'OK'
+    except Exception:
+        return True
+
 
 # WATCH AFTER DEPLOY -- Europe is the one to actually watch. Its feeds are
 # Meduza, The Moscow Times, Kyiv Independent, Ukrinform and ISW: exile and
@@ -1570,6 +1519,13 @@ REDDIT_USER_AGENT = f"AsifahAnalytics-Europe/{EUROPE_BACKEND_VERSION} (OSINT mon
 # position you can defend; ten anonymous ones is not.
 EUROPE_USER_AGENT = (f"AsifahAnalytics-Europe/{EUROPE_BACKEND_VERSION} "
                      f"(OSINT monitoring tool; +https://asifahanalytics.com)")
+
+# Nov 1 2026: crawler-form UA for feeds that reject non-browser-looking clients
+# (Meduza and the other independent-Russian-media RSS). Names us truthfully --
+# the convention Googlebot uses -- instead of the spoofed Chrome string that
+# lived at seven call sites. If a feed starts 403-ing, feed_health will say so.
+EUROPE_FEED_USER_AGENT = (f"Mozilla/5.0 (compatible; AsifahAnalytics-Europe/{EUROPE_BACKEND_VERSION}; "
+                          f"+https://asifahanalytics.com)")
 # v1.2.0 (Sep 21 2026) -- per-target Reddit outcome, surfaced on /health.
 # v1.3.0 (Sep 27 2026) -- ALSO written to Redis. This process gets OOM-killed
 # at 512MB every few days (Render events: Sep 23, Sep 26), and an in-memory
@@ -1727,115 +1683,7 @@ ESCALATION_KEYWORDS = [
 # ========================================
 # EUROPEAN NOTAM MONITORING
 # ========================================
-NOTAM_REGIONS = {
-    'albania': {
-        'fir_codes': ['LAAA'],
-        'icao_codes': ['LATI'],
-        'display_name': 'Albania',
-        'flag': '🇦🇱'
-    },
-    'belgium': {
-        'fir_codes': ['EBBU'],
-        'icao_codes': ['EBBR', 'EBAW', 'EBCI', 'EBLG', 'EBOS'],
-        'display_name': 'Belgium',
-        'flag': '🇧🇪'
-    },
-    'ukraine': {
-        'fir_codes': ['UKBV', 'UKDV', 'UKLV', 'UKFV', 'UKOV'],
-        'icao_codes': ['UKBB', 'UKKK', 'UKLL', 'UKOO', 'UKDD', 'UKFF'],
-        'display_name': 'Ukraine',
-        'flag': '🇺🇦'
-    },
-    'poland': {
-        'fir_codes': ['EPWW'],
-        'icao_codes': ['EPWA', 'EPKK', 'EPGD', 'EPWR', 'EPKT', 'EPPO'],
-        'display_name': 'Poland',
-        'flag': '🇵🇱'
-    },
-    'moldova': {
-        # Chisinau FIR closures/restrictions are a live Transnistria-proximity
-        # signal (Moldova has repeatedly closed airspace during missile transits
-        # and drone incidents). LUKK = Chisinau International.
-        'fir_codes': ['LUUU'],
-        'icao_codes': ['LUKK'],
-        'display_name': 'Moldova',
-        'flag': '🇲🇩'
-    },
-    'russia_west': {
-        'fir_codes': ['UUWV', 'ULLL', 'UMKK'],
-        'icao_codes': ['UUEE', 'UUDD', 'ULLI', 'UMKK'],
-        'display_name': 'Western Russia',
-        'flag': '🇷🇺'
-    },
-    'baltic': {
-        'fir_codes': ['EYVL', 'EVRR', 'EETT'],
-        'icao_codes': ['EYVI', 'EVRA', 'EETN'],
-        'display_name': 'Baltic States',
-        'flag': '🇪🇺'
-    },
-    'greenland': {
-        'fir_codes': ['BGGL'],
-        'icao_codes': ['BGBW', 'BGSF', 'BGKK'],
-        'display_name': 'Greenland',
-        'flag': '🇬🇱'
-    },
-    'denmark': {
-        'fir_codes': ['EKDK'],
-        'icao_codes': ['EKCH', 'EKBI', 'EKAH'],
-        'display_name': 'Denmark',
-        'flag': '🇩🇰'
-    },
-    'romania': {
-        'fir_codes': ['LRBB'],
-        'icao_codes': ['LROP', 'LRCL'],
-        'display_name': 'Romania',
-        'flag': '🇷🇴'
-    },
-    'moldova': {
-        'fir_codes': ['LUUU'],
-        'icao_codes': ['LUKK'],
-        'display_name': 'Moldova',
-        'flag': '🇲🇩'
-    },
-    'turkey': {
-        'fir_codes': ['LTAA', 'LTBB'],
-        'icao_codes': ['LTBA', 'LTAC', 'LTAI', 'LTBJ', 'LTFE'],
-        'display_name': 'Turkey',
-        'flag': '🇹🇷'
-    },
-    'greece': {
-        'fir_codes': ['LGGG'],
-        'icao_codes': ['LGAV', 'LGTS', 'LGIR', 'LGSA', 'LGKR'],
-        'display_name': 'Greece',
-        'flag': '🇬🇷'
-    },
-    'cyprus': {
-        'fir_codes': ['LCCC'],
-        'icao_codes': ['LCLK', 'LCPH', 'LCRA'],
-        'display_name': 'Cyprus',
-        'flag': '🇨🇾'
-    }
-}
 
-NOTAM_CRITICAL_PATTERNS = [
-    r'AIRSPACE\s+CLOSED',
-    r'PROHIBITED\s+AREA',
-    r'RESTRICTED\s+AREA',
-    r'DANGER\s+AREA',
-    r'NO[-\s]?FLY\s+ZONE',
-    r'MIL(?:ITARY)?\s+(?:EXERCISE|OPS|OPERATIONS)',
-    r'LIVE\s+FIRING',
-    r'MISSILE\s+(?:LAUNCH|TEST|FIRING)',
-    r'UAV|UAS|DRONE|UNMANNED',
-    r'GPS\s+(?:JAMMING|INTERFERENCE|SPOOFING)',
-    r'NAVIGATION\s+(?:WARNING|UNRELIABLE)',
-    r'CONFLICT\s+ZONE',
-    r'HOSTILE\s+(?:ACTIVITY|ENVIRONMENT)',
-    r'ANTI[-\s]?AIRCRAFT',
-    r'SAM\s+(?:SITE|ACTIVITY)',
-    r'NOTAM\s+(?:IMMEDIATE|URGENT)',
-    r'TRIGGER\s+NOTAM'
-]
 
 
 # ========================================
@@ -2263,7 +2111,7 @@ def _get_greenland_military_boost():
         if arctic_signal_count == 0:
             boost = 0
             max_actor_level = 'normal'
-            print(f'[Europe v1.2] Greenland mil: no Arctic-specific signals found — boost suppressed')
+            print('[Europe v1.2] Greenland mil: no Arctic-specific signals found — boost suppressed')
         elif arctic_signal_count < 3 and boost > 3:
             boost = 3
             print(f'[Europe v1.2] Greenland mil: only {arctic_signal_count} Arctic signals — boost dampened to +{boost}')
@@ -2274,38 +2122,6 @@ def _get_greenland_military_boost():
     except Exception as e:
         print(f'[Europe v1.2] Greenland mil boost error: {str(e)[:80]}')
         return 'normal', 0
-    """
-    Read military tracker alert level for a target from Redis.
-    Returns alert_level string ('normal','elevated','high','surge').
-    Falls back to 'normal' gracefully.
-    """
-    try:
-        if not UPSTASH_REDIS_URL or not UPSTASH_REDIS_TOKEN:
-            return 'normal'
-        # Military tracker writes to 'military_cache' key
-        resp = requests.get(
-            f'{UPSTASH_REDIS_URL}/get/military_cache',
-            headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'},
-            timeout=4
-        )
-        result = resp.json().get('result')
-        if not result:
-            return 'normal'
-        data = json.loads(result)
-        actors = data.get('actors', {})
-        # Find the target actor — try exact match then partial
-        actor_data = actors.get(target, {})
-        if not actor_data:
-            for k, v in actors.items():
-                if target in k or k in target:
-                    actor_data = v
-                    break
-        level = actor_data.get('alert_level', 'normal')
-        print(f'[Europe v1.2] Military posture {target}: {level}')
-        return level
-    except Exception as e:
-        print(f'[Europe v1.2] Military posture Redis read error: {str(e)[:80]}')
-        return 'normal'
 
 
 def calculate_threat_probability(articles, days_analyzed=7, target='ukraine'):
@@ -2915,7 +2731,7 @@ def fetch_meduza_rss():
     try:
         print("[Europe v1.1] Meduza: Fetching RSS...")
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': EUROPE_FEED_USER_AGENT
         }
         _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
@@ -2969,7 +2785,7 @@ def fetch_isw_rss():
     try:
         print("[Europe v1.1] ISW: Fetching RSS...")
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': EUROPE_FEED_USER_AGENT
         }
         _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
@@ -3023,7 +2839,7 @@ def fetch_arctic_today_rss():
     try:
         print("[Europe v1.1] Arctic Today: Fetching RSS...")
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': EUROPE_FEED_USER_AGENT
         }
         _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
@@ -3127,7 +2943,7 @@ def fetch_daily_sabah_rss():
 
     try:
         print("[Europe v1.3] Daily Sabah: Fetching RSS...")
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = {'User-Agent': EUROPE_FEED_USER_AGENT}
         _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
@@ -3177,7 +2993,7 @@ def fetch_ukrinform_rss():
 
     try:
         print("[Europe v1.3] Ukrinform: Fetching RSS...")
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = {'User-Agent': EUROPE_FEED_USER_AGENT}
         _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
@@ -3227,7 +3043,7 @@ def fetch_moscow_times_rss():
 
     try:
         print("[Europe v1.3] Moscow Times: Fetching RSS...")
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = {'User-Agent': EUROPE_FEED_USER_AGENT}
         _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
@@ -3280,7 +3096,7 @@ def _fetch_native_rss(feed_url, source_name, language, log_prefix='[Europe v1.4]
     articles = []
     try:
         print(f"{log_prefix} {source_name}: Fetching RSS...")
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = {'User-Agent': EUROPE_FEED_USER_AGENT}
         _t0 = time.time()
         response = requests.get(feed_url, headers=headers, timeout=15)
 
@@ -3509,205 +3325,12 @@ def extract_casualty_data(articles):
 # Replaces Autorouter (HTTP 401 — requires paid Eurocontrol license)
 # ========================================
 
-FAA_NOTAM_URL = "https://notams.aim.faa.gov/notamSearch/search"
 
 
-def fetch_notams_for_region(region_key):
-    """
-    Fetch real NOTAMs from FAA NOTAM Search for a region.
-
-    Returns (notams, probe).
-
-    The probe is what makes this absence-honest. A region that returns zero
-    NOTAMs because the FAA answered "nothing critical here" is NOT the same
-    as a region that returns zero because every request was refused. Without
-    the probe both look identical downstream -- and both read as calm.
-    """
-    region = NOTAM_REGIONS.get(region_key)
-    probe = {'attempted': 0, 'reached': 0, 'failed': 0, 'failures': []}
-    if not region:
-        return [], probe
-
-    notams = []
-    icao_codes = region.get('icao_codes', [])[:3]  # Limit to 3 airports per region
-
-    for code in icao_codes:
-        probe['attempted'] += 1
-        try:
-            payload = {
-                'searchType': 0,
-                'designatorsForLocation': code,
-                'notamType': 'N',
-                'formatType': 1
-            }
-            headers = {
-                'User-Agent': EUROPE_USER_AGENT,
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': 'application/json'
-            }
-
-            print(f"[NOTAM API] Fetching {region_key}/{code} from FAA...")
-            response = requests.post(FAA_NOTAM_URL, data=payload, headers=headers, timeout=15)
-
-            if response.status_code != 200:
-                probe['failed'] += 1
-                probe['failures'].append({'icao': code, 'reason': f'HTTP {response.status_code}'})
-                print(f"[NOTAM API] {code}: HTTP {response.status_code}")
-                continue
-
-            try:
-                data = response.json()
-            except (json.JSONDecodeError, ValueError):
-                probe['failed'] += 1
-                probe['failures'].append({'icao': code, 'reason': 'non-JSON body'})
-                print(f"[NOTAM API] {code}: Non-JSON response, skipping")
-                continue
-
-            # We got a parseable answer from the FAA. Only now is a zero a real zero.
-            probe['reached'] += 1
-            items = data.get('notamList', [])
-            print(f"[NOTAM API] {code}: {len(items)} raw NOTAMs returned")
-
-            for item in items:
-                notam_text = item.get('icaoMessage', '') or item.get('traditionalMessage', '') or ''
-                if not notam_text:
-                    continue
-
-                classification = classify_notam(notam_text.upper())
-                if not classification:
-                    continue  # Skip non-critical NOTAMs
-
-                notams.append({
-                    'region': region_key,
-                    'country': region['display_name'],
-                    'flag': region['flag'],
-                    'type': classification['type'],
-                    'type_color': classification['color'],
-                    'summary': notam_text[:250],
-                    'raw_text': notam_text[:500],
-                    'icao_location': code,
-                    'valid_from': item.get('effectiveStart', ''),
-                    'valid_to': item.get('effectiveEnd', ''),
-                    'icao_codes': region['icao_codes'],
-                    'fir_codes': region['fir_codes'],
-                    'source': 'FAA NOTAM Search',
-                    'source_url': f"https://notams.aim.faa.gov/notamSearch/nsapp.html#/details/{item.get('notamNumber', '')}"
-                })
-
-            time.sleep(1)  # Rate limit courtesy
-
-        except requests.Timeout:
-            probe['failed'] += 1
-            probe['failures'].append({'icao': code, 'reason': 'timeout'})
-            print(f"[NOTAM API] {code}: Timeout")
-        except Exception as e:
-            probe['failed'] += 1
-            probe['failures'].append({'icao': code, 'reason': type(e).__name__})
-            print(f"[NOTAM API] {code}: Error: {str(e)[:150]}")
-
-    if probe['reached'] == 0:
-        print(f"[NOTAM API] {region_key}: NOT SENSED -- {probe['failed']}/{probe['attempted']} "
-              f"requests refused. Missing data, NOT calm airspace.")
-    else:
-        print(f"[NOTAM API] {region_key}: {len(notams)} critical NOTAMs "
-              f"(sensed {probe['reached']}/{probe['attempted']} airports)")
-    return notams, probe
 
 
-def classify_notam(text):
-    """Classify a NOTAM by severity type using pattern matching."""
-    if not text:
-        return None
-
-    text_upper = text.upper()
-
-    # Check against our critical patterns first
-    for pattern in NOTAM_CRITICAL_PATTERNS:
-        if re.search(pattern, text_upper):
-            # Determine specific type
-            if any(kw in text_upper for kw in ['CONFLICT ZONE', 'WAR ZONE', 'HOSTILE', 'ANTI-AIRCRAFT', 'SAM ']):
-                return {'type': 'Conflict Zone', 'color': 'red'}
-            if any(kw in text_upper for kw in ['AIRSPACE CLOSED', 'NO-FLY', 'NO FLY', 'PROHIBITED', 'CLSD']):
-                return {'type': 'Airspace Closure', 'color': 'red'}
-            if any(kw in text_upper for kw in ['MISSILE LAUNCH', 'MISSILE TEST', 'MISSILE FIRING', 'LIVE FIRING']):
-                return {'type': 'Missile/Live Firing', 'color': 'red'}
-            if any(kw in text_upper for kw in ['MIL EXERCISE', 'MILITARY EXERCISE', 'MIL OPS', 'MILITARY OPS', 'MILITARY OPERATIONS']):
-                return {'type': 'Military Exercise', 'color': 'orange'}
-            if any(kw in text_upper for kw in ['GPS JAMMING', 'GPS INTERFERENCE', 'GPS SPOOFING', 'NAV WARNING', 'NAVIGATION UNRELIABLE']):
-                return {'type': 'GPS Interference', 'color': 'yellow'}
-            if any(kw in text_upper for kw in ['DRONE', 'UAV', 'UAS', 'UNMANNED']):
-                return {'type': 'Drone Activity', 'color': 'orange'}
-            if any(kw in text_upper for kw in ['RESTRICTED', 'DANGER AREA', 'TEMPORARY RESTRICTION']):
-                return {'type': 'Restricted Area', 'color': 'yellow'}
-            if any(kw in text_upper for kw in ['TRIGGER', 'URGENT', 'IMMEDIATE']):
-                return {'type': 'Urgent Notice', 'color': 'orange'}
-
-            # Generic match
-            return {'type': 'Airspace Notice', 'color': 'blue'}
-
-    # Additional keyword checks not in the regex patterns
-    if any(kw in text_upper for kw in ['AIRSPACE CLOSED', 'CLSD', 'CLOSED TO ALL']):
-        return {'type': 'Airspace Closure', 'color': 'red'}
-    if any(kw in text_upper for kw in ['MIL', 'MILITARY']) and any(kw in text_upper for kw in ['EXERCISE', 'OPS', 'OPERATIONS', 'ACTIVITY']):
-        return {'type': 'Military Exercise', 'color': 'orange'}
-    if 'DANGER AREA' in text_upper or 'RESTRICTED AREA' in text_upper:
-        return {'type': 'Restricted Area', 'color': 'yellow'}
-
-    return None
 
 
-def scan_all_europe_notams():
-    """
-    Scan NOTAMs for all European regions using real API data.
-
-    Returns (all_notams, coverage). Coverage records how much of the airspace
-    we actually managed to look at, so a caller can tell "nothing is happening"
-    apart from "nobody looked".
-    """
-    all_notams = []
-    coverage = {
-        'regions_total': len(NOTAM_REGIONS),
-        'regions_sensed': 0,
-        'regions_blind': 0,
-        'airports_attempted': 0,
-        'airports_reached': 0,
-        'blind_regions': [],
-        'failures': {},
-    }
-
-    for region_key in NOTAM_REGIONS:
-        try:
-            notams, probe = fetch_notams_for_region(region_key)
-            all_notams.extend(notams)
-        except Exception as e:
-            print(f"[NOTAM API] Scan failed for {region_key}: {e}")
-            probe = {'attempted': 0, 'reached': 0, 'failed': 0,
-                     'failures': [{'icao': '*', 'reason': type(e).__name__}]}
-
-        coverage['airports_attempted'] += probe['attempted']
-        coverage['airports_reached'] += probe['reached']
-        if probe['reached'] > 0:
-            coverage['regions_sensed'] += 1
-        else:
-            coverage['regions_blind'] += 1
-            coverage['blind_regions'].append(region_key)
-        if probe['failures']:
-            coverage['failures'][region_key] = probe['failures']
-
-        time.sleep(1)  # Rate limit courtesy
-
-    # Sort by severity
-    severity_order = {'red': 0, 'orange': 1, 'yellow': 2, 'purple': 3, 'blue': 4, 'gray': 5}
-    all_notams.sort(key=lambda x: severity_order.get(x.get('type_color', 'gray'), 5))
-
-    if coverage['airports_reached'] == 0:
-        print(f"[NOTAM API] BLIND -- 0 of {coverage['airports_attempted']} airport queries "
-              f"were answered. Reporting unknown, not zero.")
-    else:
-        print(f"[NOTAM API] Total critical NOTAMs: {len(all_notams)} "
-              f"(sensed {coverage['airports_reached']}/{coverage['airports_attempted']} airports, "
-              f"{coverage['regions_sensed']}/{coverage['regions_total']} regions)")
-    return all_notams, coverage
 
 
 # ========================================
@@ -3935,7 +3558,7 @@ def _run_travel_advisory_scan():
         'success': True,
         'timestamp': datetime.now(timezone.utc).isoformat(),
         'advisories': results,
-        'version': '1.1.0-europe'
+        'version': f'{EUROPE_BACKEND_VERSION}-europe'
     }
 
 # ========================================
@@ -4532,7 +4155,7 @@ def _run_threat_scan(target, days=7):
         'articles_ro': [a for a in all_articles if a.get('language') == 'ro'][:20],
         'articles_reddit': [a for a in all_articles if a.get('source', {}).get('name', '').startswith('r/')][:20],
         'days_analyzed': days,
-        'version': '1.1.0-europe'
+        'version': f'{EUROPE_BACKEND_VERSION}-europe'
     }
 
     if casualties:
@@ -4547,66 +4170,6 @@ def _run_threat_scan(target, days=7):
     return response_data
 
 
-def _run_notam_scan():
-    """Run a full NOTAM scan with Redis caching. Returns the complete response dict."""
-
-    # Check Redis cache first
-    is_fresh, cached = is_notam_cache_fresh()
-    if is_fresh and cached:
-        cached['cached'] = True
-        cached['cache_source'] = 'redis'
-        return cached
-
-    # Run fresh scan
-    print("[NOTAM Scan] Running fresh NOTAM scan from FAA...")
-    notams, coverage = scan_all_europe_notams()
-
-    # Carry forward when we LAST actually saw the airspace, even if this scan
-    # was blind. "unknown since 14:20Z" is a far more useful claim than "0".
-    last_sensed_at = None
-    if cached:
-        last_sensed_at = cached.get('last_sensed_at') or (
-            cached.get('timestamp') if cached.get('sensed') else None)
-
-    sensed = coverage['airports_reached'] > 0
-    if not sensed:
-        state = 'unknown'
-    elif coverage['regions_blind'] > 0:
-        state = 'partial'
-    else:
-        state = 'scanned'
-
-    if sensed:
-        last_sensed_at = datetime.now(timezone.utc).isoformat()
-
-    result = {
-        'success': True,
-        'timestamp': datetime.now(timezone.utc).isoformat(),
-        # DOCTRINE: when nothing was sensed, total_notams is None -- NOT 0.
-        # A zero here would tell every downstream reader that European
-        # airspace is quiet, when the truth is that nobody got to look.
-        'total_notams': len(notams) if sensed else None,
-        'notams': notams,
-        'sensed': sensed,
-        'state': state,
-        'coverage': coverage,
-        'last_sensed_at': last_sensed_at,
-        'unknown_reason': (None if sensed else
-                           'FAA NOTAM Search refused every request; '
-                           'airspace state is unknown, not clear'),
-        'regions_scanned': list(NOTAM_REGIONS.keys()),
-        'data_source': 'FAA NOTAM Search (notams.aim.faa.gov)',
-        'version': f'{EUROPE_BACKEND_VERSION}-europe',
-        'cached': False
-    }
-
-    # Save to Redis
-    save_notam_cache_redis(result)
-
-    # Also save to in-memory cache
-    cache_set('notams', result)
-
-    return result
 
 
 def _run_flight_scan():
@@ -4723,7 +4286,7 @@ def api_europe_threat(target):
       calls hung for 10 minutes during page load.
     """
     try:
-        force = request.args.get('force', 'false').lower() == 'true'
+        force = (request.args.get('force', 'false').lower() == 'true' and _public_force_allowed(request.path))
         days = int(request.args.get('days', 7))
         if target not in TARGET_KEYWORDS:
             return jsonify({
@@ -4821,7 +4384,7 @@ def api_europe_dashboard():
       manual refresh / admin tooling, not page load).
     """
     try:
-        force = request.args.get('force', 'false').lower() == 'true'
+        force = (request.args.get('force', 'false').lower() == 'true' and _public_force_allowed(request.path))
         days = int(request.args.get('days', 7))
         targets = list(TARGET_KEYWORDS.keys())
 
@@ -4924,57 +4487,13 @@ def api_europe_dashboard():
         }), 500
 
 
-@app.route('/api/europe/notams', methods=['GET'])
-def api_europe_notams():
-    """European NOTAMs endpoint. Redis-cached with ?force=true override."""
-    try:
-        force = request.args.get('force', 'false').lower() == 'true'
-
-        if not force:
-            # Check in-memory first
-            cached = cache_get('notams')
-            if cached:
-                cached['cached'] = True
-                cached['cache_source'] = 'memory'
-                cached['cache_age_seconds'] = int(cache_age('notams') or 0)
-                return jsonify(cached)
-
-            # Check Redis (survives deploys)
-            is_fresh, redis_cached = is_notam_cache_fresh()
-            if is_fresh and redis_cached:
-                redis_cached['cached'] = True
-                redis_cached['cache_source'] = 'redis'
-                cache_set('notams', redis_cached)  # Warm in-memory
-                return jsonify(redis_cached)
-
-        if not check_rate_limit():
-            return jsonify({
-                'error': 'Rate limit exceeded',
-                'rate_limit': get_rate_limit_info()
-            }), 429
-
-        data = _run_notam_scan()
-        return jsonify(data)
-
-    except Exception as e:
-        print(f"Error in /api/europe/notams: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'notams': [],
-            # The scan threw. We know nothing about the airspace -- say so.
-            'total_notams': None,
-            'sensed': False,
-            'state': 'unknown',
-            'unknown_reason': 'NOTAM scan raised an exception; airspace state unknown'
-        }), 500
 
 
 @app.route('/api/europe/flights', methods=['GET'])
 def api_europe_flights():
     """European flight disruptions endpoint. Redis-cached with ?force=true override."""
     try:
-        force = request.args.get('force', 'false').lower() == 'true'
+        force = (request.args.get('force', 'false').lower() == 'true' and _public_force_allowed(request.path))
 
         if not force:
             # Check in-memory first
@@ -5015,7 +4534,7 @@ def api_europe_flights():
 def api_europe_travel_advisories():
     """U.S. State Dept Travel Advisories for European targets. Cached 24h."""
     try:
-        force = request.args.get('force', 'false').lower() == 'true'
+        force = (request.args.get('force', 'false').lower() == 'true' and _public_force_allowed(request.path))
 
         if not force:
             cached = cache_get('travel_advisories')
@@ -5119,7 +4638,7 @@ def api_cache_status():
             'fresh': age is not None and age < CACHE_TTL
         }
 
-    for key in ['notams', 'flights']:
+    for key in ['flights']:   # Nov 1 2026: NOTAMs moved to airspace_watch (/api/airspace/health)
         age = cache_age(key)
         status[key] = {
             'cached': age is not None,
@@ -5178,7 +4697,7 @@ def health():
     """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
-        'version': '1.1.0-europe',
+        'version': f'{EUROPE_BACKEND_VERSION}-europe',
         'region': 'europe',
         'timestamp': datetime.now(timezone.utc).isoformat(),
         # v1.3.0 -- in-memory counters are wiped by every OOM restart, so say
@@ -5428,6 +4947,16 @@ def military_posture_proxy(target):
 # On Render with gunicorn, this runs once per worker.
 start_background_refresh()
 
+
+
+# ── Airspace Watch (shared module, Nov 1 2026) ─────────────────────────
+# Replaces the old FAA NOTAM code (dead: FAA NOTAM website form, HTTP 403). Same file on all five
+# backends; this backend sees only its own regions.
+try:
+    from airspace_watch import register_airspace_endpoints
+    register_airspace_endpoints(app, 'europe', legacy_route='/api/europe/notams')
+except Exception as _e:
+    print(f"[Europe] ⚠️ Airspace Watch unavailable: {_e}")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
