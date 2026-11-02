@@ -387,7 +387,7 @@ NOTAM_CACHE_TTL = 2 * 60 * 60
 UPSTASH_REDIS_URL = os.environ.get('UPSTASH_REDIS_URL')
 UPSTASH_REDIS_TOKEN = os.environ.get('UPSTASH_REDIS_TOKEN')
 NOTAM_REDIS_KEY = 'europe_notam_cache'
-FLIGHT_REDIS_KEY = 'europe_flight_cache'
+# FLIGHT_REDIS_KEY retired Nov 1 2026 -- flight_watch.py uses flights:europe:latest
 FLIGHT_CACHE_TTL = 12 * 60 * 60  # 12 hours
 THREAT_REDIS_PREFIX = 'europe_threat_'  # e.g. europe_threat_turkey_7d
 THREAT_CACHE_TTL = 4 * 60 * 60  # 4 hours
@@ -457,63 +457,10 @@ def cache_clear(key=None):
 # ========================================
 # REDIS FLIGHT CACHE (persistent across deploys)
 # ========================================
-def load_flight_cache_redis():
-    """Load flight cache from Upstash Redis."""
-    if UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN:
-        try:
-            resp = requests.get(
-                f"{UPSTASH_REDIS_URL}/get/{FLIGHT_REDIS_KEY}",
-                headers={"Authorization": f"Bearer {UPSTASH_REDIS_TOKEN}"},
-                timeout=5
-            )
-            data = resp.json()
-            if data.get("result"):
-                cache = json.loads(data["result"])
-                print(f"[Flight Cache] Loaded from Redis (cached_at: {cache.get('cached_at', 'unknown')})")
-                return cache
-        except Exception as e:
-            print(f"[Flight Cache] Redis load error: {e}")
-    return None
 
 
-def save_flight_cache_redis(data):
-    """Save flight cache to Upstash Redis."""
-    data['cached_at'] = datetime.now(timezone.utc).isoformat()
-    if UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN:
-        try:
-            payload = json.dumps(data, default=str)
-            resp = requests.post(
-                f"{UPSTASH_REDIS_URL}/set/{FLIGHT_REDIS_KEY}",
-                headers={
-                    "Authorization": f"Bearer {UPSTASH_REDIS_TOKEN}",
-                    "Content-Type": "application/json"
-                },
-                json={"value": payload},
-                timeout=10
-            )
-            if resp.status_code == 200:
-                print("[Flight Cache] ✅ Saved to Redis")
-            else:
-                print(f"[Flight Cache] Redis save HTTP {resp.status_code}")
-        except Exception as e:
-            print(f"[Flight Cache] Redis save error: {e}")
 
 
-def is_flight_cache_fresh():
-    """Check if flight Redis cache is still valid (12-hour TTL)."""
-    cached = load_flight_cache_redis()
-    if not cached or 'cached_at' not in cached:
-        return False, None
-    try:
-        cached_at = datetime.fromisoformat(cached['cached_at'])
-        age = (datetime.now(timezone.utc) - cached_at).total_seconds()
-        if age < FLIGHT_CACHE_TTL:
-            print(f"[Flight Cache] Fresh ({age/60:.0f}min old)")
-            return True, cached
-        print(f"[Flight Cache] Stale ({age/60:.0f}min old)")
-        return False, cached
-    except:
-        return False, None
 
 # ========================================
 # REDIS THREAT SCORE CACHE (persistent across deploys)
@@ -616,19 +563,7 @@ def _refresh_all_caches():
 
         # (Nov 1 2026) NOTAM refresh removed -- airspace_watch.py runs its own loop.
 
-        # Refresh flight disruptions (Redis + in-memory)
-        try:
-            print("[Background Refresh] Refreshing flights...")
-            flight_data = _run_flight_scan()
-            cache_set('flights', flight_data)
-            if flight_data.get('sensed'):
-                print(f"[Background Refresh] ✓ Flights cached "
-                      f"({flight_data.get('total_disruptions')} disruptions)")
-            else:
-                print("[Background Refresh] ⚠ Flights UNKNOWN -- no article corpus, "
-                      "cached as unknown rather than zero")
-        except Exception as e:
-            print(f"[Background Refresh] ✗ Flights failed: {e}")
+        # (Nov 1 2026) Flight refresh removed -- flight_watch.py runs its own loop.
 
         time.sleep(5)
 
@@ -1481,7 +1416,7 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-EUROPE_BACKEND_VERSION = '1.5.0'
+EUROPE_BACKEND_VERSION = '1.6.0'   # Nov 1 2026: Flight Watch
 
 # v1.4.1 (Oct 3 2026) -- ONE version, ONE User-Agent.
 # Europe was carrying both problems at once. The version: '/' said 1.1.0, the
@@ -4172,88 +4107,6 @@ def _run_threat_scan(target, days=7):
 
 
 
-def _run_flight_scan():
-    """Run a full flight disruption scan with Redis caching."""
-
-    # Check Redis cache first
-    is_fresh, cached = is_flight_cache_fresh()
-    if is_fresh and cached:
-        cached['cached'] = True
-        cached['cache_source'] = 'redis'
-        return cached
-
-    print("[Flight Scan] Running fresh flight disruption scan...")
-
-    flight_queries = [
-        'Europe flight cancelled OR suspended OR grounded OR diverted',
-        'airline cancel flights Ukraine OR Russia OR Poland OR Baltic',
-        'airspace closed Europe OR Ukraine OR Russia OR Poland OR Baltic',
-        'NOTAM airspace restriction Europe',
-        'Ryanair OR Lufthansa OR Wizz Air cancel OR suspend flights',
-        'flight disruption war zone Europe',
-        'aviation safety Europe conflict',
-        'Turkey Istanbul Ankara flights cancelled OR suspended',
-        'Cyprus Larnaca Paphos flights cancelled OR closed',
-    ]
-
-    all_articles = []
-    for fq in flight_queries:
-        try:
-            all_articles.extend(fetch_newsapi_articles(fq, days=3))
-        except Exception as e:
-            print(f"[Europe v1.1] Flight query error: {e}")
-        try:
-            all_articles.extend(fetch_gdelt_articles(fq, days=3, language='eng'))
-        except Exception as e:
-            print(f"[Europe v1.1] Flight GDELT query error: {e}")
-
-    # Deduplicate by URL
-    seen_urls = set()
-    unique_articles = []
-    for a in all_articles:
-        url = a.get('url', '')
-        if url and url not in seen_urls:
-            seen_urls.add(url)
-            unique_articles.append(a)
-
-    disruptions = scan_european_flight_disruptions(unique_articles)
-
-    # DOCTRINE: this scan reads disruptions OUT OF ARTICLES. No articles means
-    # no corpus to read, which is blindness -- not an absence of disruption.
-    sensed = len(unique_articles) > 0
-    last_sensed_at = None
-    if cached:
-        last_sensed_at = cached.get('last_sensed_at') or (
-            cached.get('timestamp') if cached.get('sensed') else None)
-    if sensed:
-        last_sensed_at = datetime.now(timezone.utc).isoformat()
-
-    if not sensed:
-        print("[Flight Scan] BLIND -- 0 articles retrieved (NewsAPI + GDELT both "
-              "returned nothing). Reporting unknown, not zero disruptions.")
-
-    result = {
-        'success': True,
-        'timestamp': datetime.now(timezone.utc).isoformat(),
-        'total_disruptions': len(disruptions) if sensed else None,
-        'disruptions': disruptions,
-        'cancellations': disruptions,
-        'sensed': sensed,
-        'state': 'scanned' if sensed else 'unknown',
-        'articles_scanned': len(unique_articles),
-        'last_sensed_at': last_sensed_at,
-        'unknown_reason': (None if sensed else
-                           'no articles retrieved from NewsAPI or GDELT; '
-                           'flight disruption state is unknown, not clear'),
-        'version': f'{EUROPE_BACKEND_VERSION}-europe',
-        'cached': False
-    }
-
-    # Save to Redis + in-memory
-    save_flight_cache_redis(result)
-    cache_set('flights', result)
-
-    return result
 
 
 # ========================================
@@ -4489,46 +4342,6 @@ def api_europe_dashboard():
 
 
 
-@app.route('/api/europe/flights', methods=['GET'])
-def api_europe_flights():
-    """European flight disruptions endpoint. Redis-cached with ?force=true override."""
-    try:
-        force = (request.args.get('force', 'false').lower() == 'true' and _public_force_allowed(request.path))
-
-        if not force:
-            # Check in-memory first
-            cached = cache_get('flights')
-            if cached:
-                cached['cached'] = True
-                cached['cache_source'] = 'memory'
-                cached['cache_age_seconds'] = int(cache_age('flights') or 0)
-                return jsonify(cached)
-
-            # Check Redis (survives deploys)
-            is_fresh, redis_cached = is_flight_cache_fresh()
-            if is_fresh and redis_cached:
-                redis_cached['cached'] = True
-                redis_cached['cache_source'] = 'redis'
-                cache_set('flights', redis_cached)  # Warm in-memory
-                return jsonify(redis_cached)
-
-        if not check_rate_limit():
-            return jsonify({
-                'error': 'Rate limit exceeded',
-                'rate_limit': get_rate_limit_info()
-            }), 429
-
-        data = _run_flight_scan()
-        return jsonify(data)
-
-    except Exception as e:
-        print(f"Error in /api/europe/flights: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'disruptions': [],
-            'cancellations': []
-        }), 500
 
 @app.route('/api/europe/travel-advisories', methods=['GET'])
 def api_europe_travel_advisories():
@@ -4957,6 +4770,17 @@ try:
     register_airspace_endpoints(app, 'europe', legacy_route='/api/europe/notams')
 except Exception as _e:
     print(f"[Europe] ⚠️ Airspace Watch unavailable: {_e}")
+
+
+# ── Flight Watch (shared module, Nov 1 2026) ───────────────────────────
+# Live airline suspensions / cancellations / declared end dates / resumptions from
+# Google News, leader-only every 6 h. Same file on all five backends; this backend
+# sees only its own destinations. Requests only ever read the Redis cache.
+try:
+    from flight_watch import register_flight_endpoints
+    register_flight_endpoints(app, 'europe', legacy_routes=['/api/europe/flights'])
+except Exception as _e:
+    print(f"[Europe] ⚠️ Flight Watch unavailable: {_e}")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
