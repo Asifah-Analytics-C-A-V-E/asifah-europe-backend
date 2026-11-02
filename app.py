@@ -25,9 +25,9 @@ v1.1.0 — Added in-memory response caching + background refresh thread
 """
 
 from flask import Flask, jsonify, request
-from flask_cors import CORS, cross_origin
+from flask_cors import cross_origin   # CORS headers are set in the after_request hook
 import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import os
 import time
 import re
@@ -1416,7 +1416,7 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-EUROPE_BACKEND_VERSION = '1.6.0'   # Nov 1 2026: Flight Watch
+EUROPE_BACKEND_VERSION = '1.7.0'   # Nov 2 2026: every live tracker boosts its card; military posture actually read
 
 # v1.4.1 (Oct 3 2026) -- ONE version, ONE User-Agent.
 # Europe was carrying both problems at once. The version: '/' said 1.1.0, the
@@ -1887,12 +1887,65 @@ MILITARY_POSTURE_BOOST_TABLE = {
 }
 
 
+# v1.7.0 (Nov 2 2026): the ME military tracker writes its scan to
+# 'military_tracker_cache', per-actor reads under actor_summaries[<id>].
+# Every regional reader (this file, Asia, WHA) asked for 'military_cache',
+# a key nothing writes -- so every regional military boost has read nothing.
+MILITARY_CACHE_KEY = 'military_tracker_cache'
+_MIL_LEVELS = ('normal', 'elevated', 'high', 'surge')
+
+# Europe cards whose country is a military-tracker actor. Russia is left out
+# on purpose: its rhetoric read already folds in russia_military_level, so a
+# second military boost would count the same evidence twice.
+MILITARY_BOOST_TARGETS = {'ukraine', 'poland', 'turkey', 'greece', 'cyprus',
+                          'armenia', 'hungary', 'kazakhstan'}
+
+
+def _read_military_cache():
+    """The ME military tracker's last scan (dict) or None. Never raises."""
+    try:
+        if not UPSTASH_REDIS_URL or not UPSTASH_REDIS_TOKEN:
+            return None
+        resp = requests.get(
+            f'{UPSTASH_REDIS_URL}/get/{MILITARY_CACHE_KEY}',
+            headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'},
+            timeout=4
+        )
+        result = resp.json().get('result')
+        return json.loads(result) if result else None
+    except Exception as e:
+        print(f'[Europe v1.7] Military cache read error: {str(e)[:80]}')
+        return None
+
+
 def _get_military_posture_level(target):
+    """(alert_level, state) for one actor from the ME military tracker.
+
+    v1.7.0: was a placeholder returning the TUPLE ('normal', 0), which callers
+    then used as a dict key -- the boost was always 0 and the card payload
+    carried a tuple where a word belonged. state: 'read' | 'unread'.
     """
-    Placeholder for Ukraine, Poland military posture boost.
-    Russia now has a live rhetoric tracker — use _get_russia_rhetoric_level() instead.
-    """
-    return 'normal', 0
+    data = _read_military_cache()
+    if not data:
+        return 'normal', 'unread'
+    actor = (data.get('actor_summaries') or {}).get(target) or {}
+    level = actor.get('alert_level', 'normal')
+    if level not in _MIL_LEVELS:
+        level = 'normal'
+    return level, 'read'
+
+
+def _get_generic_rhetoric_level(target):
+    """(level, state) for any Europe tracker, translated exactly as the Europe
+    BLUF translates it (europe_regional_bluf.get_theatre_level). v1.7.0."""
+    try:
+        from europe_regional_bluf import get_theatre_level, TRACKER_KEYS as _EU_TRACKERS
+        if target not in _EU_TRACKERS:
+            return 0, 'not_tracked'      # Albania, Belgium, Turkmenistan: no tracker yet
+        return get_theatre_level(target)
+    except Exception as e:
+        print(f'[Europe v1.7] {target} rhetoric read error: {str(e)[:80]}')
+        return 0, 'unread'
 
 
 def _get_russia_rhetoric_level():
@@ -1989,17 +2042,13 @@ def _get_greenland_military_boost():
         if not UPSTASH_REDIS_URL or not UPSTASH_REDIS_TOKEN:
             return 'normal', 0
 
-        resp = requests.get(
-            f'{UPSTASH_REDIS_URL}/get/military_cache',
-            headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'},
-            timeout=4
-        )
-        result = resp.json().get('result')
-        if not result:
+        # v1.7.0: right key ('military_tracker_cache') and right shape
+        # (actor_summaries) -- this read 'military_cache'.'actors', which
+        # does not exist, so Greenland's military boost was always 0.
+        data = _read_military_cache()
+        if not data:
             return 'normal', 0
-
-        data = json.loads(result)
-        actors = data.get('actors', {})
+        actors = data.get('actor_summaries') or {}
 
         # Only look at Denmark and Greenland actors — never NATO aggregate
         arctic_actors = ['denmark', 'greenland']
@@ -2198,16 +2247,22 @@ def calculate_threat_probability(articles, days_analyzed=7, target='ukraine'):
     probability = min(probability, 95)
 
     # ============================================
-    # v1.2.0: RHETORIC + MILITARY POSTURE BOOSTS
-    # Applied after advisory floor — highest signal wins.
-    # Greenland only for now (only live rhetoric tracker).
-    # Ukraine/Russia/Poland wired when trackers go live.
+    # RHETORIC + MILITARY POSTURE BOOSTS (v1.2.0; rewired v1.7.0 Nov 2 2026)
+    # Applied after the advisory floor.
+    # v1.7.0: only Greenland and Russia were ever wired, so eleven live
+    # trackers (Ukraine, Poland, Moldova, Belarus, Turkey, Greece, Cyprus,
+    # Armenia, Azerbaijan, Hungary, Kazakhstan) never touched their own card.
+    # Greenland and Russia keep their bespoke reads; every other tracker uses
+    # the Europe BLUF's translation. Military posture is read from the ME
+    # military tracker for the countries it tracks (see MILITARY_BOOST_TARGETS).
     # ============================================
     rhetoric_boost    = 0
     mil_boost         = 0
     rhetoric_level    = 0
+    rhetoric_state    = 'not_tracked'
     us_pressure_level = 0
     mil_posture       = 'normal'
+    mil_state         = 'not_tracked'
 
     if target == 'greenland':
         # Read rhetoric tracker — theatre level drives primary boost.
@@ -2226,6 +2281,7 @@ def calculate_threat_probability(articles, days_analyzed=7, target='ukraine'):
         # actors. Explicitly excludes NATO aggregate to prevent Iran-conflict
         # theatre elevation (Turkey/Cyprus/Israel) from bleeding into Greenland score.
         mil_posture, mil_boost = _get_greenland_military_boost()
+        mil_state = 'read'
 
     elif target == 'russia':
         # Russia rhetoric tracker is live — read from Redis directly
@@ -2236,14 +2292,16 @@ def calculate_threat_probability(articles, days_analyzed=7, target='ukraine'):
             rhetoric_boost = min(rhetoric_boost + 5, 20)
             print(f'[Europe v1.3] Russia nuclear L{nuclear_level} — +5 penalty applied')
 
-    elif target == 'ukraine':
-        # Ukraine tracker not yet live — placeholder
-        mil_posture = _get_military_posture_level(target)
-        mil_boost   = MILITARY_POSTURE_BOOST_TABLE.get(mil_posture, 0)
+    else:
+        rhetoric_level, rhetoric_state = _get_generic_rhetoric_level(target)
+        rhetoric_boost = RHETORIC_BOOST_TABLE.get(rhetoric_level, 0)
 
-    elif target == 'poland':
-        mil_posture = _get_military_posture_level('poland')
-        mil_boost   = MILITARY_POSTURE_BOOST_TABLE.get(mil_posture, 0)
+    if target in ('greenland', 'russia'):
+        rhetoric_state = 'read'
+
+    if target in MILITARY_BOOST_TARGETS:
+        mil_posture, mil_state = _get_military_posture_level(target)
+        mil_boost = MILITARY_POSTURE_BOOST_TABLE.get(mil_posture, 0)
 
     total_boost = rhetoric_boost + mil_boost
 
@@ -2287,6 +2345,8 @@ def calculate_threat_probability(articles, days_analyzed=7, target='ukraine'):
             'advisory_signal_source': diplomatic_signal.get('signal_source'),
             'rhetoric_boost':         rhetoric_boost,
             'rhetoric_level':         rhetoric_level,
+            'rhetoric_state':         rhetoric_state,   # read | stale | unread | not_tracked (v1.7.0)
+            'military_state':         mil_state,        # read | unread | not_tracked (v1.7.0)
             'us_pressure_level':      us_pressure_level,
             'military_posture':       mil_posture,
             'military_boost':         mil_boost,

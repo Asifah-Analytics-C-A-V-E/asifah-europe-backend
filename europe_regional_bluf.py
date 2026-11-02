@@ -1,7 +1,20 @@
 """
 europe_regional_bluf.py
 Asifah Analytics -- Europe Backend Module
+v3.7.0 -- Nov 2 2026 (Moldova read at last; 3h cache; get_theatre_level() for app.py)
 v3.6.1 -- July 25, 2026 (two-axis rule: pressure != stability)
+
+v3.7.0 (Nov 2 2026):
+  * MOLDOVA WAS NEVER READ. rhetoric_tracker_moldova has written
+    rhetoric:moldova:latest every cycle, but it was missing from TRACKER_KEYS,
+    so Moldova never reached the regional BLUF or the GPI.
+  * Cache 14h -> 3h. Nothing rebuilds this BLUF on a timer, so a tracker fix
+    (or a real escalation) could take up to 14h to surface. A rebuild is ~13
+    Redis reads; every 3h is cheap.
+  * get_theatre_level(theatre): ONE translated level per theatre for app.py's
+    card boost -- same platform translation (Greece rung 5 -> platform 4,
+    alert words -> ints, peak-vector lift) the BLUF itself uses, so the card
+    and the BLUF can never read the same tracker two different ways.
 
 Europe Regional BLUF (Bottom Line Up Front) Engine.
 
@@ -86,6 +99,7 @@ TRACKER_KEYS = {
     'armenia':   'rhetoric:armenia:latest', # v1.0 Jul 12 2026 -- peace-implementation tracker (tenth rim spoke)
     'kazakhstan':'rhetoric:kazakhstan:latest', # v1.0 Jul 12 2026 -- multi-vector hedging-integrity tracker
     'poland':    'rhetoric:poland:latest',  # v1.0 Jul 12 2026 -- consensus-integrity tracker (inbound_target, NOT a drift spoke)
+    'moldova':   'rhetoric:moldova:latest', # v3.7.0 Nov 2 2026 -- tracker has run for months; the BLUF never read it
     # Future Europe trackers slot in here:
     # 'baltics':  'rhetoric:baltics:latest',
 }
@@ -103,6 +117,7 @@ THEATRE_FLAGS = {
     'armenia':   '\U0001f1e6\U0001f1f2',  # AM
     'kazakhstan':'\U0001f1f0\U0001f1ff',  # KZ
     'poland':    '\U0001f1f5\U0001f1f1',  # 🇵🇱
+    'moldova':   '\U0001f1f2\U0001f1e9',  # MD
     'baltics':   '\U0001f1ea\U0001f1fa',  # 🇪🇺 fallback
 }
 
@@ -119,6 +134,7 @@ THEATRE_DISPLAY = {
     'armenia':   'ARMENIA',
     'kazakhstan':'KAZAKHSTAN',
     'poland':    'POLAND',
+    'moldova':   'MOLDOVA',
     'baltics':   'BALTICS',
 }
 
@@ -128,7 +144,7 @@ MAX_PER_THEATRE   = 3       # v2.4.0 May 21 2026 — per-tracker quota during se
 
 # Synthesis cache
 BLUF_CACHE_KEY    = 'rhetoric:europe:regional_bluf'
-BLUF_CACHE_TTL    = 14 * 3600    # 14h
+BLUF_CACHE_TTL    = 3 * 3600     # 3h (v3.7.0; was 14h -- no rebuild timer, so fixes and escalations waited up to 14h)
 BLUF_LASTGOOD_TTL   = 7 * 24 * 3600   # 7d ceiling for held last-known-good tracker snapshots (C)
 BLUF_INCOMPLETE_TTL = 30 * 60         # 30min cache when the picture is incomplete (A: don't freeze gaps)
 
@@ -679,6 +695,47 @@ def _normalize_tracker_data(theatre, raw_data):
         'scanned_at':   _safe_str(raw_data.get('scanned_at') or raw_data.get('cached_at') or raw_data.get('timestamp', '')),
         'raw':          raw_data,
     }
+
+
+# ============================================================
+# PUBLIC: ONE TRANSLATED LEVEL PER THEATRE (v3.7.0, for app.py)
+# ============================================================
+THEATRE_LEVEL_STALE_HOURS = 48
+
+
+def get_theatre_level(theatre):
+    """(level, state) for one Europe theatre, read from its tracker cache and
+    translated exactly as the BLUF translates it.
+
+    state: 'read' | 'stale' (older than 48h -> level 0, not trusted) |
+           'unread' (no cache / not a Europe tracker). Never raises.
+    A stale or unread tracker returns 0 so it cannot boost a card -- and the
+    caller gets the state so the card can say "unread", not "quiet".
+    """
+    key = TRACKER_KEYS.get(theatre)
+    if not key:
+        return 0, 'unread'
+    try:
+        raw = _redis_get(key)
+        if not raw:
+            return 0, 'unread'
+        norm = _normalize_tracker_data(theatre, raw) or {}
+        lvl = _safe_int(_safe_dict(norm.get('levels')).get('threat'))
+        ts = norm.get('scanned_at') or ''
+        if ts:
+            try:
+                _dt = datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
+                if _dt.tzinfo is None:
+                    _dt = _dt.replace(tzinfo=timezone.utc)
+                age = (datetime.now(timezone.utc) - _dt).total_seconds() / 3600
+                if age > THEATRE_LEVEL_STALE_HOURS:
+                    return 0, 'stale'
+            except Exception:
+                pass
+        return max(0, min(5, lvl)), 'read'
+    except Exception as e:
+        print(f'[Europe BLUF] get_theatre_level({theatre}) error: {str(e)[:100]}')
+        return 0, 'unread'
 
 
 def _extract_diplomatic_signals(theatre, raw_data, threat_int):
