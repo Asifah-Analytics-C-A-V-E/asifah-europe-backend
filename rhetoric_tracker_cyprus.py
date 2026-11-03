@@ -1,6 +1,6 @@
 """
 Asifah Analytics - Cyprus Division Pressure Rhetoric Tracker (Dial 2)
-v1.0.0 - June 2026
+v1.1.0 - November 3, 2026   (v1.0.0 June 2026)
 
 ANALYTICAL FRAME - Inverted threat model:
 The Republic of Cyprus (Greek-Cypriot south, EU member) is the status-quo /
@@ -16,7 +16,8 @@ VECTORS (issue-axes, not an actor roster):
   turkey_posture    - Ankara stance: two-state framing, troop posture, drilling
                       authorizations, Blue Homeland claims. PRIMARY inbound
                       driver; also feeds the Turkey hub-and-spoke layer.
-  trnc_politics     - Turkish-Cypriot north: Tatar, elections, settler moves,
+  trnc_politics     - Turkish-Cypriot north: Erhurman (leader since Oct 2025,
+                      pro-federation; Tatar before him), settler moves,
                       Varosha, Ankara's grip on the north.
   green_line        - Buffer-zone / UNFICYP / crossing incidents, military
                       movement along the ceasefire line.
@@ -24,6 +25,13 @@ VECTORS (issue-axes, not an actor roster):
                       NAVTEX standoffs with Turkey.
   settlement_track  - Settlement-track FRICTION (deadlock, two-state push,
                       collapse, walkouts) - collapse-biased, not progress.
+                      (v1.1: the interpreter now reads the opposite --
+                      settlement momentum -- as a green line.)
+
+DISPLAY-ONLY WHEELS (v1.1.0 -- scored, shown, NOT in the composite):
+  israel_partnership    - Israel-Cyprus defence / energy / air-defence ties
+  us_partnership        - US arms-embargo lift, CYCLOPS, Souda/Akrotiri logistics
+  iran_hezbollah_threat - Iran / Hizballah threats to Cyprus and the UK bases
 
 ESCALATION MODEL (inverted):
   Level 0 - Baseline:      Normal diplomatic noise, no division pressure
@@ -36,7 +44,8 @@ ESCALATION MODEL (inverted):
 REDIS KEYS:
   Cache:    rhetoric:cyprus:latest
   History:  rhetoric:cyprus:history
-  Spoke:    spoke:turkey:cyprus  (turkey_posture fingerprint for the hub-and-spoke)
+  Spokes:   spoke:turkey:cyprus (adversary), spoke:israel:cyprus (security_partner),
+            spoke:us:cyprus (security_partner), spoke:iran:cyprus (target) -- 30h TTL
 
 ENDPOINTS:
   GET /api/rhetoric/cyprus
@@ -45,6 +54,11 @@ ENDPOINTS:
 
 CHANGELOG:
   v1.0.0 (2026-06-25): Initial build - inverted, vectored Dial-2 tracker (5 issue-vectors)
+  v1.1.0 (2026-11-03): Evidence pass -- publisher-attributed feeds (europe_feeds),
+    GDELT via gateway, breadth-capped levels, theatre capped at the hottest
+    division vector, Erhurman/Holguin vocabulary, three display-only wheels,
+    four 30h spokes (the turkey spoke had a 180-day TTL, so a dead tracker
+    looked alive for six months), history LPUSH fix, ?force rate limit.
 
 COPYRIGHT (c) 2025-2026 Asifah Analytics. All rights reserved.
 """
@@ -59,6 +73,13 @@ import urllib.parse
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from flask import jsonify, request
+
+from europe_feeds import gather, score_actor, breadth_cap, gnews_url, FEEDS_VERSION
+
+TRACKER_VERSION = '1.1.0'
+SPOKE_TTL = 30 * 3600          # spoke convention: 30h; reader flags >24h as not reporting
+_last_force = {'ts': 0.0}
+FORCE_MIN_INTERVAL = 600
 
 # ============================================
 # CONFIG
@@ -145,6 +166,7 @@ ACTORS = {
         'description': 'Turkish-Cypriot north: Tatar, elections, settler moves, Varosha, Ankara grip',
         'keywords': [
             'trnc', 'northern cyprus', 'turkish republic northern cyprus',
+            'tufan erhurman', 'tufan erhürman', 'erhurman', 'erhürman',
             'ersin tatar', 'tatar cyprus', 'turkish cypriot leader',
             'north cyprus election', 'turkish cypriot election',
             'varosha', 'maras cyprus', 'varosha reopening',
@@ -215,28 +237,88 @@ ACTORS = {
             'cyprus guterres', 'un cyprus envoy', 'cyprus comprehensive settlement',
             'cyprus talks walkout', 'cyprus reunification deadlock',
             'cyprus informal talks', 'cyprus 5+1',
+            'holguin', 'holguín', 'rotating presidency', 'political equality',
+            'sovereign equality', 'christodoulides erhurman',
         ],
         'baseline_statements_per_week': 6,
         'weight': 0.9,
     },
 
+    # ---- v1.1.0 display-only wheels (NOT in the composite) ----
+    'israel_partnership': {
+        'name': 'Israel Partnership',
+        'flag': '🇮🇱', 'icon': '🤝',
+        'color': '#2563eb',
+        'role': 'Wheel - security partner (display only)',
+        'description': 'Israel-Cyprus defence, air-defence, energy and evacuation-corridor ties',
+        'keywords': [
+            'israel cyprus', 'cyprus israel', 'israeli cyprus defence', 'cyprus barak mx',
+            'cyprus iron dome', 'israel cyprus gas', 'great sea interconnector', 'israel cyprus exercise',
+            'netanyahu christodoulides', 'israeli tourists cyprus', 'cyprus israel greece trilateral',
+        ],
+        'baseline_statements_per_week': 5,
+        'weight': 1.0,
+        'display_only': True,
+    },
+    'us_partnership': {
+        'name': 'US Partnership',
+        'flag': '🇺🇸', 'icon': '🤝',
+        'color': '#1d4ed8',
+        'role': 'Wheel - security partner (display only)',
+        'description': 'US arms-embargo lift, CYCLOPS training centre, evacuation logistics, US-Cyprus dialogue',
+        'keywords': [
+            'us cyprus', 'united states cyprus', 'washington cyprus', 'cyprus arms embargo',
+            'cyclops cyprus', 'us embassy nicosia', 'us cyprus strategic dialogue', 'rubio cyprus',
+            'us navy cyprus', 'cyprus evacuation us', 'trump cyprus',
+        ],
+        'baseline_statements_per_week': 4,
+        'weight': 1.0,
+        'display_only': True,
+    },
+    'iran_hezbollah_threat': {
+        'name': 'Iran / Hizballah Threat',
+        'flag': '🎯', 'icon': '🎯',
+        'color': '#b91c1c',
+        'role': 'Wheel - threat to Cyprus (display only)',
+        'description': 'Iran / Hizballah threat language toward Cyprus and the UK Sovereign Base Areas',
+        'keywords': [
+            'hezbollah cyprus', 'hizballah cyprus', 'iran cyprus', 'iran threatens cyprus',
+            'akrotiri drone', 'raf akrotiri', 'akrotiri attack', 'dhekelia', 'sovereign base areas',
+            'british bases cyprus', 'nasrallah cyprus', 'qassem cyprus', 'cyprus party to the war',
+        ],
+        'baseline_statements_per_week': 3,
+        'weight': 1.1,
+        'display_only': True,
+    },
+
 }
+DIVISION_VECTORS = ['turkey_posture', 'trnc_politics', 'green_line', 'eez_maritime', 'settlement_track']
 
 
 # ============================================
 # RSS FEEDS
 # ============================================
 RSS_FEEDS = [
-    # Local source (reliable)
+    # Local outlets (publisher = feed host)
     'https://cyprus-mail.com/feed/',
-    # Google News - per vector
-    'https://news.google.com/rss/search?q=cyprus+turkey+OR+cyprus+eez+OR+cyprus+drilling&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=cyprus+green+line+OR+unficyp+OR+buffer+zone+cyprus&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=northern+cyprus+OR+trnc+OR+ersin+tatar+OR+varosha&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=cyprus+settlement+talks+OR+cyprus+reunification+OR+cyprus+two-state&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=cyprus+gas+OR+aphrodite+OR+cyprus+maritime+turkey&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=erdogan+cyprus+OR+ankara+cyprus+OR+turkey+northern+cyprus&hl=en&gl=US&ceid=US:en',
+    'https://in-cyprus.philenews.com/feed/',
+    # Google News - per vector (publisher read per item)
+    gnews_url('cyprus turkey OR "cyprus eez" OR "cyprus drilling"'),
+    gnews_url('"green line" cyprus OR unficyp OR "buffer zone" cyprus'),
+    gnews_url('"northern cyprus" OR trnc OR erhurman OR varosha'),
+    gnews_url('cyprus talks OR "cyprus reunification" OR holguin OR "cyprus problem"'),
+    gnews_url('cyprus gas OR aphrodite OR "cyprus maritime" turkey'),
+    gnews_url('erdogan cyprus OR ankara cyprus OR "turkey northern cyprus"'),
+    gnews_url('israel cyprus OR "us cyprus" OR "cyprus arms embargo"'),
+    gnews_url('akrotiri OR hezbollah cyprus OR iran cyprus'),
+    gnews_url('Κύπρος Τουρκία OR Κυπριακό OR Έρχιουρμαν', 'el'),
+    gnews_url('Kıbrıs Erhürman OR KKTC OR Maraş', 'tr'),
 ]
+# The local feeds carry all Cyprus news; the topic filter keeps the island-
+# politics items (Google News queries are already on topic).
+TOPIC_TERMS = ['turkey', 'turkish', 'trnc', 'north', 'erhurman', 'erhürman', 'tatar', 'talks', 'green line',
+               'buffer zone', 'unficyp', 'varosha', 'eez', 'gas', 'drill', 'israel', 'hezbollah', 'hizballah',
+               'iran', 'akrotiri', 'embargo', 'guterres', 'holguin', 'holguín', 'federation', 'navtex']
 
 # ============================================
 # NITTER FEEDS — Primary source Twitter/X accounts
@@ -264,7 +346,7 @@ def _fetch_nitter(username, weight=1.0, timeout=8):
     Returns list of articles with source tagged as 'Nitter @{username}'.
     """
     articles = []
-    headers = {'User-Agent': 'Mozilla/5.0 (compatible; AsifahAnalytics/1.0)'}
+    headers = {'User-Agent': f'AsifahAnalytics-Europe-Cyprus/{TRACKER_VERSION} (OSINT monitoring tool)'}
 
     for mirror in NITTER_MIRRORS:
         url = f'https://{mirror}/{username}/rss'
@@ -342,7 +424,8 @@ GDELT_QUERIES = [
     ('cyprus turkey two-state sovereignty', 'eng'),
     ('cyprus eez gas drilling turkey', 'eng'),
     ('cyprus green line unficyp buffer zone', 'eng'),
-    ('northern cyprus trnc tatar varosha', 'eng'),
+    ('northern cyprus trnc erhurman varosha', 'eng'),
+    ('cyprus israel defence OR akrotiri hezbollah', 'eng'),
     ('cyprus settlement talks reunification', 'eng'),
     ('erdogan cyprus ankara mediterranean', 'eng'),
     # Turkish-language - strengthens the turkey_posture / TRNC read
@@ -397,13 +480,15 @@ def _redis_lpush(key, value, max_len=HISTORY_MAX_ENTRIES):
         return
     try:
         payload = json.dumps(value, default=str)
+        # v1.1.0: Upstash command form -- the value is stored as-is (the old
+        # /lpush body form stored the JSON list wrapper as the item).
         requests.post(
-            f'{UPSTASH_REDIS_URL}/lpush/{key}',
+            UPSTASH_REDIS_URL,
             headers={
                 'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}',
                 'Content-Type': 'application/json'
             },
-            data=json.dumps([payload]),
+            data=json.dumps(['LPUSH', key, payload]),
             timeout=5
         )
         requests.post(
@@ -486,102 +571,24 @@ def _fetch_gdelt(query, lang='eng', days=5, timeout=15):
 
 
 def _fetch_all_articles(days=5):
-    """Fetch from all RSS feeds and GDELT queries."""
-    all_articles = []
-    seen_urls = set()
-
-    print(f'[Cyprus Rhetoric] Fetching RSS feeds ({len(RSS_FEEDS)} feeds)...')
-    for feed_url in RSS_FEEDS:
-        arts = _fetch_rss(feed_url)
-        for a in arts:
-            if a['url'] not in seen_urls:
-                seen_urls.add(a['url'])
-                all_articles.append(a)
-        time.sleep(0.3)
-
-    print(f'[Cyprus Rhetoric] Fetching GDELT ({len(GDELT_QUERIES)} queries)...')
-    for query, lang in GDELT_QUERIES:
-        arts = _fetch_gdelt(query, lang=lang, days=days)
-        for a in arts:
-            if a['url'] not in seen_urls:
-                seen_urls.add(a['url'])
-                all_articles.append(a)
-        time.sleep(0.5)
-
-    # Nitter — primary source Twitter/X accounts
-    print(f'[Cyprus Rhetoric] Fetching Nitter ({len(NITTER_ACCOUNTS)} accounts)...')
-    nitter_posts = _fetch_all_nitter(days=days)
-    for p in nitter_posts:
-        if p['url'] not in seen_urls:
-            seen_urls.add(p['url'])
-            all_articles.append(p)
-
-    print(f'[Cyprus Rhetoric] Total articles after dedup: {len(all_articles)}')
-    return all_articles
+    """v1.1.0: europe_feeds.gather -> (articles, sensing). Publisher-attributed
+    (the v1.0 'source' was the feed URL), GDELT via the gateway."""
+    articles, sensing = gather('Cyprus', RSS_FEEDS, GDELT_QUERIES, days=days, topic_terms=TOPIC_TERMS)
+    if NITTER_ACCOUNTS:
+        seen = {a['url'] for a in articles}
+        for p in _fetch_all_nitter(days=days):
+            if p['url'] not in seen:
+                seen.add(p['url'])
+                articles.append(p)
+    return articles, sensing
 
 
 # ============================================
 # SCORING ENGINE
 # ============================================
 def _score_actor(actor_id, actor_cfg, articles, telegram_msgs):
-    """Score a single actor across all articles and Telegram messages."""
-    keywords  = [kw.lower() for kw in actor_cfg['keywords']]
-    hits      = []
-    hit_count = 0
-
-    for art in articles:
-        body = art.get('body', '').lower()
-        matched = [kw for kw in keywords if kw in body]
-        if matched:
-            hit_count += len(matched)
-            hits.append({
-                'title':    art.get('title', '')[:150],
-                'url':      art.get('url', ''),
-                'source':   art.get('source', ''),
-                'published': art.get('published', ''),
-                'matched_keywords': matched[:5],
-            })
-
-    # Add Telegram signals
-    tg_hits = 0
-    for msg in telegram_msgs:
-        body = msg.get('title', '').lower()
-        matched = [kw for kw in keywords if kw in body]
-        if matched:
-            tg_hits += len(matched)
-            hit_count += len(matched)
-
-    # Baseline normalization
-    baseline = actor_cfg.get('baseline_statements_per_week', 8)
-    weight   = actor_cfg.get('weight', 1.0)
-    raw_score = min(100, int((hit_count / max(baseline, 1)) * 25 * weight))
-
-    # Map to 0–5 escalation level
-    if raw_score >= 85:   level = 5
-    elif raw_score >= 65: level = 4
-    elif raw_score >= 45: level = 3
-    elif raw_score >= 28: level = 2
-    elif raw_score >= 12: level = 1
-    else:                 level = 0
-
-    level_info = ESCALATION_LEVELS[level]
-    return {
-        'actor':          actor_id,
-        'name':           actor_cfg['name'],
-        'flag':           actor_cfg['flag'],
-        'icon':           actor_cfg['icon'],
-        'color':          actor_cfg['color'],
-        'role':           actor_cfg['role'],
-        'raw_score':      raw_score,
-        'level':          level,
-        'label':          level_info['label'],
-        'escalation_color': level_info['color'],
-        'description':    level_info['description'],
-        'article_hits':   len(hits),
-        'keyword_hits':   hit_count,
-        'telegram_hits':  tg_hits,
-        'top_articles':   hits[:5],
-    }
+    """v1.1.0: shared scorer -- level = min(volume level, outlet-breadth cap)."""
+    return score_actor(actor_id, actor_cfg, articles, telegram_msgs, ESCALATION_LEVELS)
 
 
 def _compute_composite(actor_scores):
@@ -621,6 +628,9 @@ def _compute_composite(actor_scores):
     elif composite >= 12: theatre_level = 1
     else:                 theatre_level = 0
 
+    # v1.1.0: the division theatre can't run hotter than its hottest division vector.
+    theatre_level = min(theatre_level, max(a.get('level', 0) for a in (tp, tr, gl, ez, st)))
+
     level_info = ESCALATION_LEVELS[theatre_level]
 
     # Per-vector levels (frontend Dial-2 breakdown + summary)
@@ -652,6 +662,7 @@ def _compute_composite(actor_scores):
         'spoke':        'cyprus',
         'hub':          'turkey',
         'vector':       'turkey_posture',
+        'node_class':   'adversary',
         'relationship': 'friction',   # Cyprus is pressured BY Turkey (inverted model)
         'level':        turkey_posture_level,
         'score':        tp_raw,
@@ -678,6 +689,9 @@ def _compute_composite(actor_scores):
         'green_line_level':         green_line_level,
         'eez_level':                eez_level,
         'settlement_level':         settlement_level,
+        'israel_partnership_level': actor_scores.get('israel_partnership', {}).get('level', 0),
+        'us_partnership_level':     actor_scores.get('us_partnership', {}).get('level', 0),
+        'iran_hezbollah_level':     actor_scores.get('iran_hezbollah_threat', {}).get('level', 0),
         'spoke_fingerprint':        spoke_fingerprint,
     }
 
@@ -691,7 +705,7 @@ def run_cyprus_rhetoric_scan(days=5):
     start_time = time.time()
 
     # Fetch articles
-    articles = _fetch_all_articles(days=days)
+    articles, sensing = _fetch_all_articles(days=days)
 
     # Fetch Telegram
     telegram_msgs = []
@@ -727,8 +741,11 @@ def run_cyprus_rhetoric_scan(days=5):
     result = {
         'success':              True,
         'theatre':              'Cyprus',
-        'version':              '1.0.0',
+        'version':              TRACKER_VERSION,
+        'feeds_version':        FEEDS_VERSION,
         'timestamp':            now,
+        'sensing':              sensing,
+        'source_outlets':       len({str(a.get('source', '')).lower() for a in articles} - {''}),
         'scanned_at':           now,
         'scan_duration_seconds': elapsed,
         'total_articles':       len(articles),
@@ -800,6 +817,8 @@ def _bg_scan():
             'trnc_level':           result['trnc_level'],
             'settlement_level':     result['settlement_level'],
             'convergence_signal':   result['convergence_signal'],
+            'thin_read':            bool((result.get('interpretation') or {}).get('thin_read')),
+            'version':              TRACKER_VERSION,
         }
         _redis_lpush(HISTORY_KEY, history_entry)
         # Spoke-and-wheel: write the canonical Turkey-posture fingerprint (180d TTL).
@@ -826,7 +845,25 @@ def _bg_scan():
             elif _cur < _prior_tp:   _fp['direction'] = 'falling'
             else:                    _fp['direction'] = 'steady'
             _fp['ts'] = datetime.now(timezone.utc).isoformat()
-            _redis_set('spoke:turkey:cyprus', _fp, ttl=180 * 24 * 3600)
+            _interp = result.get('interpretation') or {}
+            _fp['top_signal'] = _interp.get('top_indicator') or _fp.get('top_signal')
+            _fp['thin_read'] = bool(_interp.get('thin_read'))
+            _fp['version'] = TRACKER_VERSION
+            _redis_set('spoke:turkey:cyprus', _fp, ttl=SPOKE_TTL)
+            # v1.1.0: the other wheels on Cyprus
+            _rel = {'israel': 'defence / energy / air-defence partner',
+                    'us': 'security partner (embargo lifted, CYCLOPS, logistics)',
+                    'iran': 'threat target -- Iran / Hizballah language toward Cyprus and the UK bases'}
+            for _hub, _row in (_interp.get('spokes') or {}).items():
+                if _hub == 'turkey':
+                    continue
+                _redis_set(f'spoke:{_hub}:cyprus', {
+                    'ts': _fp['ts'], 'spoke': 'cyprus', 'hub': _hub,
+                    'node_class': _row.get('node_class'), 'level': _row.get('level', 0),
+                    'relationship': _rel.get(_hub, ''), 'top_signal': _row.get('note', ''),
+                    'thin_read': _fp['thin_read'], 'source': 'rhetoric_tracker_cyprus',
+                    'version': TRACKER_VERSION,
+                }, ttl=SPOKE_TTL)
         except Exception as _se:
             print(f'[Cyprus Rhetoric] spoke fingerprint write skipped: {_se}')
         print(f'[Cyprus Rhetoric] ✅ Cache + history written')
@@ -857,11 +894,16 @@ def register_cyprus_rhetoric_endpoints(app):
     @app.route('/api/rhetoric/cyprus', methods=['GET'])
     def cyprus_rhetoric():
         force = request.args.get('force', '').lower() in ('true', '1', 'yes')
-        days  = int(request.args.get('days', 5))
-
+        try:
+            days = int(request.args.get('days', 5))
+        except (TypeError, ValueError):
+            days = 5
+        if force and time.time() - _last_force['ts'] < FORCE_MIN_INTERVAL:
+            force = False   # v1.1.0: rate-limited -- serve the cache instead
         if force:
+            _last_force['ts'] = time.time()
             try:
-                return jsonify(run_cyprus_rhetoric_scan(days=days))
+                return jsonify(run_cyprus_rhetoric_scan(days=min(max(days, 1), 14)))
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)[:200]}), 500
 
@@ -885,7 +927,7 @@ def register_cyprus_rhetoric_endpoints(app):
             'theatre_escalation_label': 'Scanning...',
             'theatre_escalation_color': '#6b7280',
             'message':                  'First scan in progress — fetching Cyprus / Eastern-Mediterranean sources...',
-            'version':                  '1.0.0',
+            'version':                  TRACKER_VERSION,
         })
 
     @app.route('/api/rhetoric/cyprus/summary', methods=['GET'])
@@ -924,6 +966,8 @@ def register_cyprus_rhetoric_endpoints(app):
                     for aid, adat in actors.items()
                 },
                 'total_articles':   cached.get('total_articles', 0),
+                'top_indicator':    (cached.get('interpretation') or {}).get('top_indicator', ''),
+                'thin_read':        bool((cached.get('interpretation') or {}).get('thin_read')),
                 'scanned_at':       cached.get('scanned_at', ''),
                 'cached':           True,
             })
@@ -947,7 +991,11 @@ def register_cyprus_rhetoric_endpoints(app):
                 )
                 for item in resp.json().get('result', []):
                     try:
-                        entries.append(json.loads(item))
+                        e = json.loads(item)
+                        if isinstance(e, list) and e:      # v1.0 rows: JSON list wrapper
+                            e = json.loads(e[0]) if isinstance(e[0], str) else e[0]
+                        if isinstance(e, dict):
+                            entries.append(e)
                     except Exception:
                         pass
             entries.reverse()
@@ -956,6 +1004,7 @@ def register_cyprus_rhetoric_endpoints(app):
                 'theatre': 'Cyprus',
                 'count':   len(entries),
                 'entries': entries,
+                'history': entries,
             })
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500

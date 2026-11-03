@@ -1,5 +1,5 @@
 """
-europe_evidence.py -- v1.0.0 -- November 3, 2026
+europe_evidence.py -- v1.1.0 -- November 3, 2026   (v1.1.0: reads the trackers' 'body' field)
 Asifah Analytics -- Europe backend (shared helper, no Flask, no network)
 
 WHY THIS EXISTS
@@ -25,7 +25,7 @@ WHY THIS EXISTS
 import unicodedata
 from urllib.parse import urlparse
 
-EVIDENCE_VERSION = '1.0.0'
+EVIDENCE_VERSION = '1.1.0'
 
 # Telegram tiers that may count as an outlet. 'unverified' never corroborates.
 _COUNTED_TIERS = {'official', 'wire', 'mainstream', 'aggregator', 'aligned', 'state', None, ''}
@@ -59,7 +59,7 @@ def outlet_of(a):
 
 
 def _item_text(a):
-    parts = [a.get(k) or '' for k in ('title', 'description', 'summary', 'content', 'text')]
+    parts = [a.get(k) or '' for k in ('title', 'description', 'summary', 'content', 'text', 'body')]
     url = str(a.get('url') or a.get('link') or '')
     if url and not url.startswith('https://t.me'):
         parts.append(url.replace('-', ' ').replace('_', ' ').replace('/', ' '))

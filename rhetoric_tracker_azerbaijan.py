@@ -1,6 +1,6 @@
 """
 Asifah Analytics - Azerbaijan Four-Wheel Rhetoric Tracker
-v1.0.0 - June 2026
+v1.1.0 - November 3, 2026   (v1.0.0 June 2026)
 
 ANALYTICAL FRAME - Outbound, agent model (NOT inverted):
 Azerbaijan is an active balancer, not a passive recipient of pressure. Baku
@@ -40,8 +40,9 @@ polarity lives in each spoke fingerprint's 'relationship' field):
 
 SPOKE-AND-WHEEL (canonical spoke fingerprint schema, hub-agnostic):
   Writes spoke:turkey:azerbaijan, spoke:russia:azerbaijan,
-         spoke:iran:azerbaijan, spoke:israel:azerbaijan  (180d TTL)
-  Each: {spoke, hub, vector, relationship, level, score, direction, top_signal, ts}
+         spoke:iran:azerbaijan, spoke:israel:azerbaijan, spoke:us:azerbaijan  (30h TTL)
+  Each: {spoke, hub, node_class, vector, relationship, level, score, direction, top_signal, ts}
+  node_class (HUB_REGISTRY): turkey/israel aligned_multiplier, russia/iran friction, us broker.
   Plus a cross-theater slice fingerprints['azerbaijan'] in the shared registry
   so Iran / Israel (resistance-axis readers) can see Baku.
 
@@ -59,6 +60,12 @@ ENDPOINTS:
 CHANGELOG:
   v1.0.0 (2026-06-28): Initial build - four-wheel agent tracker (6 vectors,
                        4 spoke fingerprints + cross-theater slice)
+  v1.1.0 (2026-11-03): Evidence pass -- publisher-attributed feeds (europe_feeds),
+                       GDELT via gateway, breadth-capped levels, theatre capped at
+                       the hottest wheel; us_broker display wheel + fifth spoke;
+                       node_class on every spoke; spoke TTL 180 days -> 30h (a dead
+                       tracker no longer looks alive for six months); history
+                       LPUSH fix; ?force rate limit.
 
 COPYRIGHT (c) 2025-2026 Asifah Analytics. All rights reserved.
 """
@@ -72,6 +79,13 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from flask import jsonify, request
+
+from europe_feeds import gather, score_actor, breadth_cap, gnews_url, FEEDS_VERSION
+
+TRACKER_VERSION = '1.1.0'
+SPOKE_TTL = 30 * 3600          # spoke convention: 30h; reader flags >24h as not reporting
+_last_force = {'ts': 0.0}
+FORCE_MIN_INTERVAL = 600
 
 # ============================================
 # CONFIG
@@ -103,14 +117,16 @@ CROSSTHEATER_KEY    = 'rhetoric:crosstheater:fingerprints'
 RHETORIC_CACHE_TTL  = 6 * 3600   # 6 hours
 SCAN_INTERVAL_HOURS = 6
 HISTORY_MAX_ENTRIES = 120
-SPOKE_TTL           = 180 * 24 * 3600   # 180 days
+# SPOKE_TTL now 30h (set in the v1.1.0 import block above).
+NITTER_ACCOUNTS     = []                 # never wired for Azerbaijan
 
 # The four wheels and the polarity of Baku's relationship with each.
 WHEEL_VECTORS = {
-    'turkey': {'vector': 'turkey_axis',     'relationship': 'alignment'},
-    'russia': {'vector': 'russia_rupture',  'relationship': 'rupture'},
-    'iran':   {'vector': 'iran_friction',   'relationship': 'friction'},
-    'israel': {'vector': 'israel_axis',     'relationship': 'axis'},
+    'turkey': {'vector': 'turkey_axis',     'relationship': 'alignment', 'node_class': 'aligned_multiplier'},
+    'russia': {'vector': 'russia_rupture',  'relationship': 'rupture',   'node_class': 'friction'},
+    'iran':   {'vector': 'iran_friction',   'relationship': 'friction',  'node_class': 'friction'},
+    'israel': {'vector': 'israel_axis',     'relationship': 'axis',      'node_class': 'aligned_multiplier'},
+    'us':     {'vector': 'us_broker',       'relationship': 'broker',    'node_class': 'broker'},
 }
 
 _rhetoric_running = False
@@ -281,6 +297,24 @@ ACTORS = {
         'weight': 0.85,
     },
 
+    # ---- v1.1.0: the fifth wheel (display + spoke; NOT in the composite) ----
+    'us_broker': {
+        'name': 'US Broker (Washington)',
+        'flag': '🇺🇸', 'icon': '🧭',
+        'color': '#1d4ed8',
+        'role': 'Wheel - corridor broker (display only)',
+        'description': 'Washington as broker: TRIPP / "Trump Route", the initialled treaty, Section 907, US-Azerbaijan charter',
+        'keywords': [
+            'tripp', 'trump route', 'trump route for international peace', 'us azerbaijan', 'washington baku',
+            'section 907', 'us azerbaijan charter', 'witkoff azerbaijan', 'rubio aliyev', 'trump aliyev',
+            'white house azerbaijan', 'us brokered peace armenia', 'washington summit armenia azerbaijan',
+            'us armenia tripp', 'tripp joint venture',
+        ],
+        'baseline_statements_per_week': 5,
+        'weight': 1.0,
+        'display_only': True,
+    },
+
 }
 
 
@@ -288,17 +322,23 @@ ACTORS = {
 # RSS FEEDS
 # ============================================
 RSS_FEEDS = [
-    # Independent / regional (friction, Armenia, domestic)
+    # Independent / regional (publisher = feed host; topic-filtered below)
     'https://eurasianet.org/rss.xml',
     'https://oc-media.org/feed/',
-    # Google News - per vector
-    'https://news.google.com/rss/search?q=azerbaijan+turkey+OR+baku+ankara+OR+turkic+states&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=azerbaijan+russia+OR+baku+moscow+OR+azal+crash&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=azerbaijan+iran+OR+baku+tehran+OR+south+azerbaijan&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=azerbaijan+israel+OR+azerbaijan+oil+israel+OR+azerbaijan+drones&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=azerbaijan+armenia+OR+zangezur+corridor+OR+tripp+OR+peace+treaty&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=aliyev+azerbaijan+OR+azerbaijan+opposition+OR+western+azerbaijan&hl=en&gl=US&ceid=US:en',
+    # Google News - per wheel (publisher read per item)
+    gnews_url('azerbaijan turkey OR "baku ankara" OR "turkic states"'),
+    gnews_url('azerbaijan russia OR "baku moscow" OR "azal crash"'),
+    gnews_url('azerbaijan iran OR "baku tehran"'),
+    gnews_url('azerbaijan israel OR "azerbaijan oil israel" OR "azerbaijan drones"'),
+    gnews_url('"azerbaijan armenia" OR zangezur OR tripp OR "peace treaty" armenia'),
+    gnews_url('"trump route" OR tripp armenia OR "us azerbaijan" OR "section 907"'),
+    gnews_url('aliyev OR "azerbaijan opposition" OR "western azerbaijan"'),
+    gnews_url('Azərbaycan Ermənistan sülh OR TRIPP OR Zəngəzur', 'az'),
+    gnews_url('Азербайджан Россия OR Баку Москва', 'ru'),
 ]
+# Eurasianet / OC Media cover the whole region: keep only Azerbaijan items.
+TOPIC_TERMS = ['azerbaijan', 'azerbaijani', 'baku', 'aliyev', 'karabakh', 'zangezur', 'nakhchivan',
+               'tripp', 'trump route', 'syunik', 'azal']
 
 GDELT_QUERIES = [
     # English - per vector
@@ -307,6 +347,7 @@ GDELT_QUERIES = [
     ('azerbaijan iran border israel tehran', 'eng'),
     ('azerbaijan israel oil drones defense', 'eng'),
     ('azerbaijan armenia peace zangezur tripp', 'eng'),
+    ('trump route tripp armenia united states', 'eng'),
     ('aliyev azerbaijan opposition western azerbaijan', 'eng'),
     # Russian - strengthens the russia_rupture read
     ('азербайджан россия', 'rus'),
@@ -362,13 +403,15 @@ def _redis_lpush(key, value, max_len=HISTORY_MAX_ENTRIES):
         return
     try:
         payload = json.dumps(value, default=str)
+        # v1.1.0: Upstash command form -- the value is stored as-is (the old
+        # /lpush body form stored the JSON list wrapper as the item).
         requests.post(
-            f'{UPSTASH_REDIS_URL}/lpush/{key}',
+            UPSTASH_REDIS_URL,
             headers={
                 'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}',
                 'Content-Type': 'application/json'
             },
-            data=json.dumps([payload]),
+            data=json.dumps(['LPUSH', key, payload]),
             timeout=5
         )
         requests.post(
@@ -451,91 +494,24 @@ def _fetch_gdelt(query, lang='eng', days=5, timeout=15):
 
 
 def _fetch_all_articles(days=5):
-    """Fetch from all RSS feeds and GDELT queries, deduplicated by URL."""
-    all_articles = []
-    seen_urls = set()
-
-    print(f'[Azerbaijan Rhetoric] Fetching RSS feeds ({len(RSS_FEEDS)} feeds)...')
-    for feed_url in RSS_FEEDS:
-        arts = _fetch_rss(feed_url)
-        for a in arts:
-            if a['url'] and a['url'] not in seen_urls:
-                seen_urls.add(a['url'])
-                all_articles.append(a)
-        time.sleep(0.3)
-
-    print(f'[Azerbaijan Rhetoric] Fetching GDELT ({len(GDELT_QUERIES)} queries)...')
-    for query, lang in GDELT_QUERIES:
-        arts = _fetch_gdelt(query, lang=lang, days=days)
-        for a in arts:
-            if a['url'] and a['url'] not in seen_urls:
-                seen_urls.add(a['url'])
-                all_articles.append(a)
-        time.sleep(0.5)
-
-    print(f'[Azerbaijan Rhetoric] Total articles after dedup: {len(all_articles)}')
-    return all_articles
+    """v1.1.0: europe_feeds.gather -> (articles, sensing). Publisher-attributed
+    (the v1.0 'source' was the feed URL), GDELT via the gateway."""
+    articles, sensing = gather('Azerbaijan', RSS_FEEDS, GDELT_QUERIES, days=days, topic_terms=TOPIC_TERMS)
+    if NITTER_ACCOUNTS:
+        seen = {a['url'] for a in articles}
+        for p in _fetch_all_nitter(days=days):
+            if p['url'] not in seen:
+                seen.add(p['url'])
+                articles.append(p)
+    return articles, sensing
 
 
 # ============================================
 # SCORING ENGINE
 # ============================================
 def _score_actor(actor_id, actor_cfg, articles, telegram_msgs):
-    """Score a single vector across all articles and Telegram messages."""
-    keywords  = [kw.lower() for kw in actor_cfg['keywords']]
-    hits      = []
-    hit_count = 0
-
-    for art in articles:
-        body = art.get('body', '').lower()
-        matched = [kw for kw in keywords if kw in body]
-        if matched:
-            hit_count += len(matched)
-            hits.append({
-                'title':     art.get('title', '')[:150],
-                'url':       art.get('url', ''),
-                'source':    art.get('source', ''),
-                'published': art.get('published', ''),
-                'matched_keywords': matched[:5],
-            })
-
-    tg_hits = 0
-    for msg in telegram_msgs:
-        body = msg.get('title', '').lower()
-        matched = [kw for kw in keywords if kw in body]
-        if matched:
-            tg_hits += len(matched)
-            hit_count += len(matched)
-
-    baseline = actor_cfg.get('baseline_statements_per_week', 8)
-    weight   = actor_cfg.get('weight', 1.0)
-    raw_score = min(100, int((hit_count / max(baseline, 1)) * 25 * weight))
-
-    if raw_score >= 85:   level = 5
-    elif raw_score >= 65: level = 4
-    elif raw_score >= 45: level = 3
-    elif raw_score >= 28: level = 2
-    elif raw_score >= 12: level = 1
-    else:                 level = 0
-
-    level_info = ESCALATION_LEVELS[level]
-    return {
-        'actor':            actor_id,
-        'name':             actor_cfg['name'],
-        'flag':             actor_cfg['flag'],
-        'icon':             actor_cfg['icon'],
-        'color':            actor_cfg['color'],
-        'role':             actor_cfg['role'],
-        'raw_score':        raw_score,
-        'level':            level,
-        'label':            level_info['label'],
-        'escalation_color': level_info['color'],
-        'description':      level_info['description'],
-        'article_hits':     len(hits),
-        'keyword_hits':     hit_count,
-        'telegram_hits':    tg_hits,
-        'top_articles':     hits[:5],
-    }
+    """v1.1.0: shared scorer -- level = min(volume level, outlet-breadth cap)."""
+    return score_actor(actor_id, actor_cfg, articles, telegram_msgs, ESCALATION_LEVELS)
 
 
 def _wheel_top_signal(hub, relationship, level):
@@ -568,6 +544,13 @@ def _wheel_top_signal(hub, relationship, level):
             2: 'Active Israel-Azerbaijan axis - arms / oil',
             1: 'Israel-Azerbaijan axis in routine activity',
             0: 'Israel-Azerbaijan axis quiet',
+        },
+        'us': {
+            4: 'US broker wheel at acute activity - treaty / corridor decision point',
+            3: 'US-brokered corridor and treaty diplomacy intensifying',
+            2: 'Active US brokerage - TRIPP / treaty moves',
+            1: 'US broker role in routine rhetoric',
+            0: 'US broker wheel quiet',
         },
     }
     return band.get(hub, {}).get(level, f'{hub} {relationship} L{level}')
@@ -612,6 +595,11 @@ def _compute_composite(actor_scores):
     elif composite >= 12: theatre_level = 1
     else:                 theatre_level = 0
 
+    # v1.1.0: the theatre can't run hotter than its hottest wheel.
+    theatre_level = min(theatre_level, max(tk_lvl, ru_lvl, ir_lvl, il_lvl, am_lvl, dm_lvl))
+    us_lvl = actor_scores.get('us_broker', {}).get('level', 0)
+    us_raw = actor_scores.get('us_broker', {}).get('raw_score', 0)
+
     level_info = ESCALATION_LEVELS[theatre_level]
 
     # Contested-node read: how many wheels are simultaneously active (>= L2)
@@ -642,12 +630,13 @@ def _compute_composite(actor_scores):
 
     # Per-wheel spoke fingerprints (canonical schema; direction + ts stamped at write time)
     spoke_fingerprints = {}
-    raw_by_hub = {'turkey': tk_raw, 'russia': ru_raw, 'iran': ir_raw, 'israel': il_raw}
+    raw_by_hub = {'turkey': tk_raw, 'russia': ru_raw, 'iran': ir_raw, 'israel': il_raw, 'us': us_raw}
     for hub, meta in WHEEL_VECTORS.items():
-        lvl = wheel_levels[hub]
+        lvl = wheel_levels.get(hub, us_lvl if hub == 'us' else 0)
         spoke_fingerprints[hub] = {
             'spoke':        'azerbaijan',
             'hub':          hub,
+            'node_class':   meta['node_class'],
             'vector':       meta['vector'],
             'relationship': meta['relationship'],
             'level':        lvl,
@@ -667,6 +656,7 @@ def _compute_composite(actor_scores):
         'iran_friction_level':    ir_lvl,
         'israel_axis_level':      il_lvl,
         'armenia_corridor_level': am_lvl,
+        'us_broker_level':        us_lvl,
         'is_contested_node':      is_contested_node,
         'contested_node_score':   contested_node_score,
         # 'ts' stamped at write time
@@ -688,6 +678,7 @@ def _compute_composite(actor_scores):
         'israel_axis_level':        il_lvl,
         'armenia_corridor_level':   am_lvl,
         'domestic_legitimacy_level': dm_lvl,
+        'us_broker_level':          us_lvl,
         # Highest single-wheel intensity (drives the frontend Intensity Ladder).
         # Distinct from theatre_level, which is the weighted composite.
         'peak_wheel_level':         max(tk_lvl, ru_lvl, ir_lvl, il_lvl, am_lvl, dm_lvl),
@@ -728,7 +719,10 @@ def _prior_wheel_levels():
         if not raw:
             return {}
         prev = json.loads(raw)
+        if isinstance(prev, list) and prev:          # v1.0 rows: JSON list wrapper
+            prev = json.loads(prev[0]) if isinstance(prev[0], str) else prev[0]
         return {
+            'us':     prev.get('us_broker_level', 0),
             'turkey': prev.get('turkey_axis_level', 0),
             'russia': prev.get('russia_rupture_level', 0),
             'iran':   prev.get('iran_friction_level', 0),
@@ -746,7 +740,7 @@ def run_azerbaijan_rhetoric_scan(days=5):
     print(f'[Azerbaijan Rhetoric] Starting scan (days={days})...')
     start_time = time.time()
 
-    articles = _fetch_all_articles(days=days)
+    articles, sensing = _fetch_all_articles(days=days)
 
     telegram_msgs = []
     if TELEGRAM_AVAILABLE:
@@ -778,8 +772,11 @@ def run_azerbaijan_rhetoric_scan(days=5):
     result = {
         'success':               True,
         'theatre':               'Azerbaijan',
-        'version':               '1.0.0',
-        'timestamp':             now,
+        'version':              TRACKER_VERSION,
+        'feeds_version':        FEEDS_VERSION,
+        'timestamp':            now,
+        'sensing':              sensing,
+        'source_outlets':       len({str(a.get('source', '')).lower() for a in articles} - {''}),
         'scanned_at':            now,
         'scan_duration_seconds': elapsed,
         'total_articles':        len(articles),
@@ -847,6 +844,9 @@ def _bg_scan():
             'domestic_legitimacy_level': result['domestic_legitimacy_level'],
             'contested_node_score':      result['contested_node_score'],
             'convergence_signal':        result['convergence_signal'],
+            'us_broker_level':           result.get('us_broker_level', 0),
+            'thin_read':                 bool((result.get('interpretation') or {}).get('thin_read')),
+            'version':                   TRACKER_VERSION,
         }
         _redis_lpush(HISTORY_KEY, history_entry)
 
@@ -866,6 +866,10 @@ def _bg_scan():
                 else:
                     fp['direction'] = 'steady'
                 fp['ts'] = now_iso
+                _interp = result.get('interpretation') or {}
+                fp['thin_read'] = bool(_interp.get('thin_read'))
+                fp['top_indicator'] = _interp.get('top_indicator', '')
+                fp['version'] = TRACKER_VERSION
                 _redis_set(f'spoke:{hub}:azerbaijan', fp, ttl=SPOKE_TTL)
                 # Rim Emission Pass (Jul 2026): ALSO write the canonical
                 # hub-agnostic key the Russia wheel actually reads. The
@@ -900,7 +904,7 @@ def _bg_scan():
         }
         _write_crosstheater_fingerprint(ct_slice)
 
-        print('[Azerbaijan Rhetoric] Cache + history + 4 spoke fingerprints written')
+        print('[Azerbaijan Rhetoric] Cache + history + %d spoke fingerprints written' % len(spokes))
     except Exception as e:
         print(f'[Azerbaijan Rhetoric] Background scan error: {e}')
     finally:
@@ -928,11 +932,16 @@ def register_azerbaijan_rhetoric_endpoints(app):
     @app.route('/api/rhetoric/azerbaijan', methods=['GET'])
     def azerbaijan_rhetoric():
         force = request.args.get('force', '').lower() in ('true', '1', 'yes')
-        days  = int(request.args.get('days', 5))
-
+        try:
+            days = int(request.args.get('days', 5))
+        except (TypeError, ValueError):
+            days = 5
+        if force and time.time() - _last_force['ts'] < FORCE_MIN_INTERVAL:
+            force = False   # v1.1.0: rate-limited -- serve the cache instead
         if force:
+            _last_force['ts'] = time.time()
             try:
-                return jsonify(run_azerbaijan_rhetoric_scan(days=days))
+                return jsonify(run_azerbaijan_rhetoric_scan(days=min(max(days, 1), 14)))
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)[:200]}), 500
 
@@ -956,7 +965,7 @@ def register_azerbaijan_rhetoric_endpoints(app):
             'theatre_escalation_label': 'Scanning...',
             'theatre_escalation_color': '#6b7280',
             'message':                  'First scan in progress - fetching Azerbaijan / South-Caucasus sources...',
-            'version':                  '1.0.0',
+            'version':                  TRACKER_VERSION,
         })
 
     @app.route('/api/rhetoric/azerbaijan/summary', methods=['GET'])
@@ -1000,6 +1009,8 @@ def register_azerbaijan_rhetoric_endpoints(app):
                     for aid, adat in actors.items()
                 },
                 'total_articles':   cached.get('total_articles', 0),
+                'top_indicator':    (cached.get('interpretation') or {}).get('top_indicator', ''),
+                'thin_read':        bool((cached.get('interpretation') or {}).get('thin_read')),
                 'scanned_at':       cached.get('scanned_at', ''),
                 'cached':           True,
             })
@@ -1023,7 +1034,11 @@ def register_azerbaijan_rhetoric_endpoints(app):
                 )
                 for item in resp.json().get('result', []):
                     try:
-                        entries.append(json.loads(item))
+                        e = json.loads(item)
+                        if isinstance(e, list) and e:      # v1.0 rows: JSON list wrapper
+                            e = json.loads(e[0]) if isinstance(e[0], str) else e[0]
+                        if isinstance(e, dict):
+                            entries.append(e)
                     except Exception:
                         pass
             entries.reverse()
@@ -1032,6 +1047,7 @@ def register_azerbaijan_rhetoric_endpoints(app):
                 'theatre': 'Azerbaijan',
                 'count':   len(entries),
                 'entries': entries,
+                'history': entries,
             })
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500

@@ -1,7 +1,22 @@
 """
 greenland_signal_interpreter.py
 Asifah Analytics -- Europe Backend Module
-v1.0.0
+v1.1.0 (Nov 3 2026)   (v1.0.0 Apr 2026)
+
+v1.1.0 -- EVIDENCE, THE DEAL, AND HONEST GAPS
+  1. Red lines are scored on the WHOLE corpus, per article, counting publishers
+     (europe_evidence): BREACHED needs 2+ outlets. v1.0 scanned only each actor's
+     top-5 headlines and breached on ONE -- "Article 5 invoked" fired on any
+     single story containing "collective defense".
+  2. AGREEMENT TRACK. The Sept 18 2026 US-Denmark-Greenland defence agreement
+     (amends the 1951 agreement; Pituffik expanded, new areas at Narsarsuaq and
+     Mestersvig; non-NATO militaries excluded; investment screening) moved the
+     crisis from coercion to a negotiated track, pending both parliaments. The
+     tracker now reads whether that track holds or re-escalates. The old
+     "dialogue" pseudo-red-line became this green read.
+  3. THIN READ + top_indicator. Greenland's premier since April 2025 is
+     Jens-Frederik Nielsen (Demokraatit); the v1.0 tracker text still named Mute Egede.
+  4. Spoke levels for spoke:us / spoke:russia / spoke:china :greenland.
 
 Signal interpretation engine for the Greenland Sovereignty Rhetoric Tracker.
 
@@ -37,6 +52,74 @@ Author: RCGG / Asifah Analytics
 """
 
 from datetime import datetime, timezone
+
+from europe_evidence import build_corpus, score_line, score_green, find, corpus_health
+
+INTERPRETER_VERSION = '1.1.0'
+THIN_MIN_ARTICLES = 25
+
+# Evidence triggers per red line (breach, approach). BREACHED = a breach phrase
+# carried by 2+ outlets; APPROACHING = 1 outlet, or approach phrases in 2+.
+RED_LINE_TRIGGERS = {
+    'us_unilateral_action': (
+        ['us seizes greenland', 'us annexes greenland', 'annexation of greenland announced',
+         'us troops land in greenland', 'us forces seize', 'us takes control of greenland'],
+        ['military force greenland', 'rule out force', 'rule out military force', 'take greenland by force',
+         'one way or another', 'no going back', 'take greenland', 'annex greenland']),
+    'pituffik_access_demand': (
+        ['pituffik ultimatum', 'basing ultimatum', 'base ultimatum greenland'],
+        ['pituffik demand', 'basing demand', 'demands more bases', 'base access demand']),
+    'nato_article5_invocation': (
+        ['invokes article 5', 'article 5 invoked', 'invoke article 4', 'article 4 consultations'],
+        ['article 5', 'collective defence', 'collective defense', 'nato consultations greenland']),
+    'russia_northern_fleet_surge': (
+        ['russian submarine off greenland', 'russian submarines near greenland', 'northern fleet surge',
+         'russian warships off greenland', 'giuk gap russian'],
+        ['northern fleet exercise', 'northern fleet', 'russian submarine arctic', 'ssbn', 'severomorsk',
+         'russia arctic exercise']),
+    'us_economic_coercion_denmark': (
+        ['tariffs on denmark', 'tariff on denmark', 'sanctions on denmark', 'tariffs on european countries over greenland'],
+        ['threatens tariffs', 'tariff threat', 'economic pressure on denmark', 'trade war denmark']),
+    'greenland_formal_independence_vote': (
+        ['independence referendum date', 'greenland calls referendum', 'referendum on independence set',
+         'inatsisartut votes for referendum'],
+        ['independence referendum', 'independence vote', 'independence poll']),
+    'denmark_military_deployment_arctic': (
+        ['denmark deploys troops to greenland', 'danish troops to greenland', 'danish frigate greenland',
+         'european troops greenland', 'troops arrive in greenland', 'reinforces greenland'],
+        ['arctic sentry', 'arktisk kommando', 'arctic command', 'danish defence greenland', 'operation arctic']),
+    'russia_wedge_diplomacy': (
+        ['russia offers greenland', 'kremlin offers greenland'],
+        ['russia greenland cooperation', 'moscow greenland', 'kremlin greenland']),
+    'nato_ally_public_rebuke_us': (
+        ['joint statement greenland sovereignty', 'leaders back danish sovereignty', 'european leaders back denmark',
+         'allies back denmark'],
+        ['europe condemns', 'eu greenland sovereignty', 'macron greenland', 'merz greenland', 'starmer greenland']),
+}
+SCORED_RED_LINES = list(RED_LINE_TRIGGERS)
+
+# The negotiated track (Sept 2026 deal). Date-stamped background, not scored.
+AGREEMENT_BASELINE = {
+    'as_of': '2026-10-21',
+    'what': ('US-Denmark-Greenland defence agreement announced Sept 18 2026, amending the 1951 agreement: '
+             'Pituffik modernised and expanded, new defence areas at Narsarsuaq and Mestersvig, US movement '
+             'rights between areas, non-NATO military presence excluded, investment screening for non-NATO/'
+             'non-EU investors. No end date.'),
+    'sovereignty': ('Danish sovereignty and Greenland\'s self-determination reaffirmed; an independent Greenland '
+                    'would have to stay in NATO and take on the agreement.'),
+    'status': 'Required approval by both the Inatsisartut (Nuuk) and the Folketing (Copenhagen).',
+    'rhetoric_gap': ('Trump called it "permanent control over security and all other needs"; Nuuk and '
+                     'Copenhagen call it a sovereignty-respecting defence pact. The gap is the thing to watch.'),
+    'sources': ['https://eprs.europarl.europa.eu/contents/publications/EPRS/2026/10/EPRS_ATA(2026)791543.html',
+                'https://www.aljazeera.com/news/2026/9/18/trump-claims-deal-with-denmark-gives-us-permanent-control-over-greenland'],
+}
+AGREEMENT_ACTIVE = ['defence agreement', 'defense agreement', 'greenland agreement', 'greenland deal',
+                    '1951 agreement', 'narsarsuaq', 'mestersvig', 'inatsisartut approves', 'folketing approves',
+                    'parliament approves greenland', 'ratifies greenland', 'agreement signed greenland',
+                    'pituffik modernisation', 'pituffik modernization']
+AGREEMENT_STRAIN = ['permanent control', 'control over greenland', 'deal collapses', 'rejects the agreement',
+                    'rejects greenland agreement', 'agreement in doubt', 'not for sale', 'renegotiate greenland',
+                    'protest against us consulate', 'hands off greenland']
 
 
 # ============================================================
@@ -260,189 +343,74 @@ HISTORICAL_PRECEDENTS = [
 # CORE SCORING FUNCTIONS
 # ============================================================
 
-def _score_red_lines(scan_data):
-    """Evaluate Greenland signal state against defined red lines."""
-    actors = scan_data.get('actors', {})
+def _corpus(scan_data):
+    arts = scan_data.get('rumint_articles') or []
+    if not arts:   # cached / test payloads: fall back to actors' top articles
+        for a in (scan_data.get('actors') or {}).values():
+            arts = arts + list(a.get('top_articles') or [])
+    return build_corpus({'articles_en': arts, 'telegram_messages': scan_data.get('rumint_telegram') or []})
 
-    us_level       = actors.get('us_pressure',     {}).get('level',
-                     actors.get('us_pressure',     {}).get('escalation_level', 0))
-    greenland_level = actors.get('greenland_inuit', {}).get('level',
-                      actors.get('greenland_inuit', {}).get('escalation_level', 0))
-    denmark_level  = actors.get('denmark_nato',    {}).get('level',
-                     actors.get('denmark_nato',    {}).get('escalation_level', 0))
-    russia_level   = actors.get('russia_arctic',   {}).get('level',
-                     actors.get('russia_arctic',   {}).get('escalation_level', 0))
 
-    theatre_score  = scan_data.get('theatre_score', 0)
-    russia_opportunism = scan_data.get('russia_opportunism', False)
-
-    # Scan article headlines for specific trigger phrases
-    def _scan_articles(actor_ids, keywords):
-        for aid in actor_ids:
-            actor_data = actors.get(aid, {})
-            # Support both 'top_articles' (interpreter format) and direct
-            for art in actor_data.get('top_articles', []):
-                title = art.get('title', '').lower()
-                if any(kw in title for kw in keywords):
-                    return True
-        return False
-
-    # Signal detection
-    unilateral_signal = _scan_articles(
-        ['us_pressure'],
-        ['unilateral', 'us troops greenland', 'us forces greenland',
-         'military action greenland', 'seize greenland', 'take greenland by force',
-         'sanctions denmark', 'us sanctions', 'tariff denmark greenland']
-    )
-    pituffik_ultimatum = _scan_articles(
-        ['us_pressure'],
-        ['pituffik', 'thule', 'basing rights', 'base access', 'military base greenland',
-         'expand base', 'us base demand', 'pentagon greenland ultimatum']
-    )
-    article5_signal = _scan_articles(
-        ['denmark_nato'],
-        ['article 5', 'collective defense', 'nato defense', 'treaty obligation',
-         'nato ally greenland', 'invoke article', 'alliance commitment greenland']
-    )
-    russia_fleet_signal = _scan_articles(
-        ['russia_arctic'],
-        ['northern fleet', 'ssbn', 'submarine patrol', 'naval exercise arctic',
-         'severomorsk', 'borei', 'arctic submarine', 'giuk', 'arctic naval',
-         'russian warship arctic', 'northern fleet deployment']
-    )
-    economic_coercion = _scan_articles(
-        ['us_pressure'],
-        ['tariff denmark', 'sanction denmark', 'aid cut greenland', 'economic pressure denmark',
-         'leverage greenland', 'denmark tariff', 'us economic greenland']
-    )
-    referendum_signal = _scan_articles(
-        ['greenland_inuit'],
-        ['referendum', 'independence vote', 'greenland vote', 'self-determination vote',
-         'greenland poll independence', 'inatsisartut vote', 'independence referendum']
-    )
-    denmark_military = _scan_articles(
-        ['denmark_nato'],
-        ['danish frigate', 'danish warship', 'danish navy', 'danish troops',
-         'danish military greenland', 'denmark deploys', 'arktisk kommando',
-         'danish patrol', 'sirius patrol', 'danish p-8']
-    )
-    russia_wedge = _scan_articles(
-        ['russia_arctic'],
-        ['russia offer', 'russia greenland deal', 'kremlin offer', 'russia alternative',
-         'russia greenland cooperation', 'moscow greenland', 'russia greenland partner']
-    )
-    ally_rebuke = _scan_articles(
-        ['denmark_nato'],
-        ['france condemns', 'uk condemns', 'germany condemns', 'europe condemns',
-         'allies condemn', 'nato condemns', 'europe rejects us', 'allies reject',
-         'european response trump greenland']
-    )
-    dialogue_signal = _scan_articles(
-        ['greenland_inuit', 'denmark_nato', 'us_pressure'],
-        ['negotiations', 'dialogue', 'talks', 'diplomatic solution',
-         'mineral rights deal', 'basing agreement', 'security deal greenland',
-         'greenland us agreement', 'negotiated access']
-    )
-
+def _score_red_lines(scan_data, corpus=None):
+    """v1.1.0: evidence-based (see module docstring). Returns only lines that
+    are WATCHING or above, sorted by severity -- the page lists what is live."""
+    corpus = corpus if corpus is not None else _corpus(scan_data)
     triggered = []
-
-    # ── US unilateral action ──
-    if unilateral_signal or us_level >= 4:
+    for rid in SCORED_RED_LINES:
+        base = next(r for r in RED_LINES if r['id'] == rid)
+        br, ap = RED_LINE_TRIGGERS[rid]
+        sc = score_line(corpus, br, ap)
+        if sc['status'] == 'INACTIVE':
+            continue
+        n = sc['breach_outlets'] if sc['status'] == 'BREACHED' else max(sc['breach_outlets'], sc['approach_outlets'])
+        ev = sc['evidence'][0] if sc['evidence'] else None
         triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'us_unilateral_action'),
-            'status':  'BREACHED' if (unilateral_signal and us_level >= 4) else 'APPROACHING',
-            'trigger': f'US pressure L{us_level} -- '
-                       f'{"unilateral action language detected" if unilateral_signal else "approaching unilateral threshold"}',
+            **base, **sc,
+            'trigger': (f"{sc['status'].title()} on {n} outlet{'s' if n != 1 else ''}"
+                        + (f" -- e.g. \"{ev['title'][:90]}\" ({ev['outlet']})" if ev else '')),
         })
-
-    # ── Pituffik/basing ultimatum ──
-    if pituffik_ultimatum and us_level >= 3:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'pituffik_access_demand'),
-            'status':  'BREACHED' if us_level >= 4 else 'APPROACHING',
-            'trigger': f'Pituffik/basing language + US pressure L{us_level} -- '
-                       f'NORAD/Arctic basing rights in play',
-        })
-
-    # ── NATO Article 5 invocation ──
-    if article5_signal or (denmark_level >= 4 and us_level >= 4):
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'nato_article5_invocation'),
-            'status':  'BREACHED' if article5_signal else 'APPROACHING',
-            'trigger': f'Article 5 / collective defense language detected -- '
-                       f'Denmark L{denmark_level}, US pressure L{us_level}',
-        })
-
-    # ── Russia Northern Fleet surge ──
-    if russia_fleet_signal or russia_level >= 4:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'russia_northern_fleet_surge'),
-            'status':  'BREACHED' if (russia_fleet_signal and russia_level >= 4) else 'APPROACHING',
-            'trigger': f'Russia Arctic L{russia_level} -- '
-                       f'{"Northern Fleet/SSBN language detected" if russia_fleet_signal else "elevated Arctic posture signals"}. '
-                       f'GIUK Gap watch active.',
-        })
-
-    # ── US economic coercion of Denmark ──
-    if economic_coercion and us_level >= 2:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'us_economic_coercion_denmark'),
-            'status':  'APPROACHING',
-            'trigger': f'Economic coercion language (tariffs/sanctions/leverage) + US L{us_level} -- '
-                       f'rhetoric escalating to operational pressure',
-        })
-
-    # ── Greenland independence referendum ──
-    if referendum_signal or greenland_level >= 3:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'greenland_formal_independence_vote'),
-            'status':  'BREACHED' if referendum_signal else 'APPROACHING',
-            'trigger': f'Greenland/Inuit L{greenland_level} -- '
-                       f'{"referendum language detected -- independence paradox signal" if referendum_signal else "sovereignty defense escalating"}',
-        })
-
-    # ── Denmark military deployment ──
-    if denmark_military and denmark_level >= 2:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'denmark_military_deployment_arctic'),
-            'status':  'APPROACHING',
-            'trigger': f'Danish military Arctic deployment language + Denmark/NATO L{denmark_level} -- '
-                       f'Copenhagen treating pressure as sovereignty threat',
-        })
-
-    # ── Russia wedge diplomacy ──
-    if russia_wedge or (russia_opportunism and russia_level >= 3):
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'russia_wedge_diplomacy'),
-            'status':  'APPROACHING',
-            'trigger': f'Russia Arctic L{russia_level} -- '
-                       f'{"wedge diplomacy language detected" if russia_wedge else "opportunism signals at elevated level"}',
-        })
-
-    # ── Multi-ally rebuke ──
-    if ally_rebuke and denmark_level >= 2:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'nato_ally_public_rebuke_us'),
-            'status':  'APPROACHING',
-            'trigger': f'Multiple NATO ally condemnation language + Denmark/NATO L{denmark_level} -- '
-                       f'alliance-wide cohesion signal',
-        })
-
-    # ── De-escalation: dialogue opening ──
-    if dialogue_signal and us_level <= 3:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'greenland_us_dialogue'),
-            'status':  'APPROACHING',
-            'trigger': f'Negotiation/dialogue language detected -- '
-                       f'potential off-ramp from coercive track',
-        })
-
-    # Sort: severity desc, deescalation last
-    triggered.sort(key=lambda x: (
-        -x['severity'],
-        0 if x['category'] != 'deescalation_signal' else 1
-    ))
+    triggered.sort(key=lambda x: (-{'BREACHED': 2, 'APPROACHING': 1}.get(x['status'], 0), -x['severity']))
     return triggered
+
+
+def _agreement_track(corpus):
+    act = find(corpus, AGREEMENT_ACTIVE)
+    strain = find(corpus, AGREEMENT_STRAIN)
+    na, ns = len(act['outlets']), len(strain['outlets'])
+    if na and ns >= 2:
+        status, read = 'contested', (f'The defence agreement is in the news ({na} outlets) alongside strain language '
+                                     f'({ns} outlets) -- "permanent control" rhetoric, protests or rejection talk. '
+                                     'The negotiated track is being tested.')
+    elif na:
+        status, read = 'holding', (f'The defence agreement is the frame ({na} outlets) without corroborated strain -- '
+                                   'the crisis is running on the negotiated track.')
+    elif ns >= 2:
+        status, read = 'strain', (f'Strain language without the agreement in view ({ns} outlets) -- watch for '
+                                  're-escalation outside the negotiated track.')
+    else:
+        status, read = 'quiet', 'The agreement is not in this cycle\'s corpus.'
+    return {'status': status, 'agreement_outlets': na, 'strain_outlets': ns, 'read': read,
+            'baseline': AGREEMENT_BASELINE,
+            'evidence': (act['evidence'][:2] + strain['evidence'][:2])[:4]}
+
+
+def _top_indicator(actors_lv, red_lines, agreement, health):
+    br = [r for r in red_lines if r['status'] == 'BREACHED']
+    us = actors_lv.get('us_pressure', 0)
+    if br:
+        line = f"{br[0]['label']}: corroborated by {br[0]['breach_outlets']} outlets."
+    elif agreement['status'] == 'contested':
+        line = 'The defence agreement is being tested -- "control" rhetoric and pushback in the same cycle.'
+    elif us >= 3:
+        line = f'US pressure on Greenland is back at L{us} -- watch whether it stays inside the agreement or steps outside it.'
+    elif agreement['status'] == 'holding':
+        line = 'The crisis is running on the negotiated track: the Sept 2026 defence agreement frames this cycle.'
+    elif any(r['status'] == 'APPROACHING' for r in red_lines):
+        r = next(r for r in red_lines if r['status'] == 'APPROACHING')
+        line = f"Watching: {r['label'].lower()} -- reported, not corroborated."
+    else:
+        line = 'No coercion signal is corroborated this cycle; the negotiated track is the baseline.'
+    return ('Thin read -- ' + line) if health['thin'] else line
 
 
 # ============================================================
@@ -690,7 +658,7 @@ def _build_so_what(scan_data, red_lines_triggered, historical_matches):
         indicators.append(
             'INDEPENDENCE PARADOX: Greenlandic independence polling is rising under US pressure. '
             'An independent Greenland would be harder for the US to acquire than '
-            'Danish-administered Greenland -- monitor Naalakkersuisut referendum signals '
+            'Danish-administered Greenland -- monitor Naalakkersuisut (Premier Jens-Frederik Nielsen) referendum signals '
             'as a counter-leverage mechanism by Nuuk.'
         )
 
@@ -935,42 +903,67 @@ def interpret_signals(scan_data):
     """
     Main entry point. Called from rhetoric_tracker_greenland.py with full scan_data.
     Returns interpretation dict embedded as result['interpretation'].
-    Mirrors lebanon_signal_interpreter.py pattern exactly.
     """
     try:
-        red_lines  = _score_red_lines(scan_data)
+        corpus = _corpus(scan_data)
+        health = corpus_health(scan_data, corpus, THIN_MIN_ARTICLES)
+        red_lines = _score_red_lines(scan_data, corpus)
         historical = _match_historical(scan_data)
-        so_what    = _build_so_what(scan_data, red_lines, historical)
-        rumint     = _score_rumint(scan_data)
+        so_what = _build_so_what(scan_data, red_lines, historical)
+        rumint = _score_rumint(scan_data)
+        agreement = _agreement_track(corpus)
 
-        breached    = [r for r in red_lines if r['status'] == 'BREACHED']
+        actors = scan_data.get('actors', {}) or {}
+        lv = {k: (v or {}).get('level', 0) for k, v in actors.items()}
+        top_indicator = _top_indicator(lv, red_lines, agreement, health)
+
+        # So What: the agreement thread + thin read, prepended to the situation.
+        so_what['agreement'] = agreement['read']
+        so_what['situation'] = (('THIN READ -- under-read scan (' + health['reason'] + '); quiet lines may be unread. ')
+                                if health['thin'] else '') + agreement['read'] + ' ' + so_what.get('situation', '')
+        if health['thin']:
+            so_what['scenario'] = 'THIN READ -- ' + so_what.get('scenario', '')
+
+        breached = [r for r in red_lines if r['status'] == 'BREACHED']
         approaching = [r for r in red_lines if r['status'] == 'APPROACHING']
-
+        spokes = {
+            'us': {'level': min(4, lv.get('us_pressure', 0)), 'node_class': 'inbound_target',
+                   'note': agreement['read'] if lv.get('us_pressure', 0) < 2 else
+                   f"US pressure L{lv.get('us_pressure', 0)}; agreement {agreement['status']}"},
+            'russia': {'level': min(4, lv.get('russia_arctic', 0)), 'node_class': 'inbound_target',
+                       'note': f"Russian Arctic posture L{lv.get('russia_arctic', 0)}"},
+            'china': {'level': min(2, lv.get('china_observer', 0)), 'node_class': 'resource_interest',
+                      'note': 'Chinese Arctic / minerals interest (now screened out by the agreement)'},
+        }
         return {
-            'so_what':             so_what,
-            'red_lines': {
-                'triggered':         red_lines,
-                'breached_count':    len(breached),
-                'approaching_count': len(approaching),
-                'highest_severity':  max((r['severity'] for r in red_lines), default=0),
-            },
-            'historical_matches':  historical,
-            'rumint':              rumint,
-            'interpreter_version': '1.0.0',
-            'interpreted_at':      datetime.now(timezone.utc).isoformat(),
+            'so_what': so_what,
+            'red_lines': {'triggered': red_lines, 'breached_count': len(breached),
+                          'approaching_count': len(approaching),
+                          'highest_severity': max((r['severity'] for r in breached), default=0)},
+            'historical_matches': historical,
+            'rumint': rumint,
+            'agreement_track': agreement,
+            'top_indicator': top_indicator,
+            'corpus_health': health,
+            'thin_read': health['thin'],
+            'spokes': spokes,
+            'interpreter_version': INTERPRETER_VERSION,
+            'interpreted_at': datetime.now(timezone.utc).isoformat(),
         }
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f'[Greenland Interpreter] Error: {str(e)[:120]}')
         return {
-            'so_what':            {'scenario': 'Interpreter error', 'assessment': str(e)[:200]},
-            'red_lines':          {'triggered': [], 'breached_count': 0, 'approaching_count': 0, 'highest_severity': 0},
+            'so_what': {'scenario': 'Interpreter error -- unread, not calm', 'assessment': str(e)[:200]},
+            'red_lines': {'triggered': [], 'breached_count': 0, 'approaching_count': 0, 'highest_severity': 0},
             'historical_matches': [],
-            'rumint':             {'active': False, 'band': 'off', 'label': '',
-                                   'driver': '', 'framing': 0, 'specificity': 0,
-                                   'reception': 0, 'corroboration': 0},
-            'interpreter_version': '1.0.0',
-            'error':              str(e)[:200],
+            'rumint': {'active': False, 'band': 'off', 'label': '', 'driver': '', 'framing': 0,
+                       'specificity': 0, 'reception': 0, 'corroboration': 0},
+            'top_indicator': 'Interpreter error this cycle -- unread, not calm.',
+            'thin_read': True, 'corpus_health': {'thin': True, 'reason': 'interpreter error'},
+            'spokes': {}, 'interpreter_version': INTERPRETER_VERSION, 'error': str(e)[:200],
         }
 
 
@@ -1231,6 +1224,25 @@ def build_top_signals(scan_data):
             'color':      '#f59e0b',
             'short_text': f'{GREENLAND_FLAG} GREENLAND: {convergence_signal[:55]}',
             'long_text':  f'GREENLAND convergence: {convergence_signal}',
+        })
+
+    # ============================================
+    # 8. AGREEMENT TRACK (v1.1.0)
+    # ============================================
+    ag = interp.get('agreement_track') or {}
+    if ag.get('status') in ('contested', 'strain'):
+        signals.append({
+            'priority': 8, 'category': 'agreement_strain', 'theatre': 'greenland', 'level': max(theatre_level, 2),
+            'icon': '📜', 'color': '#f59e0b',
+            'short_text': f'{GREENLAND_FLAG} GREENLAND: Defence agreement under strain',
+            'long_text': 'GREENLAND: ' + (ag.get('read') or ''),
+        })
+    elif ag.get('status') == 'holding':
+        signals.append({
+            'priority': 4, 'category': 'agreement_holding', 'theatre': 'greenland', 'level': theatre_level,
+            'icon': '📜', 'color': '#10b981',
+            'short_text': f'{GREENLAND_FLAG} GREENLAND: Negotiated track holding',
+            'long_text': 'GREENLAND: ' + (ag.get('read') or ''),
         })
 
     # Sort descending; BLUF will dedupe + globally rank

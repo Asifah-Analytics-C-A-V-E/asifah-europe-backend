@@ -1,6 +1,6 @@
 """
 Asifah Analytics — Greenland Sovereignty Rhetoric Tracker
-v1.0.0 — April 2026
+v1.1.0 — November 3, 2026   (v1.0.0 April 2026)
 
 ANALYTICAL FRAME — Inverted threat model:
 The United States is the primary pressure actor. Greenland, Denmark,
@@ -17,7 +17,8 @@ This tracker answers three analytical questions:
 
   Q2: How is Greenland + Denmark + NATO pushing back?
       → SOVEREIGNTY_DEFENSE vector
-      Múte Egede / IA party defiance language, Danish defense deployments,
+      Naalakkersuisut (Premier Jens-Frederik Nielsen, Demokraatit-led
+      coalition since April 2025) defiance language, Danish defense deployments,
       NATO Article 5 invocation signals, Nordic solidarity statements,
       Greenlandic self-determination rhetoric, Danish military activity
 
@@ -29,7 +30,7 @@ This tracker answers three analytical questions:
 
 ACTORS:
   us_pressure       — Trump admin, Pentagon, Congress on Greenland acquisition
-  greenland_inuit   — Múte Egede, Inuit Ataqatigiit, Greenlandic government (Naalakkersuisut)
+  greenland_inuit   — Naalakkersuisut (Premier Jens-Frederik Nielsen), the Inatsisartut, Greenlandic parties
   denmark_nato      — Copenhagen government, Danish military, NATO collective defense
   russia_arctic     — Kremlin Arctic opportunism, Northern Fleet, wedge signaling
   china_observer    — Beijing Arctic interest (secondary — monitoring only)
@@ -54,6 +55,21 @@ ENDPOINTS:
 
 CHANGELOG:
   v1.0.0 (2026-04-04): Initial build — inverted threat model, 4-actor system
+  v1.1.0 (2026-11-03): Evidence pass.
+    - Fetching moved to europe_feeds: the article 'source' is now the PUBLISHER
+      (it was the feed URL, so outlets could never be counted). GDELT goes
+      through gdelt_gateway. Honest User-Agent.
+    - Actor levels are capped by outlet breadth (volume can't climb above
+      evidence); theatre level capped at the highest actor level.
+    - Nitter disabled: 11 accounts x 3 dead mirrors x 8s timeouts was up to
+      ~4.5 minutes of failed requests per scan for zero posts.
+    - Leadership keywords updated (Nielsen / Demokraatit; Egede kept as a
+      keyword -- former premier) and the Sept 2026 defence-agreement vocabulary added.
+    - Spokes: spoke:us:greenland, spoke:russia:greenland, spoke:china:greenland
+      (30h TTL, node_class) alongside the hub-agnostic crosstheater key.
+    - History: Upstash LPUSH uses the command form (the v1.0 body form stored a
+      JSON *list*); the endpoint returns both 'entries' and 'history'.
+    - ?force is rate-limited to one live scan per 10 minutes.
 
 COPYRIGHT © 2025-2026 Asifah Analytics. All rights reserved.
 """
@@ -68,6 +84,13 @@ import urllib.parse
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from flask import jsonify, request
+
+from europe_feeds import gather, score_actor, breadth_cap, gnews_url, FEEDS_VERSION
+
+TRACKER_VERSION = '1.1.0'
+SPOKE_TTL = 30 * 3600          # spoke convention: 30h; reader flags >24h as not reporting
+_last_force = {'ts': 0.0}
+FORCE_MIN_INTERVAL = 600
 
 # ============================================
 # CONFIG
@@ -153,6 +176,9 @@ ACTORS = {
             # Congressional
             'congress greenland', 'senate greenland', 'greenland bill us',
             'greenland legislation', 'us greenland act',
+            # v1.1: post-deal vocabulary (Sept 2026 agreement)
+            'permanent control', 'control over greenland', 'us consulate nuuk',
+            'us envoy greenland', 'landry greenland',
         ],
         'baseline_statements_per_week': 12,
         'weight': 1.4,   # Primary signal — overweighted
@@ -163,10 +189,11 @@ ACTORS = {
         'flag': '🇬🇱', 'icon': '🧊',
         'color': '#0ea5e9',
         'role': 'Sovereignty Defense — Local',
-        'description': 'Múte Egede, Inuit Ataqatigiit, Naalakkersuisut — Greenlandic self-determination',
+        'description': 'Premier Jens-Frederik Nielsen, Naalakkersuisut, Inatsisartut — Greenlandic self-determination',
         'keywords': [
             # Leadership statements
-            'mute egede', 'múte egede', 'egede greenland',
+            'jens-frederik nielsen', 'jens frederik nielsen', 'nielsen greenland',
+            'demokraatit', 'mute egede', 'múte egede', 'egede greenland',
             'naalakkersuisut', 'greenland government statement',
             'inuit ataqatigiit', 'greenlandic government rejects',
             'greenland prime minister', 'greenland premier',
@@ -310,24 +337,25 @@ ACTORS = {
 # RSS FEEDS
 # ============================================
 RSS_FEEDS = [
-    # Arctic-focused
+    # Arctic-focused outlets (publisher = the feed's host)
     'https://www.arctictoday.com/feed/',
     'https://www.highnorthnews.com/en/rss.xml',
     'https://sermitsiaq.ag/rss',
     'https://knr.gl/da/rss',
-    'https://news.google.com/rss/search?q=gr%C3%B8nland+suver%C3%A6nitet+OR+gr%C3%B8nland+usa+OR+gr%C3%B8nland+trump&hl=da&gl=DK&ceid=DK:da',
-    # Danish news (English)
     'https://www.thelocal.dk/feed/',
-    'https://denmark.dk/news-and-media/rss-feeds',
-    # Nordic/European defense
-    'https://news.google.com/rss/search?q=greenland+sovereignty+OR+denmark+greenland+OR+trump+greenland&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=greenland+acquisition+OR+greenland+independence+OR+greenland+nato&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=greenland+military+OR+arctic+sovereignty+OR+pituffik+OR+thule&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=mute+egede+OR+naalakkersuisut+OR+inuit+ataqatigiit+greenland&hl=en&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=russia+arctic+greenland+OR+russia+northern+fleet+arctic&hl=en&gl=US&ceid=US:en',
-    # Danish-language (GDELT will also cover this)
-    'https://news.google.com/rss/search?q=grønland+suverænitet+OR+arktisk+kommando+OR+dansk+forsvar+grønland&hl=da&gl=DK&ceid=DK:da',
+    # Google News (publisher read per item)
+    gnews_url('greenland sovereignty OR "denmark greenland" OR "trump greenland"'),
+    gnews_url('greenland "defence agreement" OR "defense agreement" OR pituffik OR narsarsuaq OR mestersvig'),
+    gnews_url('greenland independence OR inatsisartut OR naalakkersuisut OR "jens-frederik nielsen"'),
+    gnews_url('greenland nato OR "arctic sentry" OR "arctic command"'),
+    gnews_url('russia arctic greenland OR "northern fleet" arctic'),
+    gnews_url('china greenland minerals OR "rare earth" greenland'),
+    gnews_url('grønland forsvarsaftale OR grønland USA OR grønland suverænitet', 'da'),
+    gnews_url('grønland "arktisk kommando" OR "dansk forsvar" grønland', 'da'),
 ]
+# Arctic Today / The Local carry more than Greenland: keep only on-topic items.
+TOPIC_TERMS = ['greenland', 'grønland', 'nuuk', 'pituffik', 'thule', 'arctic', 'arktis', 'kalaallit',
+               'denmark', 'danish', 'danmark', 'naalakkersuisut', 'inatsisartut']
 
 # ============================================
 # NITTER FEEDS — Primary source Twitter/X accounts
@@ -342,7 +370,11 @@ NITTER_MIRRORS = [
 
 # Account list: (username, weight, description)
 # Weight > 1.0 = primary source (direct government statement)
-NITTER_ACCOUNTS = [
+# v1.1.0: DISABLED. Every public Nitter mirror in this list is dead (X closed
+# guest access); the loop was 11 accounts x 3 mirrors x 8s of timeouts per scan.
+# Kept for reference -- re-enable by renaming NITTER_ACCOUNTS_REFERENCE.
+NITTER_ACCOUNTS = []
+NITTER_ACCOUNTS_REFERENCE = [
     # US pressure actors
     ('realDonaldTrump',   1.2, 'Trump direct statements on Greenland'),
     ('SecRubio',          1.1, 'US Secretary of State — Greenland/Arctic'),
@@ -369,7 +401,7 @@ def _fetch_nitter(username, weight=1.0, timeout=8):
     Returns list of articles with source tagged as 'Nitter @{username}'.
     """
     articles = []
-    headers = {'User-Agent': 'Mozilla/5.0 (compatible; AsifahAnalytics/1.0)'}
+    headers = {'User-Agent': f'AsifahAnalytics-Europe-Greenland/{TRACKER_VERSION} (OSINT monitoring tool)'}
 
     for mirror in NITTER_MIRRORS:
         url = f'https://{mirror}/{username}/rss'
@@ -447,7 +479,8 @@ GDELT_QUERIES = [
     ('greenland acquisition trump purchase', 'eng'),
     ('greenland sovereignty united states military', 'eng'),
     ('greenland denmark nato arctic', 'eng'),
-    ('mute egede greenland independence', 'eng'),
+    ('greenland independence naalakkersuisut', 'eng'),
+    ('greenland defence agreement pituffik', 'eng'),
     # English — Russia Arctic
     ('russia arctic sovereignty greenland northern fleet', 'eng'),
     # Danish
@@ -504,13 +537,15 @@ def _redis_lpush(key, value, max_len=HISTORY_MAX_ENTRIES):
         return
     try:
         payload = json.dumps(value, default=str)
+        # v1.1.0: Upstash command form -- the value is stored as-is (the old
+        # /lpush body form stored the JSON list wrapper as the item).
         requests.post(
-            f'{UPSTASH_REDIS_URL}/lpush/{key}',
+            UPSTASH_REDIS_URL,
             headers={
                 'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}',
                 'Content-Type': 'application/json'
             },
-            data=json.dumps([payload]),
+            data=json.dumps(['LPUSH', key, payload]),
             timeout=5
         )
         requests.post(
@@ -593,102 +628,24 @@ def _fetch_gdelt(query, lang='eng', days=5, timeout=15):
 
 
 def _fetch_all_articles(days=5):
-    """Fetch from all RSS feeds and GDELT queries."""
-    all_articles = []
-    seen_urls = set()
-
-    print(f'[Greenland Rhetoric] Fetching RSS feeds ({len(RSS_FEEDS)} feeds)...')
-    for feed_url in RSS_FEEDS:
-        arts = _fetch_rss(feed_url)
-        for a in arts:
-            if a['url'] not in seen_urls:
-                seen_urls.add(a['url'])
-                all_articles.append(a)
-        time.sleep(0.3)
-
-    print(f'[Greenland Rhetoric] Fetching GDELT ({len(GDELT_QUERIES)} queries)...')
-    for query, lang in GDELT_QUERIES:
-        arts = _fetch_gdelt(query, lang=lang, days=days)
-        for a in arts:
-            if a['url'] not in seen_urls:
-                seen_urls.add(a['url'])
-                all_articles.append(a)
-        time.sleep(0.5)
-
-    # Nitter — primary source Twitter/X accounts
-    print(f'[Greenland Rhetoric] Fetching Nitter ({len(NITTER_ACCOUNTS)} accounts)...')
-    nitter_posts = _fetch_all_nitter(days=days)
-    for p in nitter_posts:
-        if p['url'] not in seen_urls:
-            seen_urls.add(p['url'])
-            all_articles.append(p)
-
-    print(f'[Greenland Rhetoric] Total articles after dedup: {len(all_articles)}')
-    return all_articles
+    """v1.1.0: europe_feeds.gather -> (articles, sensing). Publisher-attributed,
+    GDELT via the gateway. Nitter is off (see NITTER_ACCOUNTS)."""
+    articles, sensing = gather('Greenland', RSS_FEEDS, GDELT_QUERIES, days=days, topic_terms=TOPIC_TERMS)
+    if NITTER_ACCOUNTS:
+        seen = {a['url'] for a in articles}
+        for p in _fetch_all_nitter(days=days):
+            if p['url'] not in seen:
+                seen.add(p['url'])
+                articles.append(p)
+    return articles, sensing
 
 
 # ============================================
 # SCORING ENGINE
 # ============================================
 def _score_actor(actor_id, actor_cfg, articles, telegram_msgs):
-    """Score a single actor across all articles and Telegram messages."""
-    keywords  = [kw.lower() for kw in actor_cfg['keywords']]
-    hits      = []
-    hit_count = 0
-
-    for art in articles:
-        body = art.get('body', '').lower()
-        matched = [kw for kw in keywords if kw in body]
-        if matched:
-            hit_count += len(matched)
-            hits.append({
-                'title':    art.get('title', '')[:150],
-                'url':      art.get('url', ''),
-                'source':   art.get('source', ''),
-                'published': art.get('published', ''),
-                'matched_keywords': matched[:5],
-            })
-
-    # Add Telegram signals
-    tg_hits = 0
-    for msg in telegram_msgs:
-        body = msg.get('title', '').lower()
-        matched = [kw for kw in keywords if kw in body]
-        if matched:
-            tg_hits += len(matched)
-            hit_count += len(matched)
-
-    # Baseline normalization
-    baseline = actor_cfg.get('baseline_statements_per_week', 8)
-    weight   = actor_cfg.get('weight', 1.0)
-    raw_score = min(100, int((hit_count / max(baseline, 1)) * 25 * weight))
-
-    # Map to 0–5 escalation level
-    if raw_score >= 85:   level = 5
-    elif raw_score >= 65: level = 4
-    elif raw_score >= 45: level = 3
-    elif raw_score >= 28: level = 2
-    elif raw_score >= 12: level = 1
-    else:                 level = 0
-
-    level_info = ESCALATION_LEVELS[level]
-    return {
-        'actor':          actor_id,
-        'name':           actor_cfg['name'],
-        'flag':           actor_cfg['flag'],
-        'icon':           actor_cfg['icon'],
-        'color':          actor_cfg['color'],
-        'role':           actor_cfg['role'],
-        'raw_score':      raw_score,
-        'level':          level,
-        'label':          level_info['label'],
-        'escalation_color': level_info['color'],
-        'description':    level_info['description'],
-        'article_hits':   len(hits),
-        'keyword_hits':   hit_count,
-        'telegram_hits':  tg_hits,
-        'top_articles':   hits[:5],
-    }
+    """v1.1.0: shared scorer -- level = min(volume level, outlet-breadth cap)."""
+    return score_actor(actor_id, actor_cfg, articles, telegram_msgs, ESCALATION_LEVELS)
 
 
 def _compute_composite(actor_scores):
@@ -724,6 +681,10 @@ def _compute_composite(actor_scores):
     elif composite >= 28: theatre_level = 2
     elif composite >= 12: theatre_level = 1
     else:                 theatre_level = 0
+
+    # v1.1.0: the theatre can't run hotter than its hottest corroborated actor.
+    max_actor = max([a.get('level', 0) for a in (us, gl, dk, ru, cn)] or [0])
+    theatre_level = min(theatre_level, max_actor)
 
     level_info = ESCALATION_LEVELS[theatre_level]
 
@@ -833,7 +794,10 @@ def _write_canonical_spoke_fingerprint(result):
             'denmark_nato_level':   _alvl('denmark_nato'),    # alliance-friction axis
             'sovereignty_crisis':   result.get('is_sovereignty_crisis', False),
             'convergence_signal':   result.get('convergence_signal'),
+            'agreement_status':     ((result.get('interpretation') or {}).get('agreement_track') or {}).get('status'),
         },
+        'top_indicator': (result.get('interpretation') or {}).get('top_indicator', ''),
+        'thin_read':     bool((result.get('interpretation') or {}).get('thin_read')),
         # -- Critical-minerals slice: rare earths as the strategic prize --
         'critical_minerals': {
             'available':      cm.get('available', False),
@@ -848,13 +812,41 @@ def _write_canonical_spoke_fingerprint(result):
         print(f'[Greenland Rhetoric] Canonical fingerprint write failed: {e}')
 
 
+def _write_hub_spokes(result):
+    """v1.1.0: convention-1 spokes for the hubs that press on Greenland.
+    Greenland is an INBOUND target: these report pressure AT it."""
+    interp = result.get('interpretation') or {}
+    sp = interp.get('spokes') or {}
+    now = datetime.now(timezone.utc).isoformat()
+    ag = (interp.get('agreement_track') or {}).get('status', 'unknown')
+    for hub, default_lv in (('us', result.get('us_pressure_level', 0)),
+                            ('russia', result.get('russia_level', 0)),
+                            ('china', min(2, (result.get('actors') or {}).get('china_observer', {}).get('level', 0)))):
+        row = sp.get(hub) or {}
+        payload = {
+            'ts': now, 'spoke': 'greenland', 'hub': hub,
+            'node_class': row.get('node_class', 'inbound_target'),
+            'level': row.get('level', default_lv),
+            'relationship': {'us': 'pressure on sovereignty via the 2026 defence agreement',
+                             'russia': 'Arctic counter-posture to NATO/US build-up',
+                             'china': 'minerals / Polar Silk Road interest, screened by the 2026 agreement'}[hub],
+            'top_signal': row.get('note') or interp.get('top_indicator', ''),
+            'agreement_status': ag,
+            'thin_read': bool(interp.get('thin_read')),
+            'sensing_degraded': bool((result.get('sensing') or {}).get('degraded')),
+            'source': 'rhetoric_tracker_greenland', 'version': TRACKER_VERSION,
+        }
+        if _redis_set(f'spoke:{hub}:greenland', payload, ttl=SPOKE_TTL):
+            print(f'[Greenland Rhetoric] spoke:{hub}:greenland L{payload["level"]}')
+
+
 def run_greenland_rhetoric_scan(days=5):
     """Full scan: fetch articles, score all actors, return structured result."""
     print(f'[Greenland Rhetoric] Starting scan (days={days})...')
     start_time = time.time()
 
     # Fetch articles
-    articles = _fetch_all_articles(days=days)
+    articles, sensing = _fetch_all_articles(days=days)
 
     # Fetch Telegram
     telegram_msgs = []
@@ -890,8 +882,11 @@ def run_greenland_rhetoric_scan(days=5):
     result = {
         'success':              True,
         'theatre':              'Greenland',
-        'version':              '1.0.0',
+        'version':              TRACKER_VERSION,
+        'feeds_version':        FEEDS_VERSION,
         'timestamp':            now,
+        'sensing':              sensing,
+        'source_outlets':       len({str(a.get('source', '')).lower() for a in articles} - {''}),
         'scanned_at':           now,
         'scan_duration_seconds': elapsed,
         'total_articles':       len(articles),
@@ -942,7 +937,8 @@ def run_greenland_rhetoric_scan(days=5):
             print(f'[Greenland Rhetoric] build_top_signals error: {str(e)[:120]}')
             result['top_signals'] = []
 
-    _write_canonical_spoke_fingerprint(result)   # Rim Emission Pass -- feed the Russia wheel (+ future USA wheel)
+    _write_canonical_spoke_fingerprint(result)   # Rim Emission Pass -- hub-agnostic
+    _write_hub_spokes(result)                    # v1.1.0: spoke:us / russia / china :greenland
 
     print(f'[Greenland Rhetoric] Scan complete in {elapsed}s | Theatre L{composite["theatre_level"]} ({composite["theatre_score"]}/100) | {composite["convergence_signal"] or "No convergence signal"}')
     return result
@@ -968,6 +964,8 @@ def _bg_scan():
             'denmark_level':        result['denmark_level'],
             'russia_level':         result['russia_level'],
             'convergence_signal':   result['convergence_signal'],
+            'thin_read':            bool((result.get('interpretation') or {}).get('thin_read')),
+            'version':              TRACKER_VERSION,
         }
         _redis_lpush(HISTORY_KEY, history_entry)
         print(f'[Greenland Rhetoric] ✅ Cache + history written')
@@ -998,11 +996,17 @@ def register_greenland_rhetoric_routes(app):
     @app.route('/api/rhetoric/greenland', methods=['GET'])
     def greenland_rhetoric():
         force = request.args.get('force', '').lower() in ('true', '1', 'yes')
-        days  = int(request.args.get('days', 5))
+        try:
+            days = int(request.args.get('days', 5))
+        except (TypeError, ValueError):
+            days = 5
 
+        if force and time.time() - _last_force['ts'] < FORCE_MIN_INTERVAL:
+            force = False   # rate-limited: serve the cache instead
         if force:
+            _last_force['ts'] = time.time()
             try:
-                return jsonify(run_greenland_rhetoric_scan(days=days))
+                return jsonify(run_greenland_rhetoric_scan(days=min(max(days, 1), 14)))
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)[:200]}), 500
 
@@ -1026,7 +1030,7 @@ def register_greenland_rhetoric_routes(app):
             'theatre_escalation_label': 'Scanning...',
             'theatre_escalation_color': '#6b7280',
             'message':                  'First scan in progress — fetching Arctic/Nordic sources...',
-            'version':                  '1.0.0',
+            'version':                  TRACKER_VERSION,
         })
 
     @app.route('/api/rhetoric/greenland/summary', methods=['GET'])
@@ -1065,6 +1069,8 @@ def register_greenland_rhetoric_routes(app):
                     for aid, adat in actors.items()
                 },
                 'total_articles':   cached.get('total_articles', 0),
+                'top_indicator':    (cached.get('interpretation') or {}).get('top_indicator', ''),
+                'thin_read':        bool((cached.get('interpretation') or {}).get('thin_read')),
                 'scanned_at':       cached.get('scanned_at', ''),
                 'cached':           True,
             })
@@ -1088,7 +1094,11 @@ def register_greenland_rhetoric_routes(app):
                 )
                 for item in resp.json().get('result', []):
                     try:
-                        entries.append(json.loads(item))
+                        e = json.loads(item)
+                        if isinstance(e, list) and e:      # v1.0 rows: JSON list wrapper
+                            e = json.loads(e[0]) if isinstance(e[0], str) else e[0]
+                        if isinstance(e, dict):
+                            entries.append(e)
                     except Exception:
                         pass
             entries.reverse()
@@ -1097,6 +1107,7 @@ def register_greenland_rhetoric_routes(app):
                 'theatre': 'Greenland',
                 'count':   len(entries),
                 'entries': entries,
+                'history': entries,
             })
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500

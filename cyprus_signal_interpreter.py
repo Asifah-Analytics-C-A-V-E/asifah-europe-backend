@@ -1,6 +1,19 @@
 """
-Asifah Analytics - Cyprus Signal Interpreter (LEAN tier)
-v1.0.0 - June 2026
+Asifah Analytics - Cyprus Signal Interpreter
+v1.1.0 - November 3, 2026   (v1.0.0-lean June 2026)
+
+v1.1.0 -- FROM LEAN TO EVIDENCE TIER
+  * RED LINES now exist (they were deferred stubs), scored per article on the
+    whole corpus with publisher counting (europe_evidence): BREACHED needs a
+    breach phrase in 2+ outlets.
+  * SETTLEMENT MOMENTUM green line. The settlement_track vector is collapse-
+    biased by design; v1.0 had no way to see the opposite. Since Tufan
+    Erhurman (pro-federation) won the north in Oct 2025, the live story is
+    whether leader-level talks restart -- that is now read, not assumed.
+  * Display-only partnership / threat vectors (israel_partnership,
+    us_partnership, iran_hezbollah_threat) -- they are wheels on Cyprus, kept
+    OUT of the division composite so Dial 2 stays a division gauge.
+  * Spokes for turkey / israel / us / iran, thin read, top_indicator.
 
 Companion to rhetoric_tracker_cyprus.py (Dial 2, inverted + vectored).
 
@@ -14,10 +27,10 @@ rhetoric tracker an analyst-layer participant:
                                      compatible (empty) red_lines / historical /
                                      rumint stubs.
 
-DEFERRED to the HEAVY tier (build when rhetoric-cyprus.html is built):
-  * RED_LINES scoring (e.g. Turkish troop surge past TRNC baseline, drillship
-    into a licensed EEZ block under naval escort, unilateral Varosha annexation,
-    formal settlement-talk collapse, Greece-Turkey casus belli).
+BUILT in v1.1.0: RED_LINES (troop surge, escorted drillship, unilateral Varosha
+move, talks collapse, Greece-Turkey casus belli, Iran/Hizballah threat) --
+each carries its precedent line.
+STILL DEFERRED:
   * HISTORICAL_PRECEDENTS matching (1974 invasion, 1983 TRNC UDI, 2004 Annan
     Plan rejection, 2017 Crans-Montana collapse, 2018 ENI/Saipem drillship
     blockade, 2020 Varosha reopening).
@@ -30,6 +43,55 @@ COPYRIGHT (c) 2025-2026 Asifah Analytics. All rights reserved.
 """
 
 from datetime import datetime, timezone
+
+from europe_evidence import build_corpus, score_line, score_green, corpus_health
+
+INTERPRETER_VERSION = '1.1.0'
+THIN_MIN_ARTICLES = 25
+
+# (id, label, severity, icon, precedent, breach phrases, approach phrases)
+RED_LINES = [
+    ('turkish_troop_surge', 'Turkish troop surge in the north', 4, '\U0001fa96',
+     '1974 -- Turkish forces landed after the Athens-backed coup; ~35,000 troops have stayed since.',
+     ['turkey sends troops to cyprus', 'additional turkish troops', 'turkish reinforcements northern cyprus',
+      'turkey deploys troops to northern cyprus', 'turkish troop build-up cyprus'],
+     ['turkish troops cyprus', 'turkish military northern cyprus', 'turkey military base northern cyprus',
+      'drone base northern cyprus', 'gecitkale']),
+    ('drillship_escort', 'Turkish drillship in a licensed block under escort', 4, '\U0001f6e2\ufe0f',
+     '2018 -- Turkish warships turned back ENI\'s Saipem 12000 from Cyprus Block 3.',
+     ['drillship escorted by turkish warships', 'turkish navy blocks drillship', 'warships block drillship',
+      'turkish drillship in cyprus eez', 'turkish drillship in block'],
+     ['turkish drillship', 'navtex cyprus', 'turkish navtex', 'seismic vessel cyprus', 'oruc reis', 'abdulhamid han']),
+    ('varosha_unilateral', 'Unilateral move on Varosha', 3, '\U0001f3da\ufe0f',
+     '2020 -- partial reopening of fenced-off Varosha drew a UN Security Council rebuke.',
+     ['varosha reopened', 'reopening of varosha', 'varosha resettlement', 'further opening of varosha'],
+     ['varosha settlers', 'varosha resettle', 'varosha opening', 'opening of varosha', 'maras opening']),
+    ('talks_collapse', 'Settlement talks collapse', 3, '\U0001f6ab',
+     '2017 -- Crans-Montana collapsed over security and guarantees; no formal talks since.',
+     ['talks collapsed', 'talks collapse', 'walked out of talks', 'cyprus talks fail', 'negotiations collapsed'],
+     ['two-state solution', 'sovereign equality', 'talks deadlock', 'stalemate cyprus', 'no common ground']),
+    ('greece_turkey_casus_belli', 'Greece-Turkey casus belli language', 4, '\u2694\ufe0f',
+     '1995 -- the Turkish parliament declared any Greek 12-mile extension a casus belli; still on the books.',
+     ['renews casus belli', 'reaffirms casus belli', 'casus belli threat', 'threatens war over'],
+     ['casus belli', 'greece turkey tensions', 'aegean dispute', 'greek airspace violation', 'dogfight aegean']),
+    ('iran_hezbollah_threat', 'Iran / Hizballah threat to Cyprus', 4, '\U0001f3af',
+     '2024 -- Nasrallah warned Cyprus it would be treated as party to a war if Israel used its bases.',
+     ['drone attack cyprus', 'drone strike akrotiri', 'missile fired at cyprus', 'attack on akrotiri', 'hezbollah threatens cyprus',
+      'hizballah threatens cyprus', 'iran threatens cyprus'],
+     ['hezbollah cyprus', 'hizballah cyprus', 'iran cyprus', 'akrotiri', 'raf akrotiri', 'british bases cyprus']),
+]
+GREEN_ACTIVE = ['christodoulides erhurman', 'christodoulides and erhurman', 'leaders met', 'leaders meet',
+                'new crossing point', 'crossing points opened', 'informal meeting cyprus', 'enlarged meeting',
+                'talks resume', 'resumption of talks', 'holguin', 'confidence-building measures agreed']
+GREEN_SIGNALED = ['erhurman', 'erhürman', 'federation', 'bizonal', 'bi-zonal', 'rotating presidency',
+                  'confidence-building', 'un envoy', 'guterres cyprus', 'resume negotiations']
+
+# Display-only wheels (NOT in the division composite).
+PARTNER_VECTORS = {
+    'israel_partnership':   ('israel', 'security_partner', 'Israel partnership'),
+    'us_partnership':       ('us', 'security_partner', 'US partnership'),
+    'iran_hezbollah_threat': ('iran', 'target', 'Iran / Hizballah threat'),
+}
 
 # Cyprus flag (unicode escape -> ASCII-safe source, emoji at runtime)
 CYPRUS_FLAG = '\U0001f1e8\U0001f1fe'   # CY
@@ -149,42 +211,138 @@ def _build_so_what(scan_data):
     }
 
 
+def _corpus(scan_data):
+    arts = scan_data.get('rumint_articles') or []
+    if not arts:
+        for a in (scan_data.get('actors') or {}).values():
+            arts = arts + list(a.get('top_articles') or [])
+    return build_corpus({'articles_en': arts, 'telegram_messages': scan_data.get('rumint_telegram') or []})
+
+
+def _score_red_lines(corpus):
+    out = []
+    for rid, label, sev, icon, precedent, br, ap in RED_LINES:
+        sc = score_line(corpus, br, ap)
+        if sc['status'] == 'INACTIVE':
+            continue
+        n = sc['breach_outlets'] if sc['status'] == 'BREACHED' else max(sc['breach_outlets'], sc['approach_outlets'])
+        ev = sc['evidence'][0] if sc['evidence'] else None
+        out.append({'id': rid, 'label': label, 'severity': sev, 'icon': icon, 'precedent': precedent, **sc,
+                    'trigger': ("%s on %d outlet%s" % (sc['status'].title(), n, '' if n == 1 else 's'))
+                               + ((' -- e.g. "%s" (%s)' % (ev['title'][:90], ev['outlet'])) if ev else '')})
+    out.sort(key=lambda x: (-{'BREACHED': 2, 'APPROACHING': 1}.get(x['status'], 0), -x['severity']))
+    return out
+
+
+def _settlement_momentum(corpus):
+    g = score_green(corpus, GREEN_ACTIVE, GREEN_SIGNALED)
+    if g['status'] == 'ACTIVE':
+        read = ('Leader-level contact is in the news (%d outlet%s) -- the settlement track is moving, '
+                'which is the opposite of what the collapse-biased friction vector measures.'
+                % (g['active_outlets'], '' if g['active_outlets'] == 1 else 's'))
+    elif g['status'] == 'SIGNALED':
+        read = 'Federation / talks language is present without a meeting in view -- momentum signalled, not shown.'
+    else:
+        read = 'No settlement-momentum language this cycle.'
+    return {**g, 'read': read}
+
+
+def _partners(scan_data):
+    actors = scan_data.get('actors') or {}
+    out = {}
+    for vid, (hub, node_class, label) in PARTNER_VECTORS.items():
+        a = actors.get(vid) or {}
+        out[vid] = {'hub': hub, 'node_class': node_class, 'label': label,
+                    'level': a.get('level', 0), 'outlets': a.get('outlet_count', 0),
+                    'present': vid in actors}
+    return out
+
+
+def _top_indicator(scan_data, red_lines, momentum, partners, health):
+    br = [r for r in red_lines if r['status'] == 'BREACHED']
+    tp = scan_data.get('turkey_posture_level', 0) or 0
+    ih = partners.get('iran_hezbollah_threat', {}).get('level', 0)
+    if br:
+        line = '%s: corroborated by %d outlets.' % (br[0]['label'], br[0]['breach_outlets'])
+    elif ih >= 3:
+        line = 'The Middle East war is the louder threat to Cyprus this cycle (Iran / Hizballah L%d), not the Green Line.' % ih
+    elif momentum['status'] == 'ACTIVE' and tp <= 2:
+        line = 'The leaders are talking: settlement momentum is in the news and Turkish posture is not elevated.'
+    elif momentum['status'] == 'ACTIVE':
+        line = 'Talks and pressure in the same cycle: leaders meeting while Turkish posture sits at L%d.' % tp
+    elif tp >= 3:
+        line = 'Turkish posture toward Cyprus is at L%d -- the inbound driver is up.' % tp
+    elif any(r['status'] == 'APPROACHING' for r in red_lines):
+        r = next(r for r in red_lines if r['status'] == 'APPROACHING')
+        line = 'Watching: %s -- reported, not corroborated.' % r['label'].lower()
+    else:
+        line = 'The frozen division is quiet: no corroborated pressure signal, and no talks breakthrough either.'
+    return ('Thin read -- ' + line) if health['thin'] else line
+
+
 # ============================================
-# MAIN ENTRY (lean: So-What + forward-compatible stubs)
+# MAIN ENTRY
 # ============================================
 def interpret_signals(scan_data):
     """
     Main entry point. Called from rhetoric_tracker_cyprus.py with full scan_data.
-    Returns the same contract as the heavy interpreters so callers don't branch:
-    so_what + (empty) red_lines / historical_matches / rumint stubs.
     """
     try:
+        corpus = _corpus(scan_data)
+        health = corpus_health(scan_data, corpus, THIN_MIN_ARTICLES)
         so_what = _build_so_what(scan_data)
+        red_lines = _score_red_lines(corpus)
+        momentum = _settlement_momentum(corpus)
+        partners = _partners(scan_data)
+        top_indicator = _top_indicator(scan_data, red_lines, momentum, partners, health)
+        so_what['settlement_momentum'] = momentum['read']
+        if momentum['status'] == 'ACTIVE':
+            so_what['assessment'] = so_what.get('assessment', '') + ' Counter-signal: ' + momentum['read']
+        if health['thin']:
+            so_what['scenario'] = 'THIN READ -- ' + so_what.get('scenario', '')
+            so_what['assessment'] = ('Under-read scan (%s); quiet lines may be unread. ' % health['reason']) \
+                + so_what.get('assessment', '')
+        breached = [r for r in red_lines if r['status'] == 'BREACHED']
+        approaching = [r for r in red_lines if r['status'] == 'APPROACHING']
+        tp = scan_data.get('turkey_posture_level', 0) or 0
+        spokes = {'turkey': {'level': min(4, tp), 'node_class': 'adversary',
+                             'note': 'Turkish posture toward Cyprus L%d' % tp}}
+        for vid, row in partners.items():
+            spokes[row['hub']] = {'level': min(4, row['level']), 'node_class': row['node_class'],
+                                  'note': '%s L%d (%d outlets)' % (row['label'], row['level'], row['outlets'])}
         return {
             'so_what':             so_what,
             'red_lines': {
-                'triggered':         [],
-                'breached_count':    0,
-                'approaching_count': 0,
-                'highest_severity':  0,
+                'triggered':         red_lines,
+                'breached_count':    len(breached),
+                'approaching_count': len(approaching),
+                'highest_severity':  max((r['severity'] for r in breached), default=0),
             },
+            'settlement_momentum': momentum,
+            'partners':            partners,
             'historical_matches':  [],
             'rumint':              {'active': False, 'band': 'off', 'label': '',
                                     'driver': '', 'framing': 0, 'specificity': 0,
                                     'reception': 0, 'corroboration': 0},
-            'interpreter_version': '1.0.0-lean',
+            'top_indicator':       top_indicator,
+            'corpus_health':       health,
+            'thin_read':           health['thin'],
+            'spokes':              spokes,
+            'interpreter_version': INTERPRETER_VERSION,
             'interpreted_at':      datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
         print('[Cyprus Interpreter] Error: %s' % str(e)[:120])
         return {
-            'so_what':            {'scenario': 'Interpreter error', 'assessment': str(e)[:200]},
+            'so_what':            {'scenario': 'Interpreter error -- unread, not calm', 'assessment': str(e)[:200]},
+            'top_indicator':      'Interpreter error this cycle -- unread, not calm.',
+            'thin_read':          True, 'spokes': {},
             'red_lines':          {'triggered': [], 'breached_count': 0, 'approaching_count': 0, 'highest_severity': 0},
             'historical_matches': [],
             'rumint':             {'active': False, 'band': 'off', 'label': '',
                                    'driver': '', 'framing': 0, 'specificity': 0,
                                    'reception': 0, 'corroboration': 0},
-            'interpreter_version': '1.0.0-lean',
+            'interpreter_version': INTERPRETER_VERSION,
             'error':              str(e)[:200],
         }
 
@@ -226,7 +384,7 @@ def build_top_signals(scan_data):
             'priority':   12, 'category': 'red_line_breached', 'theatre': 'cyprus',
             'level':      max(theatre_level, 4), 'icon': rl.get('icon', '\U0001f6a8'), 'color': '#dc2626',
             'short_text': '%s CYPRUS: BREACH - %s' % (FLAG, label[:55]),
-            'long_text':  'CYPRUS division red line breached: %s' % label,
+            'long_text':  'CYPRUS red line breached: %s. %s' % (label, rl.get('trigger', '')),
         })
     for rl in approaching[:2]:
         label = rl.get('label', 'Division red line')
@@ -234,7 +392,7 @@ def build_top_signals(scan_data):
             'priority':   8, 'category': 'red_line_approaching', 'theatre': 'cyprus',
             'level':      theatre_level, 'icon': '\U0001f7e0', 'color': '#f97316',
             'short_text': '%s CYPRUS: Approaching - %s' % (FLAG, label[:50]),
-            'long_text':  'CYPRUS approaching red line: %s' % label,
+            'long_text':  'CYPRUS approaching red line: %s. %s' % (label, rl.get('trigger', '')),
         })
 
     # ----- 2. Theatre-high -----
@@ -315,7 +473,7 @@ def build_top_signals(scan_data):
             'priority':   5, 'category': 'trnc_politics_high', 'theatre': 'cyprus',
             'level':      tr, 'icon': '\U0001f7e7', 'color': '#f59e0b',
             'short_text': '%s CYPRUS: TRNC politics L%d' % (FLAG, tr),
-            'long_text':  'CYPRUS Turkish-Cypriot north L%d - north elections, Tatar, or settler politics.' % tr,
+            'long_text':  'CYPRUS Turkish-Cypriot north L%d - north elections, Erhurman leadership, or settler politics.' % tr,
         })
 
     # ----- 7. Settlement-track friction (collapse-biased) -----
@@ -334,6 +492,25 @@ def build_top_signals(scan_data):
             'level':      theatre_level, 'icon': '\U0001f4e1', 'color': '#f59e0b',
             'short_text': '%s CYPRUS: %s' % (FLAG, convergence_signal[:55]),
             'long_text':  'CYPRUS convergence: %s' % convergence_signal,
+        })
+
+    # ----- 9. Settlement momentum (v1.1.0 green read) -----
+    mom = interp.get('settlement_momentum') or {}
+    if mom.get('status') == 'ACTIVE':
+        signals.append({
+            'priority':   5, 'category': 'settlement_momentum', 'theatre': 'cyprus',
+            'level':      theatre_level, 'icon': '\U0001f91d', 'color': '#10b981',
+            'short_text': '%s CYPRUS: Leaders talking - settlement momentum' % FLAG,
+            'long_text':  'CYPRUS: ' + (mom.get('read') or ''),
+        })
+    # ----- 10. Iran / Hizballah threat wheel -----
+    ih = ((interp.get('partners') or {}).get('iran_hezbollah_threat') or {}).get('level', 0)
+    if ih >= 3:
+        signals.append({
+            'priority':   9, 'category': 'iran_hezbollah_threat', 'theatre': 'cyprus',
+            'level':      ih, 'icon': '\U0001f3af', 'color': '#ef4444',
+            'short_text': '%s CYPRUS: Iran / Hizballah threat L%d' % (FLAG, ih),
+            'long_text':  'CYPRUS: Iran / Hizballah threat language toward Cyprus or the UK bases at L%d.' % ih,
         })
 
     signals.sort(key=lambda s: s['priority'], reverse=True)
