@@ -1,6 +1,24 @@
 """
-Kazakhstan Signal Interpreter v1.0.0 (Jul 12 2026)w00t
+Kazakhstan Signal Interpreter v1.2.0 (Nov 3 2026)
 ===================================================
+
+v1.2.0 (Nov 3 2026) -- EVIDENCE PASS + FOUR WHEELS
+  1. Red/green lines and every vector count PUBLISHERS (europe_evidence).
+     BREACHED needs 2+ outlets; evidence, plain title and a 'why' sentence on
+     every line. Social chatter is WATCHING, never a breach -- and every
+     "status != QUIET" check now means BREACHED/APPROACHING only.
+  2. build_spokes(): Russia (levers), China (dual track), Turkey (Turkic
+     affinity -- the Turkey wheel has listed Kazakhstan since July and nothing
+     wrote it) and Iran (Caspian / rail transit -- thin by nature, honestly so).
+  3. CPC attribution: since 2025 the CPC route has been hit by Ukrainian
+     drones as well as by Russian "maintenance" closures. The red line now
+     says which, when the reporting does -- an outage is not automatically a
+     Moscow lever.
+  4. Dated background tracks: the new political order (Kurultai elected Aug
+     23, Vice President Karin appointed Aug 31) and the CPC route.
+  5. top_indicator / thin_read / corpus_health.
+
+v1.0.0 (Jul 12 2026) -- original design notes follow.
 Analytical layer for rhetoric_tracker_kazakhstan.py.
 
 THE FRAME: Kazakhstan is not a "drift" country. Multi-vector hedging IS the
@@ -54,7 +72,9 @@ The reader completes the inference. Absence stays honest.
 
 from datetime import datetime, timezone
 
-INTERPRETER_VERSION = '1.1.0'
+from europe_evidence import build_corpus, corpus_health, find
+
+INTERPRETER_VERSION = '1.2.0'
 
 CONVERGENCE_DISCLAIMER = (
     'This composite is a CONVERGENCE indicator, NOT a probability of action. '
@@ -63,32 +83,90 @@ CONVERGENCE_DISCLAIMER = (
 )
 
 
+
 # ============================================================
-# CORPUS KEYWORD MATCHER
+# EVIDENCE CORPUS (v1.2.0, Nov 3 2026)
 # ============================================================
+# v1.0 pooled every headline into ONE string and counted distinct phrases
+# anywhere in it, so one blog post carrying three phrases could breach a
+# severity-5 line. The corpus is now scored PER ARTICLE and counted by
+# PUBLISHER (europe_evidence -- the rule the rest of Europe runs):
+#   * red lines  BREACHED = breach language from 2+ outlets (3 where the line
+#                demanded three phrases); APPROACHING = 1 outlet;
+#                WATCHING = social chatter only
+#   * vectors    a phrase count can never exceed the outlet breadth behind it
+#                (phrases <= outlets + 1) -- volume cannot climb above evidence
+# Social posts (Reddit / Bluesky) never corroborate. They are recorded, not counted.
+
+_ARTICLE_KEYS = ('articles_en', 'articles_kk', 'articles_ru')
+
+
+def _corpus(scan_data):
+    c = scan_data.get('_ev_corpus')
+    if c is None:
+        c = build_corpus(scan_data, article_keys=_ARTICLE_KEYS)
+        scan_data['_ev_corpus'] = c
+    return c
+
 
 def _check_keywords(scan_data, keywords):
-    """Match keywords against the scan corpus. URL slugs are de-hyphenated so
-    multi-word keywords match headline slugs."""
+    """Distinct phrases present, capped by the number of outlets carrying them
+    (phrases <= outlets + 1). Social-only matches count zero."""
     if not keywords:
         return 0
-    parts = []
-    for key in ('articles_en', 'articles_kk', 'articles_ru'):
-        for art in (scan_data.get(key) or []):
-            parts.append((art.get('title') or '').lower())
-            parts.append((art.get('description') or '').lower())
-            parts.append((art.get('summary') or '').lower())
-            parts.append((art.get('content') or '').lower())
-            _url = (art.get('url') or art.get('link') or '').lower()
-            if _url:
-                parts.append(_url.replace('-', ' ').replace('_', ' ').replace('/', ' '))
-    for key in ('reddit_signals', 'telegram_messages', 'bluesky_signals'):
-        for sig in (scan_data.get(key) or []):
-            parts.append((sig.get('text') or sig.get('title') or '').lower())
-    corpus = ' | '.join(parts)
-    if not corpus:
-        return 0
-    return sum(1 for kw in keywords if kw.lower() in corpus)
+    f = find(_corpus(scan_data), keywords)
+    n = len(f['outlets'])
+    return min(len(f['phrases']), n + 1) if n else 0
+
+
+def _line_trigger(status, n, need):
+    if status == 'BREACHED':
+        return f'Carried by {n} outlets.'
+    if status == 'APPROACHING':
+        return (f'{n} outlet' + ('s' if n != 1 else '') +
+                f' so far -- needs {need} to count as breached.')
+    if status == 'WATCHING':
+        return 'Social chatter only -- noted, not counted.'
+    return ''
+
+
+def _score_red_lines(scan_data):
+    out = []
+    corpus = _corpus(scan_data)
+    for line in RED_LINES:
+        f = find(corpus, line['keywords'])
+        n = len(f['outlets'])
+        need = max(2, line.get('breach_threshold', 2))
+        status = ('BREACHED' if n >= need else 'APPROACHING' if n >= 1
+                  else 'WATCHING' if f['social'] else 'QUIET')
+        out.append({'id': line['id'], 'category': line['category'],
+                    'title': line['category'], 'plain': line.get('plain', ''),
+                    'severity': line['severity'], 'status': status,
+                    'hits': len(f['phrases']), 'outlets': n,
+                    'description': line['description'],
+                    'evidence': f['evidence'][:3],
+                    'trigger': _line_trigger(status, n, need)})
+    return out
+
+
+def _score_green_lines(scan_data):
+    """De-escalation lines: ACTIVE at the line's threshold in OUTLETS (a
+    signature or a border opening is a big claim -- one press release does not
+    make it), SIGNALED on one outlet or chatter."""
+    out = []
+    corpus = _corpus(scan_data)
+    for line in GREEN_LINES:
+        f = find(corpus, line['keywords'])
+        n = len(f['outlets'])
+        need = max(1, line.get('active_threshold', 2))
+        status = ('ACTIVE' if n >= need else 'SIGNALED' if (n >= 1 or f['social'])
+                  else 'QUIET')
+        out.append({'id': line['id'], 'category': line['category'],
+                    'title': line['category'], 'severity': line['severity'],
+                    'status': status, 'hits': len(f['phrases']), 'outlets': n,
+                    'description': line['description'],
+                    'evidence': f['evidence'][:3]})
+    return out
 
 
 # ============================================================
@@ -98,6 +176,7 @@ def _check_keywords(scan_data, keywords):
 RED_LINES = [
     {
         'id': 'fuel_price_unrest',
+        'plain': 'Fuel-price protests in the oil belt (the January 2022 pattern)',
         'category': 'Fuel-Price Unrest (Jan-2022 Pattern)',
         'severity': 5,
         'breach_threshold': 2,
@@ -116,6 +195,7 @@ RED_LINES = [
     },
     {
         'id': 'mass_unrest',
+        'plain': 'Nationwide unrest and a security crackdown',
         'category': 'Mass Unrest / Security Response',
         'severity': 5,
         'breach_threshold': 2,
@@ -131,12 +211,15 @@ RED_LINES = [
     },
     {
         'id': 'cpc_disruption',
+        'plain': 'Kazakh oil exports through Russia (CPC) disrupted',
         'category': 'CPC Route Disruption',
         'severity': 4,
         'breach_threshold': 2,
         'description': ('Suspension, damage, or "maintenance" closure of the Caspian Pipeline '
-                        'Consortium route -- historically invoked during periods of political '
-                        'friction. The dependency IS the leverage.'),
+                        'Consortium route. Two different causes produce the same outage: Russian '
+                        '"maintenance" closures during political friction, and -- since 2025 -- '
+                        'Ukrainian drone strikes on Novorossiysk-area infrastructure. The '
+                        'dependency is the exposure either way; the attribution is in the evidence.'),
         'keywords': [
             'cpc pipeline suspended', 'cpc terminal halt', 'caspian pipeline consortium suspend',
             'novorossiysk terminal closed', 'cpc maintenance halt', 'cpc export halt',
@@ -147,6 +230,7 @@ RED_LINES = [
     },
     {
         'id': 'russian_irredentist',
+        'plain': "Russian voices questioning Kazakhstan's borders",
         'category': 'Russian Irredentist Rhetoric',
         'severity': 4,
         'breach_threshold': 2,
@@ -183,6 +267,7 @@ RED_LINES = [
         # registry. severity 4 -> level 4 clears the entry\'s
         # trigger_signal_min_level of 3 through the Europe Layer 2 regime gate.
         'id': 'border_health_closure',
+        'plain': 'Kazakhstan restricting the Russian border on health grounds',
         'category': 'Border / Movement Restriction at the Russian Frontier',
         'severity': 4,
         'breach_threshold': 2,
@@ -228,6 +313,7 @@ RED_LINES = [
     },
     {
         'id': 'sanctions_secondary',
+        'plain': 'Western sanctions hitting Kazakh firms over Russia re-exports',
         'category': 'Secondary-Sanctions Exposure',
         'severity': 3,
         'breach_threshold': 2,
@@ -244,6 +330,7 @@ RED_LINES = [
     },
     {
         'id': 'sinophobia_flashpoint',
+        'plain': 'Anti-China street anger flaring',
         'category': 'China Street Friction',
         'severity': 3,
         'breach_threshold': 2,
@@ -261,6 +348,7 @@ RED_LINES = [
     },
     {
         'id': 'succession_rupture',
+        'plain': 'An elite fight around the succession',
         'category': 'Succession Rupture',
         'severity': 3,
         'breach_threshold': 2,
@@ -355,28 +443,6 @@ GREEN_LINES = [
 ]
 
 
-def _score_red_lines(scan_data):
-    out = []
-    for line in RED_LINES:
-        hits = _check_keywords(scan_data, line['keywords'])
-        status = ('BREACHED' if hits >= line['breach_threshold']
-                  else 'APPROACHING' if hits >= 1 else 'QUIET')
-        out.append({'id': line['id'], 'category': line['category'],
-                    'severity': line['severity'], 'status': status,
-                    'hits': hits, 'description': line['description']})
-    return out
-
-
-def _score_green_lines(scan_data):
-    out = []
-    for line in GREEN_LINES:
-        hits = _check_keywords(scan_data, line['keywords'])
-        status = ('ACTIVE' if hits >= line['active_threshold']
-                  else 'SIGNALED' if hits >= 1 else 'QUIET')
-        out.append({'id': line['id'], 'category': line['category'],
-                    'severity': line['severity'], 'status': status,
-                    'hits': hits, 'description': line['description']})
-    return out
 
 
 # ============================================================
@@ -957,7 +1023,7 @@ def _score_commodity_convergence(commodity_data, russia, corridor, domestic, chi
 ELECTION_CLOCK_KEYWORDS = [
     'kurultai election', 'parliamentary election kazakhstan', 'snap election kazakhstan',
     'presidential election kazakhstan', 'election campaign kazakhstan', 'maslikhat election',
-    'august 23', 'выборы казахстан', 'курултай выборы',
+    'выборы казахстан', 'курултай выборы', 'early presidential election kazakhstan',
 ]
 
 
@@ -966,7 +1032,7 @@ def _election_clock_multiplier(scan_data, red_lines):
     Jul 7 2026 Constitutional Court ruling. AMPLIFIER ONLY -- an election during
     a quiet period contributes nothing."""
     hits = _check_keywords(scan_data, ELECTION_CLOCK_KEYWORDS)
-    stack_active = any(r['status'] != 'QUIET' for r in red_lines)
+    stack_active = any(r['status'] in ('BREACHED', 'APPROACHING') for r in red_lines)
     if hits >= 2 and stack_active:
         return {'active': True, 'multiplier': 0.20, 'hits': hits,
                 'reading': 'Election-window conditions amplifying an active signal stack.'}
@@ -988,7 +1054,7 @@ def _winter_calendar_multiplier(red_lines, domestic):
     tripwire_live = (domestic.get('chain_stage', 0) >= 1
                      or domestic.get('band') in ('elevated', 'high')
                      or any(r['id'] in ('fuel_price_unrest', 'mass_unrest')
-                            and r['status'] != 'QUIET' for r in red_lines))
+                            and r['status'] in ('BREACHED', 'APPROACHING') for r in red_lines))
 
     if not in_heating_season or not tripwire_live:
         return {'active': False, 'multiplier': 0.0, 'in_heating_season': in_heating_season,
@@ -1148,8 +1214,8 @@ def _build_top_signals(red_lines, green_lines, corridor, russia, china, domestic
             signals.append({
                 'priority': 1, 'category': r['id'],
                 'level': _lvl, 'level_basis': _basis,
-                'short_text': f"RED LINE BREACHED: {r['category']} ({r['hits']} signals)",
-                'long_text': f"{r['description']} {r['hits']} matched signals this cycle -- "
+                'short_text': f"RED LINE BREACHED: {r.get('plain') or r['category']} ({r['outlets']} outlets)",
+                'long_text': f"{r['description']} Carried by {r['outlets']} outlets this cycle -- "
                              'a level consistent with the tripwire condition being live.',
                 'pressure_type': 'kinetic' if r['id'] in ('mass_unrest', 'fuel_price_unrest')
                                  else 'economic' if r['id'] in ('cpc_disruption', 'sanctions_secondary')
@@ -1161,9 +1227,8 @@ def _build_top_signals(red_lines, green_lines, corridor, russia, china, domestic
             signals.append({
                 'priority': 2, 'category': r['id'],
                 'level': _lvl, 'level_basis': _basis,
-                'short_text': f"Approaching: {r['category']}",
-                'long_text': f"{r['description']} Early signals present ({r['hits']}), below "
-                             'breach threshold.',
+                'short_text': f"Approaching: {r.get('plain') or r['category']}",
+                'long_text': f"{r['description']} {r['trigger']}",
                 'pressure_type': 'economic' if r['id'] in ('cpc_disruption', 'sanctions_secondary')
                                  else 'diplomatic',
             })
@@ -1248,7 +1313,7 @@ def _build_top_signals(red_lines, green_lines, corridor, russia, china, domestic
         if g['status'] == 'ACTIVE':
             signals.append({
                 'priority': 3, 'category': g['id'],
-                'short_text': f"GREEN LINE: {g['category']} active ({g['hits']} signals)",
+                'short_text': f"GREEN LINE: {g['category']} active ({g['outlets']} outlets)",
                 'long_text': f"{g['description']}. De-escalatory marker active this cycle.",
                 'pressure_type': 'diplomatic',
             })
@@ -1326,6 +1391,182 @@ def _build_fingerprints(corridor, russia, china, domestic, hedge, succession,
 
 
 # ============================================================
+# IRAN (v1.2.0) -- the thin wheel, read honestly
+# ============================================================
+# Iran is not a lever on Kazakhstan. The ties are transit and trade: the
+# Kazakhstan-Turkmenistan-Iran railway (the INSTC's eastern branch), Caspian
+# grain shipments to Iranian ports, and Aktau-Amirabad shipping. Kazakhstan
+# joined the Abraham Accords in Nov 2025, which Tehran noticed. The spoke
+# usually reads L0-L1, and that IS the finding.
+
+IRAN_KZ_KEYWORDS = [
+    'iran kazakhstan', 'tehran astana', 'kazakhstan iran trade', 'kazakhstan turkmenistan iran railway',
+    'north-south transport corridor', 'north south corridor kazakhstan', 'instc',
+    'kazakh grain iran', 'caspian shipping iran', 'amirabad', 'bandar anzali', 'aktau iran',
+    'pezeshkian tokayev', 'araghchi astana', 'abraham accords kazakhstan iran',
+    'иран казахстан', 'север-юг коридор',
+]
+CPC_UA_KEYWORDS = [
+    'drone attack cpc', 'ukrainian drones novorossiysk', 'drone strike novorossiysk',
+    'cpc terminal attacked', 'cpc drone damage', 'drones hit caspian pipeline',
+    'атака беспилотников ктк',
+]
+CPC_RU_KEYWORDS = [
+    'cpc maintenance halt', 'cpc court ruling', 'russian court cpc', 'cpc suspended by russia',
+    'rostransnadzor cpc', 'moscow halts cpc',
+]
+
+
+def _score_iran(scan_data):
+    hits = _check_keywords(scan_data, IRAN_KZ_KEYWORDS)
+    level = 2 if hits >= 4 else 1 if hits >= 1 else 0
+    return {'hits': hits, 'level': level,
+            'reading': ('Iran-Kazakhstan transit/trade reporting is active this cycle.' if level
+                        else 'Iran axis quiet this cycle -- normal for this relationship.')}
+
+
+def _cpc_attribution(scan_data):
+    ua = _check_keywords(scan_data, CPC_UA_KEYWORDS)
+    ru = _check_keywords(scan_data, CPC_RU_KEYWORDS)
+    if ua and ru:
+        return 'mixed'
+    return 'ukrainian_strike' if ua else 'russian_lever' if ru else 'unattributed'
+
+
+# ============================================================
+# DATED BACKGROUND TRACKS (v1.2.0)
+# ============================================================
+
+POLITICS_BASELINE = {
+    'as_of': '2026-11-03',
+    'what': ('March 2026 referendum approved a new constitution (in force July 1): a unicameral '
+             'Kurultai replaces the two-chamber parliament, and a presidentially appointed vice '
+             'presidency is created.'),
+    'status': ('Aug 23: first Kurultai election -- Adilet won 71.2% '
+               '(110 of 145 seats); four more parties scraped past 5%. Aug 31: Tokayev appointed '
+               'Erlan Karin, his former state adviser, as vice president; PM Bektenov stayed.'),
+    'constraint': ('The vice presidency names the likely heir. The July Constitutional Court '
+                   'ruling that Tokayev\'s current term does not count leaves his own future open.'),
+    'sources': ['https://www.euronews.com/2026/09/01/kazakhstan-enters-a-new-political-era-after-historic-parliamentary-reform'],
+}
+
+ROUTE_BASELINE = {
+    'as_of': '2026-11-03',
+    'what': ('~80% of Kazakh crude leaves through Russia via the CPC pipeline to Novorossiysk. The '
+             'Middle Corridor (Aktau/Kuryk - Baku) is the bypass.'),
+    'status': ('2025-26: the CPC route has been disrupted repeatedly by Ukrainian drone strikes, '
+               'not only by Russian "maintenance" -- the exposure now runs through the war itself. '
+               'Late October: Samruk-Kazyna and Azerbaijan\'s AZCON signed a Caspian ferry system '
+               'deal; Tokayev announced a 6.5 trn tenge (~$14bn) infrastructure programme to 2029.'),
+    'constraint': ('Oct 30, Ankara OTS summit: Tokayev proposed a Russian observer / "OTS+" format '
+                   '-- hedging the Turkic pole toward Moscow even while building the bypass.'),
+    'sources': ['https://www.eurasiareview.com/18102026-turkmenistan-making-moves-to-diversify-energy-exports/',
+                'https://turancenter.substack.com/p/monitor-59-october-27-november-2'],
+}
+
+
+def _line(lines, line_id):
+    return next((l for l in lines if l['id'] == line_id), {})
+
+
+def _politics_track(red_lines, succession):
+    sr = _line(red_lines, 'succession_rupture')
+    if sr.get('status') == 'BREACHED':
+        status, read = 'strain', 'Two or more outlets carry elite-fracture language around the succession.'
+    elif sr.get('status') == 'APPROACHING' or succession.get('band') in ('elevated', 'active', 'high'):
+        status, read = 'contested', 'Succession talk is in the reporting; no corroborated fracture.'
+    elif succession.get('hits'):
+        status, read = 'holding', 'The new order is in the news without fracture language.'
+    else:
+        status, read = 'quiet', ('The succession is not in this scan\'s reporting. Unread, not settled -- '
+                                 'the August appointments are the standing baseline.')
+    return {'status': status, 'read': read, 'title': 'THE NEW ORDER — KURULTAI, VICE PRESIDENT, SUCCESSION',
+            'evidence': sr.get('evidence') or [], 'baseline': POLITICS_BASELINE}
+
+
+def _route_track(red_lines, corridor, attribution):
+    cpc = _line(red_lines, 'cpc_disruption')
+    st = cpc.get('status', 'QUIET')
+    who = {'ukrainian_strike': ' The reporting attributes it to Ukrainian drone strikes.',
+           'russian_lever': ' The reporting attributes it to a Russian closure.',
+           'mixed': ' The reporting carries both a strike and a Russian-closure story.',
+           'unattributed': ''}[attribution]
+    if st == 'BREACHED':
+        status, read = 'strain', 'Two or more outlets report CPC exports disrupted.' + who
+    elif st == 'APPROACHING':
+        status, read = 'contested', 'One outlet reports a CPC disruption.' + who
+    elif corridor.get('stage', 0) >= 2:
+        status, read = 'holding', 'Oil is flowing as far as this scan can see, and the bypass is being built.'
+    else:
+        status, read = 'quiet', 'The export route is not in this scan\'s reporting. Unread, not calm.'
+    return {'status': status, 'read': read, 'title': 'THE EXPORT ROUTE — CPC AND THE BYPASS',
+            'evidence': cpc.get('evidence') or [], 'baseline': ROUTE_BASELINE,
+            'attribution': attribution}
+
+
+# ============================================================
+# FOUR WHEELS (v1.2.0) -- Kazakhstan as a spoke
+# ============================================================
+
+_BAND_LEVEL = {'quiet': 0, 'simmering': 1, 'elevated': 2, 'high': 3}
+
+
+def build_spokes(red_lines, russia, china, turkic, iran, attribution):
+    ru = _BAND_LEVEL.get(russia.get('band'), 0)
+    for lid in ('cpc_disruption', 'russian_irredentist'):
+        st = _line(red_lines, lid).get('status')
+        if lid == 'cpc_disruption' and attribution == 'ukrainian_strike':
+            continue          # a Ukrainian strike is not Moscow working the spoke
+        if st == 'BREACHED':
+            ru = max(ru, 4 if lid == 'russian_irredentist' else 3)
+        elif st == 'APPROACHING':
+            ru = max(ru, 3 if lid == 'russian_irredentist' else 2)
+    tk = {'quiet': 0, 'simmering': 1, 'active': 2}.get(turkic.get('band'), 0)
+    return {
+        'russia': {'level': min(ru, 4), 'node_class': 'friction',
+                   'relationship': russia.get('polarity', 'balanced'),
+                   'top_signal': f"Russia levers {russia.get('band', 'quiet')}; polarity {russia.get('polarity', 'balanced')}",
+                   'note': 'CPC route, northern-Kazakhstan rhetoric, EAEU, Baikonur.'},
+        'china': {'level': int(china.get('level', 0) or 0), 'node_class': 'bri_corridor',
+                  'relationship': china.get('relationship', 'alignment'),
+                  'top_signal': china.get('top_signal', ''), 'track': china.get('track'),
+                  'note': 'Elite pull vs street friction -- the read is in the gap.'},
+        'turkey': {'level': tk, 'node_class': 'turkic_affinity', 'relationship': 'alignment',
+                   'top_signal': turkic.get('reading', ''),
+                   'note': 'The fourth, cheapest pole -- which is why leaning on it is informative.'},
+        'iran': {'level': iran.get('level', 0), 'node_class': 'transit_partner', 'relationship': 'transit',
+                 'top_signal': iran.get('reading', ''),
+                 'note': 'Caspian and rail transit; not a lever. Usually L0-L1, and that is the finding.'},
+    }
+
+
+def _top_indicator(red_lines, hedge, politics, route, winter, spokes, health):
+    breached = sorted([r for r in red_lines if r['status'] == 'BREACHED'], key=lambda r: -r['severity'])
+    approaching = sorted([r for r in red_lines if r['status'] == 'APPROACHING'], key=lambda r: -r['severity'])
+    if breached:
+        r = breached[0]
+        line = (f"{r.get('plain') or r['category']} -- carried by {r['outlets']} outlets this cycle. "
+                'A corroborated tripwire, not a forecast.')
+        if r['id'] == 'cpc_disruption' and route.get('attribution') == 'ukrainian_strike':
+            line += ' The reporting points to Ukrainian strikes, not a Russian lever.'
+    elif approaching:
+        r = approaching[0]
+        line = (f"Closest tripwire: {r.get('plain') or r['category']} -- not breached; "
+                f"{r['trigger'].rstrip('.').lower()}.")
+    else:
+        integ = hedge.get('integrity', 'unread')
+        line = {'holding': 'The three-way hedge (Moscow, Beijing, the West) is holding, and no tripwire is corroborated.',
+                'tilting': f"The hedge is tilting toward {hedge.get('dominant_pole') or 'one pole'} this cycle; no tripwire is corroborated.",
+                'strained': 'The hedge is strained this cycle, though no tripwire is corroborated.'}.get(
+            integ, 'No tripwire is corroborated, and the hedge itself is unread this cycle.')
+    if winter.get('in_heating_season') and not breached:
+        line += ' Heating season has begun -- the January 2022 chain started with a fuel-price change.'
+    if health.get('thin'):
+        line = 'Thin read -- ' + line
+    return line
+
+
+# ============================================================
 # MAIN ENTRY POINT
 # ============================================================
 
@@ -1353,6 +1594,15 @@ def interpret_signals(scan_data):
 
         elec_clock = _election_clock_multiplier(scan_data, red_lines)
         winter     = _winter_calendar_multiplier(red_lines, domestic)
+
+        # v1.2.0 -- evidence health, tracks, wheels, the one line
+        health      = corpus_health(scan_data, _corpus(scan_data), min_articles=20, min_outlets=4)
+        iran        = _score_iran(scan_data)
+        attribution = _cpc_attribution(scan_data)
+        politics    = _politics_track(red_lines, succession)
+        route       = _route_track(red_lines, corridor, attribution)
+        spokes      = build_spokes(red_lines, russia, china, turkic, iran, attribution)
+        top_indicator = _top_indicator(red_lines, hedge, politics, route, winter, spokes, health)
 
         so_what = _build_so_what(red_lines, green_lines, corridor, russia, china,
                                  domestic, hedge, succession, turkic, commodity,
@@ -1386,7 +1636,8 @@ def interpret_signals(scan_data):
                 'breached_count':    len(breached),
                 'approaching_count': len(approaching),
                 'highest_severity':  max((r['severity'] for r in red_lines
-                                          if r['status'] != 'QUIET'), default=0),
+                                          if r['status'] in ('BREACHED', 'APPROACHING')), default=0),
+                'rule':              'BREACHED = breach language from 2+ outlets; APPROACHING = 1 outlet; WATCHING = social only.',
             },
             'green_lines': {
                 'triggered':      green_lines,
@@ -1404,6 +1655,13 @@ def interpret_signals(scan_data):
             'commodity_convergence': commodity,
             'election_clock':        elec_clock,
             'winter_calendar':       winter,
+            'top_indicator':         top_indicator,
+            'thin_read':             health['thin'],
+            'corpus_health':         health,
+            'politics_track':        politics,
+            'route_track':           route,
+            'iran_axis':             iran,
+            'spokes':                spokes,
             'cross_theater_fingerprints': fingerprints,
             'composite_modifier':    composite,
             'interpreter_version':   INTERPRETER_VERSION,

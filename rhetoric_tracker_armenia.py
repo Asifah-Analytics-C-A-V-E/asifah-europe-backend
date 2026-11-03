@@ -1,6 +1,24 @@
 """
-Armenia Rhetoric Tracker v1.1.0 (Oct 4 2026)
+Armenia Rhetoric Tracker v1.2.0 (Nov 3 2026)
 ==============================================
+
+v1.2.0 (Nov 3 2026) -- FOUR WHEELS + EVIDENCE PASS
+  1. Armenia now writes a spoke on every wheel that is actually pulling on it:
+       spoke:russia:armenia   friction       (gas / rail / Gyumri / Metsamor levers)
+       spoke:iran:armenia     conditional_buffer (TRIPP is the flip-meter)
+       spoke:turkey:armenia   normalisation_track (unchanged schema, now 30h TTL)
+       spoke:us:armenia       corridor_anchor (TRIPP)
+     All 30h TTL. The Turkey key previously had NO expiry, so a dead scan
+     left a reading on the wheel forever.
+  2. Interpreter v1.1.0: red lines need two outlets; evidence on every line;
+     top_indicator / thin_read; dated peace-gate and Russian-lever tracks.
+  3. History LPUSH used the path form with a {'value': ...} body, which
+     Upstash stores verbatim -- every entry was a wrapper. Command form now;
+     the endpoint unwraps legacy entries and returns oldest -> newest.
+  4. ?force=true rate-limited to one fresh scan per 10 minutes.
+  5. Upstash env vars accept the *_REST_URL / *_REST_TOKEN spellings.
+
+v1.1.0 (Oct 4 2026)
 
 v1.1.0 (Oct 4 2026) -- SOURCE DISCIPLINE PASS
   1. GDELT routes through gdelt_gateway (was: direct calls, 5s read timeout,
@@ -68,8 +86,10 @@ from armenia_signal_interpreter import interpret_signals
 # CONFIG
 # ============================================================
 
-UPSTASH_REDIS_URL    = os.environ.get('UPSTASH_REDIS_URL')
-UPSTASH_REDIS_TOKEN  = os.environ.get('UPSTASH_REDIS_TOKEN')
+UPSTASH_REDIS_URL    = (os.environ.get('UPSTASH_REDIS_URL')
+                        or os.environ.get('UPSTASH_REDIS_REST_URL'))
+UPSTASH_REDIS_TOKEN  = (os.environ.get('UPSTASH_REDIS_TOKEN')
+                        or os.environ.get('UPSTASH_REDIS_REST_TOKEN'))
 NEWSAPI_KEY          = os.environ.get('NEWSAPI_KEY')
 BRAVE_API_KEY        = os.environ.get('BRAVE_API_KEY')
 
@@ -85,7 +105,7 @@ AZ_FINGERPRINT_KEY   = 'crosstheater:azerbaijan:fingerprint'
 SCAN_LOCK_KEY        = 'lock:rhetoric:armenia:scan'
 REFRESH_INTERVAL_SEC = 6 * 3600
 
-TRACKER_VERSION = '1.1.0'
+TRACKER_VERSION = '1.2.0'
 
 TRACKER_USER_AGENT = (f'AsifahAnalytics-Europe-Armenia/{TRACKER_VERSION} '
                       f'(OSINT monitoring tool; +https://asifahanalytics.com)')
@@ -99,6 +119,10 @@ except ImportError:
     print('[Armenia GDELT] gdelt_gateway unavailable -- direct calls (unpaced)')
 
 _scan_lock = threading.Lock()
+_last_force = {'ts': 0.0}
+FORCE_MIN_INTERVAL = 600      # seconds between public ?force=true fresh scans
+SPOKE_TTL = 30 * 3600         # platform spoke convention
+SPOKE_HUBS = ('russia', 'iran', 'turkey', 'us')
 
 
 # ============================================================
@@ -389,27 +413,37 @@ def _redis_set(key, value):
 
 
 def _redis_lpush_trim(key, value, max_len=120):
+    """Command form (v1.2.0). The old path form POSTed {'value': <json>} to
+    /lpush/<key>, which Upstash stores as the BODY -- so every history entry was
+    a {'value': '<json string>'} wrapper and the chart read nothing. The
+    history endpoint unwraps legacy entries."""
     if not (UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN):
         return False
     try:
-        body = json.dumps(value, default=str)
-        requests.post(
-            f'{UPSTASH_REDIS_URL}/lpush/{key}',
-            headers={
-                'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}',
-                'Content-Type': 'application/json',
-            },
-            json={'value': body},
-            timeout=10
-        )
-        requests.post(
-            f'{UPSTASH_REDIS_URL}/ltrim/{key}/0/{max_len-1}',
-            headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'},
-            timeout=5
-        )
+        headers = {'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'}
+        requests.post(UPSTASH_REDIS_URL, headers=headers,
+                      json=['LPUSH', key, json.dumps(value, default=str)], timeout=10)
+        requests.post(UPSTASH_REDIS_URL, headers=headers,
+                      json=['LTRIM', key, '0', str(max_len - 1)], timeout=5)
         return True
     except Exception as e:
         print(f'[Armenia Rhetoric] Redis lpush error: {str(e)[:120]}')
+        return False
+
+
+def _redis_set_ex(key, value, ttl_sec):
+    """SET with expiry -- spoke keys go dark when a scan dies instead of
+    lingering as a stale reading."""
+    if not (UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN):
+        return False
+    try:
+        r = requests.post(UPSTASH_REDIS_URL,
+                          headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'},
+                          json=['SET', key, json.dumps(value, default=str), 'EX', str(int(ttl_sec))],
+                          timeout=10)
+        return r.status_code == 200
+    except Exception as e:
+        print(f'[Armenia Rhetoric] Redis set-ex error: {str(e)[:120]}')
         return False
 
 
@@ -910,11 +944,27 @@ def _write_turkey_spoke(fingerprints):
         'top_signal':   ts.get('top_signal', ''),
     }
     try:
-        _redis_set(SPOKE_KEY_TURKEY, payload)
+        _redis_set_ex(SPOKE_KEY_TURKEY, payload, SPOKE_TTL)
         print(f"[Armenia Rhetoric] Turkey spoke written (spoke:turkey:armenia, "
               f"relationship={payload['relationship']})")
     except Exception as e:
         print(f'[Armenia Rhetoric] Turkey spoke write failed: {e}')
+
+
+def _write_hub_spokes(result):
+    """v1.2.0 -- spoke:{hub}:armenia for Russia, Iran and the US (Turkey keeps
+    its own writer above for schema continuity). 30h TTL."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for hub, sp in (result.get('spokes') or {}).items():
+        if hub == 'turkey' or hub not in SPOKE_HUBS:
+            continue
+        payload = dict(sp)
+        payload.update({'ts': now_iso, 'spoke': 'armenia', 'country': 'armenia', 'hub': hub,
+                        'thin_read': bool(result.get('thin_read')),
+                        'top_indicator': result.get('top_indicator', ''),
+                        'source': 'rhetoric_tracker_armenia', 'version': TRACKER_VERSION})
+        if _redis_set_ex(f'spoke:{hub}:armenia', payload, SPOKE_TTL):
+            print(f"[Armenia Rhetoric] spoke:{hub}:armenia L{payload.get('level', 0)}")
 
 
 # ============================================================
@@ -922,6 +972,10 @@ def _write_turkey_spoke(fingerprints):
 # ============================================================
 
 def run_armenia_rhetoric_scan(force=False):
+    if force and time.time() - _last_force['ts'] < FORCE_MIN_INTERVAL:
+        force = False          # rate limit: serve the cache instead of a new scan
+    if force:
+        _last_force['ts'] = time.time()
     if not force:
         cached = _redis_get(REDIS_KEY_LATEST)
         if cached and cached.get('cached_at'):
@@ -985,6 +1039,7 @@ def run_armenia_rhetoric_scan(force=False):
         'actor_summaries': actor_summaries,
         'theatre_score':  score,
         'alert_level':    alert,
+        'sensing':        sensing,
     }
 
     interpretation = interpret_signals(scan_data)
@@ -1086,6 +1141,13 @@ def run_armenia_rhetoric_scan(force=False):
         'referendum_clock':     interpretation.get('referendum_clock'),
         'rumint':               interpretation.get('rumint'),
         'dyad_read':            dyad_read,
+        # -- v1.2.0: the one line, the under-read flag, tracks and the four wheels --
+        'top_indicator':        interpretation.get('top_indicator'),
+        'thin_read':            interpretation.get('thin_read'),
+        'corpus_health':        interpretation.get('corpus_health'),
+        'peace_track':          interpretation.get('peace_track'),
+        'lever_track':          interpretation.get('lever_track'),
+        'spokes':               interpretation.get('spokes'),
         # -- Off-ramp fingerprint (Iran/Ukraine schema) --
         'de_escalation_maturity': _offramp_maturity,
         'contradiction_active':   _contradiction_active,
@@ -1101,11 +1163,14 @@ def run_armenia_rhetoric_scan(force=False):
     fps = interpretation.get('cross_theater_fingerprints') or {}
     _write_canonical_spoke_fingerprint(result, fps)   # Russia wheel: tenth spoke
     _write_turkey_spoke(fps)                          # Turkey wheel: periphery join
+    _write_hub_spokes(result)                         # v1.2.0: Russia / Iran / US wheels
     _redis_lpush_trim(REDIS_KEY_HISTORY, {
         'cached_at':     result['cached_at'],
         'theatre_score': result['theatre_score'],
         'alert_level':   result['alert_level'],
         'top_signals':   result['top_signals'][:5],
+        'top_indicator': result.get('top_indicator'),
+        'spoke_levels':  {h: (s or {}).get('level', 0) for h, s in (result.get('spokes') or {}).items()},
     })
 
     print(f'[Armenia Rhetoric] Scan complete: score={score}, alert={alert}, '
@@ -1168,6 +1233,14 @@ def register_armenia_rhetoric_endpoints(app):
                 'alert_level':      d.get('alert_level', 'normal'),
                 'top_signals':      (d.get('top_signals') or [])[:3],
                 'so_what_scenario': (d.get('so_what') or {}).get('scenario'),
+                'top_indicator':    d.get('top_indicator'),
+                'thin_read':        d.get('thin_read'),
+                'peace_track':      (d.get('peace_track') or {}).get('status'),
+                'lever_track':      (d.get('lever_track') or {}).get('status'),
+                'spokes':           {h: {'level': s.get('level', 0), 'node_class': s.get('node_class'),
+                                         'top_signal': s.get('top_signal', '')}
+                                     for h, s in (d.get('spokes') or {}).items()},
+                'tracker_version':  d.get('tracker_version'),
                 'cached_at':        d.get('cached_at'),
             })
         except Exception as e:
@@ -1188,9 +1261,13 @@ def register_armenia_rhetoric_endpoints(app):
             history = []
             for item in raw:
                 try:
-                    history.append(json.loads(item))
+                    e = json.loads(item)
+                    if isinstance(e, dict) and set(e) == {'value'} and isinstance(e['value'], str):
+                        e = json.loads(e['value'])     # legacy path-form wrapper
+                    history.append(e)
                 except Exception:
                     pass
+            history.reverse()        # LPUSH stores newest first; charts want oldest -> newest
             return jsonify({
                 'success': True,
                 'theatre': 'armenia',

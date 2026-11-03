@@ -1,6 +1,25 @@
 """
-Kazakhstan Multi-Vector Tracker v1.1.0 (Oct 4 2026)
+Kazakhstan Multi-Vector Tracker v1.3.0 (Nov 3 2026)
 =====================================================
+
+v1.3.0 (Nov 3 2026) -- FOUR WHEELS + EVIDENCE PASS
+  1. Kazakhstan writes a spoke on each wheel that pulls on it:
+       spoke:russia:kazakhstan  friction        (CPC, irredentist rhetoric, EAEU)
+       spoke:china:kazakhstan   bri_corridor    (dual track; existing writer, now 30h TTL)
+       spoke:turkey:kazakhstan  turkic_affinity (the Turkey wheel has listed Kazakhstan
+                                                 since July; nothing wrote it until now)
+       spoke:iran:kazakhstan    transit_partner (thin by nature -- L0-L1 is the finding)
+     All 30h TTL. The China key previously had NO expiry.
+  2. Interpreter v1.2.0: red lines need two outlets; evidence on every line;
+     CPC outages carry an attribution (Ukrainian strike vs Russian closure);
+     top_indicator / thin_read; dated political-order and export-route tracks.
+  3. History LPUSH used the path form with a {'value': ...} body -- every entry
+     was a wrapper. Command form now; the endpoint unwraps legacy entries.
+  4. ?force=true rate-limited to one fresh scan per 10 minutes.
+  5. Upstash env vars accept the *_REST_URL / *_REST_TOKEN spellings.
+  (v1.2.0 Oct 6 2026: health/border actor for the Irkutsk plague event.)
+
+v1.1.0 (Oct 4 2026)
 
 v1.1.0 (Oct 4 2026) -- SOURCE DISCIPLINE PASS
   1. GDELT routes through gdelt_gateway. This file was calling
@@ -92,8 +111,10 @@ except ImportError:
 # CONFIG
 # ============================================================
 
-UPSTASH_REDIS_URL   = os.environ.get('UPSTASH_REDIS_URL')
-UPSTASH_REDIS_TOKEN = os.environ.get('UPSTASH_REDIS_TOKEN')
+UPSTASH_REDIS_URL    = (os.environ.get('UPSTASH_REDIS_URL')
+                        or os.environ.get('UPSTASH_REDIS_REST_URL'))
+UPSTASH_REDIS_TOKEN  = (os.environ.get('UPSTASH_REDIS_TOKEN')
+                        or os.environ.get('UPSTASH_REDIS_REST_TOKEN'))
 NEWSAPI_KEY         = os.environ.get('NEWSAPI_KEY')
 BRAVE_API_KEY       = os.environ.get('BRAVE_API_KEY')
 
@@ -108,7 +129,7 @@ SPOKE_KEY_CHINA     = 'spoke:china:kazakhstan'      # <-- first China-wheel spok
 SCAN_LOCK_KEY       = 'lock:rhetoric:kazakhstan:scan'
 REFRESH_INTERVAL_SEC = 6 * 3600
 
-TRACKER_VERSION = '1.2.0'
+TRACKER_VERSION = '1.3.0'
 
 TRACKER_USER_AGENT = (f'AsifahAnalytics-Europe-Kazakhstan/{TRACKER_VERSION} '
                       f'(OSINT monitoring tool; +https://asifahanalytics.com)')
@@ -122,6 +143,9 @@ except ImportError:
     print('[Kazakhstan GDELT] gdelt_gateway unavailable -- direct calls (unpaced)')
 
 _scan_lock = threading.Lock()
+_last_force = {'ts': 0.0}
+FORCE_MIN_INTERVAL = 600      # seconds between public ?force=true fresh scans
+SPOKE_TTL = 30 * 3600         # platform spoke convention
 
 
 # ============================================================
@@ -469,18 +493,37 @@ def _redis_set(key, value):
 
 
 def _redis_lpush_trim(key, value, max_len=120):
+    """Command form (v1.3.0). The old path form POSTed {'value': <json>} to
+    /lpush/<key>, which Upstash stores as the BODY -- so every history entry was
+    a {'value': '<json string>'} wrapper and the chart read nothing. The
+    history endpoint unwraps legacy entries."""
     if not (UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN):
         return False
     try:
-        requests.post(f'{UPSTASH_REDIS_URL}/lpush/{key}',
-                      headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}',
-                               'Content-Type': 'application/json'},
-                      json={'value': json.dumps(value, default=str)}, timeout=10)
-        requests.post(f'{UPSTASH_REDIS_URL}/ltrim/{key}/0/{max_len-1}',
-                      headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'}, timeout=5)
+        headers = {'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'}
+        requests.post(UPSTASH_REDIS_URL, headers=headers,
+                      json=['LPUSH', key, json.dumps(value, default=str)], timeout=10)
+        requests.post(UPSTASH_REDIS_URL, headers=headers,
+                      json=['LTRIM', key, '0', str(max_len - 1)], timeout=5)
         return True
     except Exception as e:
         print(f'[Kazakhstan Tracker] Redis lpush error: {str(e)[:120]}')
+        return False
+
+
+def _redis_set_ex(key, value, ttl_sec):
+    """SET with expiry -- spoke keys go dark when a scan dies instead of
+    lingering as a stale reading."""
+    if not (UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN):
+        return False
+    try:
+        r = requests.post(UPSTASH_REDIS_URL,
+                          headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'},
+                          json=['SET', key, json.dumps(value, default=str), 'EX', str(int(ttl_sec))],
+                          timeout=10)
+        return r.status_code == 200
+    except Exception as e:
+        print(f'[Kazakhstan Tracker] Redis set-ex error: {str(e)[:120]}')
         return False
 
 
@@ -958,7 +1001,7 @@ def _write_china_spoke(fingerprints):
         'street_signals': cs.get('street_signals', 0),
     }
     try:
-        _redis_set(SPOKE_KEY_CHINA, payload)
+        _redis_set_ex(SPOKE_KEY_CHINA, payload, SPOKE_TTL)
         print(f"[Kazakhstan Tracker] *** CHINA SPOKE WRITTEN *** "
               f"(spoke:china:kazakhstan, relationship={payload['relationship']}, "
               f"track={payload['track']}) -- first writer of the China rim")
@@ -966,11 +1009,31 @@ def _write_china_spoke(fingerprints):
         print(f'[Kazakhstan Tracker] China spoke write failed: {e}')
 
 
+def _write_hub_spokes(result):
+    """v1.3.0 -- spoke:{russia,turkey,iran}:kazakhstan (China keeps its own
+    writer above for schema continuity). 30h TTL."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for hub, sp in (result.get('spokes') or {}).items():
+        if hub == 'china':
+            continue
+        payload = dict(sp)
+        payload.update({'ts': now_iso, 'spoke': 'kazakhstan', 'country': 'kazakhstan', 'hub': hub,
+                        'thin_read': bool(result.get('thin_read')),
+                        'top_indicator': result.get('top_indicator', ''),
+                        'source': 'rhetoric_tracker_kazakhstan', 'version': TRACKER_VERSION})
+        if _redis_set_ex(f'spoke:{hub}:kazakhstan', payload, SPOKE_TTL):
+            print(f"[Kazakhstan Tracker] spoke:{hub}:kazakhstan L{payload.get('level', 0)}")
+
+
 # ============================================================
 # MAIN SCAN
 # ============================================================
 
 def run_kazakhstan_rhetoric_scan(force=False):
+    if force and time.time() - _last_force['ts'] < FORCE_MIN_INTERVAL:
+        force = False          # rate limit: serve the cache instead of a new scan
+    if force:
+        _last_force['ts'] = time.time()
     if not force:
         cached = _redis_get(REDIS_KEY_LATEST)
         if cached and cached.get('cached_at'):
@@ -1030,6 +1093,7 @@ def run_kazakhstan_rhetoric_scan(force=False):
         'theatre_score':   score,
         'alert_level':     alert,
         'commodity_data':  commodity_data,   # <-- server-side, convergence-gated
+        'sensing':         sensing,
     }
 
     interpretation = interpret_signals(scan_data)
@@ -1112,6 +1176,14 @@ def run_kazakhstan_rhetoric_scan(force=False):
         'commodity_convergence': interpretation.get('commodity_convergence'),
         'election_clock':        interpretation.get('election_clock'),
         'winter_calendar':       interpretation.get('winter_calendar'),
+        # -- v1.3.0: the one line, the under-read flag, tracks and the four wheels --
+        'top_indicator':         interpretation.get('top_indicator'),
+        'thin_read':             interpretation.get('thin_read'),
+        'corpus_health':         interpretation.get('corpus_health'),
+        'politics_track':        interpretation.get('politics_track'),
+        'route_track':           interpretation.get('route_track'),
+        'iran_axis':             interpretation.get('iran_axis'),
+        'spokes':                interpretation.get('spokes'),
         # -- commodity passthrough for the page card (display) --
         'commodity_snapshot': ({
             'pressure':    (commodity_data or {}).get('commodity_pressure', 0),
@@ -1132,11 +1204,14 @@ def run_kazakhstan_rhetoric_scan(force=False):
     fps = interpretation.get('cross_theater_fingerprints') or {}
     _write_canonical_spoke_fingerprint(result, fps)   # Russia wheel
     _write_china_spoke(fps)                           # *** FIRST CHINA SPOKE ***
+    _write_hub_spokes(result)                         # v1.3.0: Russia / Turkey / Iran wheels
     _redis_lpush_trim(REDIS_KEY_HISTORY, {
         'cached_at':     result['cached_at'],
         'theatre_score': result['theatre_score'],
         'alert_level':   result['alert_level'],
         'top_signals':   result['top_signals'][:5],
+        'top_indicator': result.get('top_indicator'),
+        'spoke_levels':  {h: (s or {}).get('level', 0) for h, s in (result.get('spokes') or {}).items()},
     })
 
     print(f'[Kazakhstan Tracker] Scan complete: score={score}, alert={alert}, '
@@ -1197,6 +1272,14 @@ def register_kazakhstan_rhetoric_endpoints(app):
                 'top_signals':      (d.get('top_signals') or [])[:3],
                 'so_what_scenario': (d.get('so_what') or {}).get('scenario'),
                 'hedge_integrity':  (d.get('hedging_integrity') or {}).get('integrity'),
+                'top_indicator':    d.get('top_indicator'),
+                'thin_read':        d.get('thin_read'),
+                'politics_track':   (d.get('politics_track') or {}).get('status'),
+                'route_track':      (d.get('route_track') or {}).get('status'),
+                'spokes':           {h: {'level': s.get('level', 0), 'node_class': s.get('node_class'),
+                                         'top_signal': s.get('top_signal', '')}
+                                     for h, s in (d.get('spokes') or {}).items()},
+                'tracker_version':  d.get('tracker_version'),
                 'cached_at':        d.get('cached_at'),
             })
         except Exception as e:
@@ -1215,9 +1298,13 @@ def register_kazakhstan_rhetoric_endpoints(app):
             history = []
             for item in raw:
                 try:
-                    history.append(json.loads(item))
+                    e = json.loads(item)
+                    if isinstance(e, dict) and set(e) == {'value'} and isinstance(e['value'], str):
+                        e = json.loads(e['value'])     # legacy path-form wrapper
+                    history.append(e)
                 except Exception:
                     pass
+            history.reverse()        # LPUSH stores newest first; charts want oldest -> newest
             return jsonify({'success': True, 'theatre': 'kazakhstan',
                             'count': len(history), 'history': history})
         except Exception as e:

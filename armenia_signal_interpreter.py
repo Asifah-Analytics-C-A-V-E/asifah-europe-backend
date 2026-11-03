@@ -1,6 +1,23 @@
 """
-Armenia Signal Interpreter v1.0.0 (Jul 12 2026)
+Armenia Signal Interpreter v1.1.0 (Nov 3 2026)
 ================================================
+
+v1.1.0 (Nov 3 2026) -- EVIDENCE PASS + FOUR WHEELS
+  1. Red/green lines and every vector count PUBLISHERS, not pooled phrases
+     (europe_evidence). BREACHED needs 2+ outlets. Each line carries its
+     evidence (headline, outlet, phrase), a plain-language title and a
+     'why this status' sentence.
+  2. build_spokes(): Armenia is a spoke on FOUR wheels -- Russia (lever
+     pressure), Iran (the conditional buffer), Turkey (normalization) and the
+     US (TRIPP anchor). The tracker writes one spoke:{hub}:armenia key each.
+  3. Dated background tracks: the treaty/referendum gate (as of Oct 30 2026)
+     and the Russian gas lever (price deal expires end-2026).
+  4. top_indicator / thin_read / corpus_health.
+  5. Reality refresh: the June 2026 election is over (Civil Contract 64/105,
+     six short of the 70 needed to call a referendum); snap-election talk is
+     now a referendum-clock term.
+
+v1.0.0 (Jul 12 2026) -- original design notes follow.
 Analytical layer for rhetoric_tracker_armenia.py. Follows the Turkey
 interpreter contract (interpret_signals entry point, canonical top_signals,
 cross_theater_fingerprints) with Armenia's own vector set.
@@ -32,7 +49,9 @@ anchored. The reader completes the inference. Absence stays honest.
 
 from datetime import datetime, timezone
 
-INTERPRETER_VERSION = '1.0.0'
+from europe_evidence import build_corpus, corpus_health, find
+
+INTERPRETER_VERSION = '1.1.0'
 
 CONVERGENCE_DISCLAIMER = (
     'This composite is a CONVERGENCE indicator, NOT a probability of action. '
@@ -41,37 +60,90 @@ CONVERGENCE_DISCLAIMER = (
 )
 
 
+
 # ============================================================
-# CORPUS KEYWORD MATCHER (Turkey clone, Armenia article keys)
+# EVIDENCE CORPUS (v1.1.0, Nov 3 2026)
 # ============================================================
+# v1.0 pooled every headline into ONE string and counted distinct phrases
+# anywhere in it, so one blog post carrying three phrases could breach a
+# severity-5 line. The corpus is now scored PER ARTICLE and counted by
+# PUBLISHER (europe_evidence -- the rule the rest of Europe runs):
+#   * red lines  BREACHED = breach language from 2+ outlets (3 where the line
+#                demanded three phrases); APPROACHING = 1 outlet;
+#                WATCHING = social chatter only
+#   * vectors    a phrase count can never exceed the outlet breadth behind it
+#                (phrases <= outlets + 1) -- volume cannot climb above evidence
+# Social posts (Reddit / Bluesky) never corroborate. They are recorded, not counted.
+
+_ARTICLE_KEYS = ('articles_en', 'articles_hy', 'articles_ru')
+
+
+def _corpus(scan_data):
+    c = scan_data.get('_ev_corpus')
+    if c is None:
+        c = build_corpus(scan_data, article_keys=_ARTICLE_KEYS)
+        scan_data['_ev_corpus'] = c
+    return c
+
 
 def _check_keywords(scan_data, keywords):
-    """Match keywords against the scan corpus. URL slugs are de-hyphenated
-    so multi-word keywords match headline slugs (the Ukraine v1.2 lesson)."""
+    """Distinct phrases present, capped by the number of outlets carrying them
+    (phrases <= outlets + 1). Social-only matches count zero."""
     if not keywords:
         return 0
-    corpus_parts = []
-    for key in ('articles_en', 'articles_hy', 'articles_ru'):
-        for art in (scan_data.get(key) or []):
-            corpus_parts.append((art.get('title') or '').lower())
-            corpus_parts.append((art.get('description') or '').lower())
-            corpus_parts.append((art.get('summary') or '').lower())
-            corpus_parts.append((art.get('content') or '').lower())
-            _url = (art.get('url') or art.get('link') or '').lower()
-            if _url:
-                corpus_parts.append(
-                    _url.replace('-', ' ').replace('_', ' ').replace('/', ' '))
-    for key in ('reddit_signals', 'telegram_messages', 'bluesky_signals'):
-        for sig in (scan_data.get(key) or []):
-            corpus_parts.append((sig.get('text') or sig.get('title') or '').lower())
-    corpus = ' | '.join(corpus_parts)
-    if not corpus:
-        return 0
-    matches = 0
-    for kw in keywords:
-        if kw.lower() in corpus:
-            matches += 1
-    return matches
+    f = find(_corpus(scan_data), keywords)
+    n = len(f['outlets'])
+    return min(len(f['phrases']), n + 1) if n else 0
+
+
+def _line_trigger(status, n, need):
+    if status == 'BREACHED':
+        return f'Carried by {n} outlets.'
+    if status == 'APPROACHING':
+        return (f'{n} outlet' + ('s' if n != 1 else '') +
+                f' so far -- needs {need} to count as breached.')
+    if status == 'WATCHING':
+        return 'Social chatter only -- noted, not counted.'
+    return ''
+
+
+def _score_red_lines(scan_data):
+    out = []
+    corpus = _corpus(scan_data)
+    for line in RED_LINES:
+        f = find(corpus, line['keywords'])
+        n = len(f['outlets'])
+        need = max(2, line.get('breach_threshold', 2))
+        status = ('BREACHED' if n >= need else 'APPROACHING' if n >= 1
+                  else 'WATCHING' if f['social'] else 'QUIET')
+        out.append({'id': line['id'], 'category': line['category'],
+                    'title': line['category'], 'plain': line.get('plain', ''),
+                    'severity': line['severity'], 'status': status,
+                    'hits': len(f['phrases']), 'outlets': n,
+                    'description': line['description'],
+                    'evidence': f['evidence'][:3],
+                    'trigger': _line_trigger(status, n, need)})
+    return out
+
+
+def _score_green_lines(scan_data):
+    """De-escalation lines: ACTIVE at the line's threshold in OUTLETS (a
+    signature or a border opening is a big claim -- one press release does not
+    make it), SIGNALED on one outlet or chatter."""
+    out = []
+    corpus = _corpus(scan_data)
+    for line in GREEN_LINES:
+        f = find(corpus, line['keywords'])
+        n = len(f['outlets'])
+        need = max(1, line.get('active_threshold', 2))
+        status = ('ACTIVE' if n >= need else 'SIGNALED' if (n >= 1 or f['social'])
+                  else 'QUIET')
+        out.append({'id': line['id'], 'category': line['category'],
+                    'title': line['category'], 'severity': line['severity'],
+                    'status': status, 'hits': len(f['phrases']), 'outlets': n,
+                    'description': line['description'],
+                    'evidence': f['evidence'][:3]})
+    return out
 
 
 # ============================================================
@@ -82,6 +154,7 @@ def _check_keywords(scan_data, keywords):
 RED_LINES = [
     {
         'id': 'treaty_collapse',
+        'plain': 'The Armenia-Azerbaijan peace deal being suspended or abandoned',
         'category': 'Treaty Collapse',
         'severity': 5,
         'breach_threshold': 2,
@@ -97,6 +170,7 @@ RED_LINES = [
     },
     {
         'id': 'corridor_by_force',
+        'plain': 'Baku talking about taking the Zangezur corridor by force',
         'category': 'Corridor by Force',
         'severity': 5,
         'breach_threshold': 2,
@@ -110,6 +184,7 @@ RED_LINES = [
     },
     {
         'id': 'border_kinetic',
+        'plain': 'Shooting on the Armenia-Azerbaijan border',
         'category': 'Border Kinetic',
         'severity': 4,
         'breach_threshold': 2,
@@ -124,6 +199,7 @@ RED_LINES = [
     },
     {
         'id': 'constitutional_crisis',
+        'plain': 'The referendum fight turning into a constitutional crisis',
         'category': 'Constitutional Crisis',
         'severity': 4,
         'breach_threshold': 2,
@@ -138,6 +214,7 @@ RED_LINES = [
     },
     {
         'id': 'street_destabilization',
+        'plain': 'Mass street mobilisation aimed at toppling the government',
         'category': 'Street Destabilization',
         'severity': 3,
         'breach_threshold': 3,
@@ -153,6 +230,7 @@ RED_LINES = [
     },
     {
         'id': 'russian_hard_lever',
+        'plain': 'Moscow pulling a hard lever (gas, rail, the Gyumri base, nuclear fuel)',
         'category': 'Russian Hard Lever',
         'severity': 3,
         'breach_threshold': 2,
@@ -162,11 +240,14 @@ RED_LINES = [
             'gazprom cuts armenia', 'gas cutoff armenia', 'gas price armenia gazprom',
             'russian railways armenia suspend', 'south caucasus railway halt',
             'metsamor fuel halt', 'rosatom suspends', 'russian border guards refuse',
+            'russia halts gas armenia', 'gas supply to armenia suspended',
+            'duty-free gas agreement suspended', 'russia bans armenian imports',
             'газпром армения', 'южно-кавказская железная дорога', 'мецамор',
         ],
     },
     {
         'id': 'iran_corridor_threat',
+        'plain': 'Iran threatening the TRIPP / Zangezur route militarily',
         'category': 'Iran Corridor Threat',
         'severity': 3,
         'breach_threshold': 2,
@@ -279,40 +360,6 @@ GREEN_LINES = [
 ]
 
 
-def _score_red_lines(scan_data):
-    out = []
-    for line in RED_LINES:
-        hits = _check_keywords(scan_data, line['keywords'])
-        if hits >= line['breach_threshold']:
-            status = 'BREACHED'
-        elif hits >= 1:
-            status = 'APPROACHING'
-        else:
-            status = 'QUIET'
-        out.append({
-            'id': line['id'], 'category': line['category'],
-            'severity': line['severity'], 'status': status,
-            'hits': hits, 'description': line['description'],
-        })
-    return out
-
-
-def _score_green_lines(scan_data):
-    out = []
-    for line in GREEN_LINES:
-        hits = _check_keywords(scan_data, line['keywords'])
-        if hits >= line['active_threshold']:
-            status = 'ACTIVE'
-        elif hits >= 1:
-            status = 'SIGNALED'
-        else:
-            status = 'QUIET'
-        out.append({
-            'id': line['id'], 'category': line['category'],
-            'severity': line['severity'], 'status': status,
-            'hits': hits, 'description': line['description'],
-        })
-    return out
 
 
 # ============================================================
@@ -531,7 +578,7 @@ def _score_russia_pressure(scan_data):
     reading_parts = []
     if interference_tempo:
         reading_parts.append(
-            f'Interference-reporting tempo at {interference_tempo} matched signals '
+            f'Interference-reporting tempo at {interference_tempo} corroborated signals '
             '-- a level consistent with active influence-operation coverage cycles.')
     if lever_events:
         reading_parts.append(
@@ -713,13 +760,15 @@ REFERENDUM_CLOCK_KEYWORDS = [
     'referendum date', 'referendum scheduled', 'referendum campaign',
     'vote on the constitution', 'constitutional vote armenia',
     'referendum this year', 'referendum bill', 'referendum question',
+    'snap elections armenia', 'early elections armenia', 'snap parliamentary election',
+    'draft constitution armenia',
     'дата референдума', 'референдум по конституции',
 ]
 
 
 def _referendum_clock_multiplier(scan_data, red_lines_triggered):
     hits = _check_keywords(scan_data, REFERENDUM_CLOCK_KEYWORDS)
-    stack_active = any(r['status'] != 'QUIET' for r in red_lines_triggered)
+    stack_active = any(r['status'] in ('BREACHED', 'APPROACHING') for r in red_lines_triggered)
     if hits >= 2 and stack_active:
         return {'active': True, 'multiplier': 0.20, 'hits': hits,
                 'reading': 'Referendum-window conditions amplifying an active signal stack.'}
@@ -852,8 +901,8 @@ def _build_top_signals(red_lines, green_lines, diplomatic, tripp, russia,
             signals.append({
                 'priority': 1,
                 'category': r['id'],
-                'short_text': f"RED LINE BREACHED: {r['category']} ({r['hits']} signals)",
-                'long_text': f"{r['description']}. {r['hits']} matched signals this cycle "
+                'short_text': f"RED LINE BREACHED: {r.get('plain') or r['category']} ({r['outlets']} outlets)",
+                'long_text': f"{r['description']}. Carried by {r['outlets']} outlets this cycle "
                              f"-- a level consistent with the tripwire condition being live.",
                 'pressure_type': 'kinetic' if r['id'] in
                     ('border_kinetic', 'corridor_by_force') else 'diplomatic',
@@ -864,8 +913,7 @@ def _build_top_signals(red_lines, green_lines, diplomatic, tripp, russia,
                 'priority': 2,
                 'category': r['id'],
                 'short_text': f"Approaching: {r['category']}",
-                'long_text': f"{r['description']}. Early signals present ({r['hits']}), "
-                             f"below breach threshold.",
+                'long_text': f"{r['description']}. {r['trigger']}",
                 'pressure_type': 'kinetic' if r['id'] in
                     ('border_kinetic', 'corridor_by_force') else 'diplomatic',
             })
@@ -875,7 +923,7 @@ def _build_top_signals(red_lines, green_lines, diplomatic, tripp, russia,
             signals.append({
                 'priority': 2,
                 'category': g['id'],
-                'short_text': f"GREEN LINE: {g['category']} active ({g['hits']} signals)",
+                'short_text': f"GREEN LINE: {g['category']} active ({g['outlets']} outlets)",
                 'long_text': f"{g['description']}. De-escalatory marker active this cycle.",
                 'pressure_type': 'diplomatic',
             })
@@ -969,6 +1017,162 @@ def _build_fingerprints(red_lines, green_lines, diplomatic, tripp, russia,
 
 
 # ============================================================
+# DATED BACKGROUND TRACKS (v1.1.0) -- what has already happened
+# ============================================================
+# Background, never this cycle's evidence. The scan asks whether they hold.
+
+PEACE_BASELINE = {
+    'as_of': '2026-11-03',
+    'treaty': ('Initialled in Washington in August 2025, not signed. Baku\'s precondition: '
+               'Armenia removes what it reads as territorial claims from its constitution.'),
+    'rules': ('Putting a new constitution to referendum needs two-thirds of parliament (70 of '
+              '105). Civil Contract won 64 seats on June 7, 2026 -- six short -- and the '
+              'opposition has ruled out support. A referendum also needs "yes" from 25% of '
+              'all registered voters.'),
+    'status': ('Oct 22: Pashinyan floated snap elections to win the missing seats. Oct 29: he '
+               'called early elections unlikely and promised an offer the opposition "cannot '
+               'refuse". Draft constitution due by end-2026; signing targeted for 2027-28.'),
+    'tripp': ('TRIPP: parliament ratified the US-Armenia framework in late October (US holds 74% '
+              'of the development company, 49+ years). Groundbreaking now expected early 2027.'),
+    'sources': ['https://oc-media.org/explainer-could-armenia-have-a-snap-election-as-soon-as-next-year/',
+                'https://report.az/en/region/tripp-groundbreaking-expected-in-early-2027'],
+}
+
+LEVER_BASELINE = {
+    'as_of': '2026-11-03',
+    'what': ('Armenia buys ~2.7 bcm/yr of Russian gas at a fixed $177.5 per 1,000 m3 under a deal '
+             'that runs to end-2026 / early 2027; another ~0.5 bcm comes from Iran in a '
+             'gas-for-electricity swap.'),
+    'status': ('Late September: Armenian press, citing Russian sources, reported a possible '
+               'permanent cutoff from Nov 1 unless Yerevan met Moscow\'s demands (drop the Gyumri '
+               'base debate, the EU law, prosecutions of pro-Russian figures). Nov 2: Gazprom '
+               'Armenia said supplies continue as usual. The threat did not materialise; the '
+               'price deal\'s expiry is the next real date.'),
+    'constraint': ('Aug 2026 government programme downgraded Russia from "strategic alliance" '
+                   'to a "transforming" partnership; CSTO participation frozen since 2024.'),
+    'sources': ['https://1news.az/en/news/20261102124008131-Gazprom-Gas-supplies-to-Armenia-continue-as-usual',
+                'https://oc-media.org/armenia-downgrades-relations-with-russia-in-new-government-programme/'],
+}
+
+
+def _line(lines, line_id):
+    return next((l for l in lines if l['id'] == line_id), {})
+
+
+def _peace_track(red_lines, green_lines, diplomatic, ref_clock):
+    tc = _line(red_lines, 'treaty_collapse')
+    cc = _line(red_lines, 'constitutional_crisis')
+    sig = _line(green_lines, 'treaty_signature')
+    ref = _line(green_lines, 'referendum_scheduled')
+    if tc.get('status') in ('BREACHED', 'APPROACHING') or cc.get('status') == 'BREACHED':
+        status, read = 'strain', ('Collapse or crisis language is in the reporting this cycle -- the '
+                                  'peace track is being contested, not just delayed.')
+    elif sig.get('status') == 'ACTIVE' or ref.get('status') == 'ACTIVE':
+        status, read = 'holding', ('A signature or referendum milestone is carried by two or more '
+                                   'outlets -- the gate is moving.')
+    elif diplomatic.get('negator_hits', 0) >= 1 or cc.get('status') == 'APPROACHING':
+        status, read = 'contested', ('The track is alive but contested: rejection language sits next '
+                                     'to the treaty talk. The referendum math has not changed.')
+    elif diplomatic.get('score', 0) > 0:
+        status, read = 'holding', ('Treaty-track talk without rejection language. The gate is still '
+                                   'the referendum: six seats short.')
+    else:
+        status, read = 'quiet', ('The treaty is not in this scan\'s reporting. Unread, not stalled -- '
+                                 'the referendum gate is the standing baseline.')
+    if ref_clock.get('active'):
+        read += ' Referendum / snap-election talk is live alongside it.'
+    return {'status': status, 'read': read, 'title': 'THE PEACE GATE — TREATY, REFERENDUM, TRIPP',
+            'evidence': (tc.get('evidence') or []) + (sig.get('evidence') or []) + (ref.get('evidence') or []),
+            'baseline': PEACE_BASELINE}
+
+
+def _lever_track(red_lines, russia):
+    hl = _line(red_lines, 'russian_hard_lever')
+    st = hl.get('status', 'QUIET')
+    if st == 'BREACHED':
+        status, read = 'strain', 'Two or more outlets report Moscow pulling a hard lever this cycle.'
+    elif st == 'APPROACHING' or russia.get('band') in ('elevated', 'high'):
+        status, read = 'contested', ('Lever language is in the reporting (gas, rail, Gyumri, Metsamor '
+                                     'class); no confirmed cut.')
+    elif russia.get('band') == 'simmering':
+        status, read = 'holding', 'Russia-lever reporting is low; supplies and basing unchanged.'
+    else:
+        status, read = 'quiet', 'Russian levers are not in this scan\'s reporting. Unread, not calm.'
+    return {'status': status, 'read': read, 'title': 'MOSCOW\'S LEVERS — GAS, RAIL, GYUMRI',
+            'evidence': hl.get('evidence') or [], 'baseline': LEVER_BASELINE}
+
+
+# ============================================================
+# FOUR WHEELS (v1.1.0) -- Armenia as a spoke
+# ============================================================
+# One payload per hub, written by the tracker to spoke:{hub}:armenia (30h TTL).
+# Level = how hard that hub is working this spoke THIS cycle, 0-4. No wheel
+# may print L5 from here: nothing on these vectors is hostilities.
+
+_BAND_LEVEL = {'quiet': 0, 'simmering': 1, 'elevated': 2, 'high': 3}
+_IRAN_LEVEL = {'quiet': 0, 'cooperative_buffer': 1, 'strained_buffer': 2, 'flipping_friction': 3}
+
+
+def build_spokes(red_lines, russia, iran, turkey, tripp, drift):
+    hl = _line(red_lines, 'russian_hard_lever').get('status')
+    ru_lvl = _BAND_LEVEL.get(russia.get('band'), 0)
+    if hl == 'BREACHED':
+        ru_lvl = max(ru_lvl, 4)
+    elif hl == 'APPROACHING':
+        ru_lvl = max(ru_lvl, 3)
+    ict = _line(red_lines, 'iran_corridor_threat').get('status')
+    ir_lvl = _IRAN_LEVEL.get(iran.get('posture'), 0)
+    if ict in ('BREACHED', 'APPROACHING'):
+        ir_lvl = max(ir_lvl, 3)
+    us_lvl = min(3, int(tripp.get('stage', 0) or 0))
+    return {
+        'russia': {'level': min(ru_lvl, 4), 'node_class': 'friction',
+                   'relationship': 'friction' if drift.get('band') != 'moscow_pull' else 'alignment',
+                   'top_signal': (_line(red_lines, 'russian_hard_lever').get('plain')
+                                  if hl in ('BREACHED', 'APPROACHING')
+                                  else f"Russia pressure {russia.get('band', 'quiet')}; drift {drift.get('band', 'contested')}"),
+                   'note': 'Moscow\'s levers: gas price, rail concession, Gyumri base, Metsamor fuel.'},
+        'iran': {'level': ir_lvl, 'node_class': 'conditional_buffer',
+                 'relationship': 'friction' if ir_lvl >= 2 else 'buffer',
+                 'top_signal': f"Iran posture: {iran.get('posture', 'quiet').replace('_', ' ')} "
+                               f"(flip meter {iran.get('flip_meter', 0)}/10)",
+                 'note': 'Iran backed Armenia as a block on the pan-Turkic land bridge; TRIPP tests that.'},
+        'turkey': {'level': int(turkey.get('level', 0) or 0), 'node_class': 'normalisation_track',
+                   'relationship': turkey.get('relationship', 'friction'),
+                   'top_signal': turkey.get('top_signal', ''),
+                   'note': 'Normalisation is chained to the Azerbaijan treaty.'},
+        'us': {'level': us_lvl, 'node_class': 'corridor_anchor', 'relationship': 'anchor',
+               'top_signal': f"TRIPP: {tripp.get('stage_name', 'Dormant')}; blockers {tripp.get('threat_band', 'quiet')}",
+               'note': 'The US holds 74% of the TRIPP development company.'},
+    }
+
+
+def _top_indicator(red_lines, peace, lever, iran, spokes, health):
+    breached = sorted([r for r in red_lines if r['status'] == 'BREACHED'], key=lambda r: -r['severity'])
+    approaching = sorted([r for r in red_lines if r['status'] == 'APPROACHING'], key=lambda r: -r['severity'])
+    if breached:
+        r = breached[0]
+        line = (f"{r.get('plain') or r['category']} -- carried by {r['outlets']} outlets this cycle. "
+                'A corroborated tripwire, not a forecast.')
+    elif peace['status'] == 'strain':
+        line = 'The peace track is under strain: collapse or crisis language is in the reporting.'
+    elif approaching:
+        r = approaching[0]
+        line = (f"Closest tripwire: {r.get('plain') or r['category']} -- not breached; "
+                f"{r['trigger'].rstrip('.').lower()}.")
+    else:
+        line = ('The peace deal still waits on a referendum Pashinyan cannot call -- six seats short -- '
+                'and no tripwire is corroborated this cycle.')
+    hot = sorted(((h, s['level']) for h, s in spokes.items() if s['level'] >= 2), key=lambda x: -x[1])
+    if len(hot) >= 2:
+        line += (' Two or more outside hubs are pressing at once ('
+                 + ', '.join(h.title() if h != 'us' else 'US' for h, _ in hot) + ').')
+    if health.get('thin'):
+        line = 'Thin read -- ' + line
+    return line
+
+
+# ============================================================
 # MAIN ENTRY POINT
 # ============================================================
 
@@ -986,6 +1190,11 @@ def interpret_signals(scan_data):
         turkey = _score_turkey_normalization(scan_data)
         ref_clock = _referendum_clock_multiplier(scan_data, red_lines)
         rumint = _score_rumint(scan_data)
+        health = corpus_health(scan_data, _corpus(scan_data), min_articles=20, min_outlets=4)
+        peace = _peace_track(red_lines, green_lines, diplomatic, ref_clock)
+        lever = _lever_track(red_lines, russia)
+        spokes = build_spokes(red_lines, russia, iran, turkey, tripp, drift)
+        top_indicator = _top_indicator(red_lines, peace, lever, iran, spokes, health)
 
         so_what = _build_so_what(scan_data, red_lines, green_lines, diplomatic,
                                  tripp, russia, drift, iran, turkey, ref_clock)
@@ -1016,7 +1225,8 @@ def interpret_signals(scan_data):
                 'breached_count':    len(breached),
                 'approaching_count': len(approaching),
                 'highest_severity':  max((r['severity'] for r in red_lines
-                                          if r['status'] != 'QUIET'), default=0),
+                                          if r['status'] in ('BREACHED', 'APPROACHING')), default=0),
+                'rule':              'BREACHED = breach language from 2+ outlets; APPROACHING = 1 outlet; WATCHING = social only.',
             },
             'green_lines': {
                 'triggered':        green_lines,
@@ -1033,6 +1243,12 @@ def interpret_signals(scan_data):
             'turkey_normalization':       turkey,
             'referendum_clock':           ref_clock,
             'rumint':                     rumint,
+            'top_indicator':              top_indicator,
+            'thin_read':                  health['thin'],
+            'corpus_health':              health,
+            'peace_track':                peace,
+            'lever_track':                lever,
+            'spokes':                     spokes,
             'cross_theater_fingerprints': fingerprints,
             'composite_modifier':         composite_modifier,
             'interpreter_version':        INTERPRETER_VERSION,
