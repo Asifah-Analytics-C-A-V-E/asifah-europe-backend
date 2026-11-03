@@ -1,6 +1,16 @@
 """
-Ukraine Humanitarian Data Module v1.0.0
-March 2026
+Ukraine Humanitarian Data Module v1.1.0
+November 3, 2026   (v1.0.0 March 2026)
+
+v1.1.0 (Nov 3 2026)
+  * The news feed's three GDELT calls now go through gdelt_gateway. They were
+    direct calls on the same IP as every tracker, outside the circuit breaker --
+    part of the load that keeps tripping it.
+  * Honest User-Agent on RSS / GDELT / Reddit (was 'Mozilla/5.0' -- a browser
+    impersonation; Reddit 403s it).
+  * Static notes dated to what is actually known: EU temporary protection runs
+    to March 2027 (extended June 2025); the peace-talks line is no longer the
+    March 2026 "postponed due to Iran crisis".
 
 Fetches humanitarian crisis data from:
   - IOM DTM API v3 (displacement/IDP tracking - DYNAMIC)
@@ -40,6 +50,14 @@ UPSTASH_URL = os.environ.get('UPSTASH_REDIS_URL')
 UPSTASH_TOKEN = os.environ.get('UPSTASH_REDIS_TOKEN')
 CACHE_KEY = 'ukraine_humanitarian'
 NEWS_CACHE_KEY = 'ukraine_news'
+
+HONEST_UA = 'AsifahAnalytics-Europe-UkraineHumanitarian/1.1 (OSINT monitoring tool; +https://asifahanalytics.com)'
+
+try:
+    from gdelt_gateway import gdelt_fetch_probed as _gw_fetch_probed
+    GDELT_GATEWAY = True
+except ImportError:
+    GDELT_GATEWAY = False
 
 # Background refresh interval (6 hours)
 REFRESH_INTERVAL_SECONDS = 6 * 3600
@@ -260,6 +278,27 @@ def fetch_reliefweb_updates():
 # NEWS FEED (backend-cached, 4-hour TTL)
 # ========================================
 
+def _gdelt(query, lang, maxrecords):
+    """GDELT through the shared gateway (paced, circuit-breaker). Returns a list of
+    article dicts with title/url/seendate/domain, or None when GDELT did not answer."""
+    if GDELT_GATEWAY:
+        raw, probe = _gw_fetch_probed(query, language=lang, timespan='72h', maxrecords=maxrecords,
+                                      label=f'ukraine_news/{lang}')
+        if not probe.get('sensed'):
+            return None
+        return [{'title': a.get('title', ''), 'url': a.get('url', ''),
+                 'seendate': a.get('published') or a.get('seendate', ''),
+                 'domain': a.get('domain') or a.get('source', '')} for a in (raw or [])]
+    try:
+        r = requests.get('https://api.gdeltproject.org/api/v2/doc/doc',
+                         params={'query': query, 'mode': 'ArtList', 'maxrecords': maxrecords, 'format': 'json',
+                                 'sort': 'DateDesc', 'timespan': '3d', 'sourcelang': lang},
+                         timeout=(10, 25), headers={'User-Agent': HONEST_UA})
+        return (r.json().get('articles') or []) if r.status_code == 200 else None
+    except Exception:
+        return None
+
+
 def fetch_ukraine_news():
     """
     Fetch Ukraine conflict news from multiple sources.
@@ -284,7 +323,7 @@ def fetch_ukraine_news():
         response = requests.get(
             'https://www.ukrinform.net/rss/block-lastnews',
             timeout=10,
-            headers={'User-Agent': 'Mozilla/5.0'}
+            headers={'User-Agent': HONEST_UA}
         )
         if response.status_code == 200:
             root = ET.fromstring(response.content)
@@ -310,7 +349,7 @@ def fetch_ukraine_news():
             response = requests.get(
                 rss_url,
                 timeout=10,
-                headers={'User-Agent': 'Mozilla/5.0'}
+                headers={'User-Agent': HONEST_UA}
             )
             if response.status_code == 200:
                 root = ET.fromstring(response.content)
@@ -332,11 +371,9 @@ def fetch_ukraine_news():
 
     # ── 3. GDELT English ──
     try:
-        gdelt_url = 'https://api.gdeltproject.org/api/v2/doc/doc?query=ukraine%20war%20conflict&mode=ArtList&maxrecords=15&format=json&sort=DateDesc&timespan=3d'
-        response = requests.get(gdelt_url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
-        if response.status_code == 200:
-            data = response.json()
-            for article in data.get('articles', [])[:15]:
+        _arts = _gdelt('ukraine war conflict', 'eng', 15)
+        if _arts is not None:
+            for article in _arts[:15]:
                 # Exclude Ukrainian sources (already covered by RSS)
                 domain = article.get('domain', '')
                 if 'ukrinform' in domain or 'kyivindependent' in domain:
@@ -353,11 +390,9 @@ def fetch_ukraine_news():
 
     # ── 4. GDELT Ukrainian ──
     try:
-        gdelt_url = 'https://api.gdeltproject.org/api/v2/doc/doc?query=ukraine%20OR%20Україна%20OR%20війна&mode=ArtList&maxrecords=10&format=json&sort=DateDesc&timespan=3d&sourcelang=ukr'
-        response = requests.get(gdelt_url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
-        if response.status_code == 200:
-            data = response.json()
-            for article in data.get('articles', [])[:10]:
+        _arts = _gdelt('ukraine OR Україна OR війна', 'ukr', 10)
+        if _arts is not None:
+            for article in _arts[:10]:
                 all_articles['ukrainian'].append({
                     'title': article.get('title', ''),
                     'url': article.get('url', ''),
@@ -370,11 +405,9 @@ def fetch_ukraine_news():
 
     # ── 5. GDELT Russian ──
     try:
-        gdelt_url = 'https://api.gdeltproject.org/api/v2/doc/doc?query=Украина%20война&mode=ArtList&maxrecords=10&format=json&sort=DateDesc&timespan=3d&sourcelang=rus'
-        response = requests.get(gdelt_url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
-        if response.status_code == 200:
-            data = response.json()
-            for article in data.get('articles', [])[:10]:
+        _arts = _gdelt('Украина война', 'rus', 10)
+        if _arts is not None:
+            for article in _arts[:10]:
                 all_articles['russian'].append({
                     'title': article.get('title', ''),
                     'url': article.get('url', ''),
@@ -392,7 +425,7 @@ def fetch_ukraine_news():
             response = requests.get(
                 f'https://www.reddit.com/r/{sub}/new.json?limit=10',
                 timeout=10,
-                headers={'User-Agent': 'AsifahAnalytics/1.0'}
+                headers={'User-Agent': HONEST_UA}
             )
             if response.status_code == 200:
                 data = response.json()
@@ -490,8 +523,8 @@ STATIC_HUMANITARIAN = {
     'refugees_abroad': {
         'total_refugees_europe': 6300000,
         'eu_temporary_protection': True,
-        'tp_expiry': '2026-03-31',
-        'tp_extension_uncertain': True,
+        'tp_expiry': '2027-03-04',          # extended by the EU Council in June 2025
+        'tp_extension_uncertain': False,
         'top_hosting_countries': [
             {'country': 'Poland', 'refugees': 960000},
             {'country': 'Germany', 'refugees': 1200000},
@@ -563,9 +596,11 @@ STATIC_HUMANITARIAN = {
         'primary_casualty_cause': 'Short-range drones (frontline), missiles/drones (rear areas)',
         'access_constraints': 'Humanitarian access severely limited in frontline and occupied areas',
         'kursk_incursion_note': 'Ukrainian forces maintain positions in Russias Kursk Oblast since August 2024',
-        'peace_talks_status': 'Trilateral talks (Ukraine-US-Russia) postponed as of March 2026 due to Iran crisis',
-        'source': 'OCHA / Ukrainian General Staff',
-        'as_of': '2026-03-10'
+        'peace_talks_status': ('Trilateral technical talks (Ukraine-US-Russia) expected in November 2026 '
+                               '(energy ceasefire, Black Sea grain, prisoner exchanges); nothing signed as of Nov 3 2026. '
+                               'The live read is on the Ukraine rhetoric tracker.'),
+        'source': 'OCHA / Ukrainian General Staff / Kyiv Independent',
+        'as_of': '2026-11-03'
     },
 
     'source_links': {

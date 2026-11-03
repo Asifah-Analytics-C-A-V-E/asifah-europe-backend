@@ -1,43 +1,35 @@
 """
 ═══════════════════════════════════════════════════════════════════════
   ASIFAH ANALYTICS — UKRAINE SIGNAL INTERPRETER
-  v1.0.0 (Apr 30 2026)
+  v1.1.0 (Nov 3 2026)    (v1.0.0 Apr 30 2026)
 ═══════════════════════════════════════════════════════════════════════
 
-Analytical layer for the Ukraine rhetoric tracker. Reads scan_data
-(produced by rhetoric_tracker_ukraine.py), applies red/green-line rules,
-detects historical patterns, builds So-What narrative, and emits
-canonical top_signals[] for Europe Regional BLUF synthesis.
+v1.1.0 (Nov 3 2026) -- EVIDENCE, SPOKES, AND THE THREE QUESTIONS
+  1. Red lines are scored PER ARTICLE with publishers counted (europe_evidence):
+     BREACHED needs 2+ outlets. v1.0 pooled every headline into one string, so two
+     trigger phrases in one blog post breached a red line and nothing said which.
+     Each red line now carries its evidence (title, outlet, phrase).
+     Loose triggers removed: 'cabinet of ministers', 'kyiv overnight', 'kyiv hit',
+     'dsns kyiv', 'zelensky warns', 'kyiv warns' -- everyday war-coverage words.
+  2. THIN READ. When the scan is under-read (too few articles or outlets) the So
+     What says so in its headline. A thin scan is a blind spot, not a quiet war.
+  3. Per-actor LEVELS (0-4) so the Europe Actor Matrix and the BLUF can read
+     Ukraine's actors -- v1.0 actor_summaries carried counts only.
+  4. US VECTOR (the US spoke): aid pipeline, Washington's pressure on Kyiv vs on
+     Moscow, the envoy track. Answers: who is Washington leaning on?
+  5. NATO TRACK: membership raised / guarantees in play / renunciation on the
+     table -- plus a date-stamped baseline of where the bid stands.
+  6. DRONE DIPLOMACY / IRAN LINK: Ukraine as a drone-defence exporter against
+     Iranian drones in the Gulf, and its strikes on the Iran->Russia supply line.
+     The same Shahed design is the threat at both ends of the axis.
+  7. RUSSIA PRESSURE: the read the Russia wheel's spoke carries.
+  8. top_indicator: one plain-language line.
 
-ANALYTICAL FRAMING:
-  Ukraine's rhetoric posture is shaped by four concurrent dynamics:
-    1. Frontline / battlefield reality (territorial control, attacks)
-    2. Western aid pipeline integrity (US position decisive)
-    3. Defense industrial maturation (drone advisor exports unique vector)
-    4. Diplomatic / ceasefire prospects
-  Plus the cross-cutting commodity vector — wheat, corn, sunflower oil,
-  uranium pivot, titanium, steel — Black Sea grain corridor as strategic
-  signal node.
-
-ACTOR FRAMEWORK (7 actors):
-  - ukrainian_government
-  - ukrainian_armed_forces
-  - russian_forces_in_ukraine
-  - us_government                  (← own actor — aid pipeline decisive)
-  - nato_western_support           (Europe + UK + non-US Western)
-  - defense_industrial_base        (← includes drone advisor exports
-                                      sub-vector for GCC/Israel)
-  - occupied_territories_signals
-
-CROSS-THEATER FINGERPRINTS WRITTEN:
-  - ukraine_drone_advisor_active  → consumed by ME backend (UAE/Saudi/IL)
-  - ukraine_grain_corridor_status → consumed by ME (food security signal)
-  - us_aid_continuity             → consumed by Russia + GPI
-  - frontline_pressure            → consumed by Russia + GPI
-
-COMMODITY INTEGRATION (Phase 1 light):
-  Reads /api/europe/commodity/ukraine and adds ONE band to top_signals.
-  Triggers small escalation modifier when alert is high/critical.
+ANALYTICAL FRAMING (unchanged):
+  Ukraine's rhetoric posture is shaped by four concurrent dynamics -- frontline
+  reality, the Western aid pipeline (US decisive), defence-industrial maturation
+  (the drone export vector), and the diplomatic track -- plus the Black Sea
+  grain corridor as the cross-cutting commodity node.
 
 USAGE:
   from ukraine_signal_interpreter import interpret_signals
@@ -47,10 +39,16 @@ USAGE:
 import requests
 from datetime import datetime, timezone
 
-INTERPRETER_VERSION = '1.0.0'
+from europe_evidence import (build_corpus, score_line, score_green, find, outlet_level,
+                             phrase_count, corpus_health, STATUS_LEVEL)
+
+INTERPRETER_VERSION = '1.1.0'
 
 # Europe backend self-call URL (interpreter runs in Europe backend)
 COMMODITY_PROXY_URL = 'http://localhost:10000/api/europe/commodity/ukraine'
+
+THIN_MIN_ARTICLES = 40      # below this the scan is under-read for an active war
+
 
 # ============================================================
 # RED LINES
@@ -191,10 +189,10 @@ RED_LINES = [
             'kyiv intel imminent attack', 'partners warn russia strike',
             'european partners warn russia preparing',
             # ── v1.2 (May 24 2026) news-language expansion ──
-            'zelensky warns', 'zelensky warned', 'zelensky says russia preparing',
-            'zelensky intelligence', 'ukrainian intelligence warns',
+            'zelensky says russia preparing',
+            'ukrainian intelligence warns',
             'ukrainian intel warns', 'intelligence indicates russia',
-            'kyiv warning', 'kyiv warns', 'kyiv intelligence warning',
+            'kyiv intelligence warning',
             'embassy security alert kyiv', 'embassy alert kyiv',
             'embassy advisory kyiv', 'embassy warns americans kyiv',
             'shelter in place kyiv', 'shelter-in-place kyiv',
@@ -223,20 +221,27 @@ RED_LINES = [
             'mass missile attack kyiv', 'combined strike kyiv casualties',
             '700 drones ukraine', 'russia largest attack ukraine',
             'kyiv multiple districts damaged', 'damage in every district kyiv',
-            # ── v1.2 (May 24 2026) news-language expansion ──
-            'russia attacks kyiv', 'attack on kyiv', 'strike on kyiv',
-            'missile strike kyiv', 'massive attack kyiv',
-            'large-scale attack kyiv', 'kyiv overnight', 'overnight attack kyiv',
-            'kyiv hit', 'oreshnik kyiv', 'hypersonic kyiv',
-            'cabinet of ministers', 'cabinet of ministers damaged',
+            # ── v1.2 (May 24 2026) news-language expansion -- SCALE words only.
+            # v1.1.0 interpreter (Nov 3 2026): 'attack on kyiv', 'strike on kyiv',
+            # 'kyiv casualties', 'injured in kyiv' etc. moved to APPROACHING. They
+            # fire on routine strikes ("Teenager injured in Russian attack on Kyiv
+            # region") -- every week of this war. A breach needs scale or target.
+            'massive attack kyiv', 'large-scale attack kyiv', 'massive strike on kyiv',
+            'massive attack on kyiv', 'large-scale attack on kyiv', 'massive russian attack on kyiv',
+            'combined attack on kyiv', 'mass attack on kyiv', 'government building in kyiv',
+            'government quarter in kyiv', 'government building damaged in kyiv',
+            'oreshnik kyiv', 'hypersonic kyiv',
+            'cabinet of ministers damaged',
             'cabinet of ministers building', 'government building damaged kyiv',
-            'national bank kyiv', 'mfa damaged',
-            'foreign ministry damaged kyiv', 'civilians killed kyiv',
-            'killed in kyiv strike', 'kyiv casualties', 'kyiv civilian deaths',
-            'injured in kyiv', 'wounded in kyiv', 'kyiv buildings damaged',
-            'chornobyl museum kyiv', 'dsns kyiv',
+            'mfa damaged', 'foreign ministry damaged kyiv',
+            'kyiv buildings damaged',
+            
         ],
         'triggers_approaching': [
+            # v1.1.0 interpreter: routine-strike phrases (were breach triggers)
+            'russia attacks kyiv', 'attack on kyiv', 'strike on kyiv', 'missile strike kyiv',
+            'overnight attack kyiv', 'civilians killed kyiv', 'killed in kyiv strike',
+            'kyiv casualties', 'kyiv civilian deaths', 'injured in kyiv', 'wounded in kyiv',
             'kyiv attacked', 'kyiv shahed', 'air raid kyiv',
             'kyiv missile', 'air defense kyiv',
             # ── v1.1 — pre-strike / scale-of-attack approaching signals ──
@@ -293,7 +298,7 @@ RED_LINES = [
     },
     {
         'id':       'drone_advisor_export_disclosed',
-        'category': 'Defense Industry',
+        'category': 'Defense Industry (cross-theatre)',
         'title':    'Ukrainian Drone Advisor Export Operations Disclosed',
         'severity': 3,
         'description':
@@ -573,84 +578,6 @@ GREEN_LINES = [
 
 
 # ============================================================
-# KEYWORD MATCHING
-# ============================================================
-
-def _check_keywords(scan_data, keywords):
-    """Match keywords against scan_data article corpus + signals."""
-    if not keywords:
-        return 0
-    corpus_parts = []
-    for key in ('articles_en', 'articles_uk', 'articles_ru', 'articles_pl'):
-        for art in (scan_data.get(key) or []):
-            corpus_parts.append((art.get('title') or '').lower())
-            corpus_parts.append((art.get('description') or '').lower())
-            corpus_parts.append((art.get('summary') or '').lower())
-            corpus_parts.append((art.get('content') or '').lower())
-            # URL slugs encode the full headline (e.g. ".../zelensky-peace-efforts-us-envoys").
-            # Slugify so hyphen/underscore-joined words match multi-word keywords.
-            _url = (art.get('url') or art.get('link') or '').lower()
-            if _url:
-                corpus_parts.append(_url.replace('-', ' ').replace('_', ' ').replace('/', ' '))
-    for key in ('telegram_messages', 'bluesky_signals', 'reddit_signals'):
-        for sig in (scan_data.get(key) or []):
-            corpus_parts.append((sig.get('text') or sig.get('title') or '').lower())
-    corpus = ' | '.join(corpus_parts)
-    if not corpus:
-        return 0
-    matches = 0
-    for kw in keywords:
-        if kw.lower() in corpus:
-            matches += 1
-    return matches
-
-
-# ============================================================
-# RED / GREEN LINE SCORING
-# ============================================================
-
-def _score_red_lines(scan_data):
-    triggered = []
-    for rl in RED_LINES:
-        breached_hits    = _check_keywords(scan_data, rl.get('triggers_breached', []))
-        approaching_hits = _check_keywords(scan_data, rl.get('triggers_approaching', []))
-        if breached_hits >= 2:
-            status = 'BREACHED'
-        elif breached_hits >= 1 or approaching_hits >= 3:
-            status = 'APPROACHING'
-        elif approaching_hits >= 1:
-            status = 'WATCHING'
-        else:
-            status = 'INACTIVE'
-        triggered.append({
-            'id': rl['id'], 'category': rl['category'], 'title': rl['title'],
-            'severity': rl['severity'], 'description': rl['description'],
-            'status': status,
-            'breached_hits': breached_hits, 'approaching_hits': approaching_hits,
-        })
-    return triggered
-
-
-def _score_green_lines(scan_data):
-    triggered = []
-    for gl in GREEN_LINES:
-        active_hits   = _check_keywords(scan_data, gl.get('triggers_active', []))
-        signaled_hits = _check_keywords(scan_data, gl.get('triggers_signaled', []))
-        if active_hits >= 1:
-            status = 'ACTIVE'
-        elif signaled_hits >= 1:
-            status = 'SIGNALED'
-        else:
-            status = 'DORMANT'
-        triggered.append({
-            'id': gl['id'], 'category': gl['category'], 'title': gl['title'],
-            'description': gl['description'], 'status': status,
-            'active_hits': active_hits, 'signaled_hits': signaled_hits,
-        })
-    return triggered
-
-
-# ============================================================
 # COMMODITY INTEGRATION
 # ============================================================
 
@@ -749,13 +676,15 @@ def _fetch_commodity_signal():
     except Exception as e:
         print(f'[Ukraine Interpreter] Commodity fetch failed: {str(e)[:120]}')
         return None
-
-
 # ============================================================
 # DIPLOMATIC TRACK
 # ============================================================
 
 CEASEFIRE_TRIGGERS = [
+    # v1.1.0 (Nov 3 2026): local / humanitarian ceasefires are the live track in
+    # autumn 2026 (Oleshky evacuation, energy-ceasefire proposals).
+    'temporary ceasefire', 'local ceasefire', 'humanitarian ceasefire', 'energy ceasefire',
+    'humanitarian corridor', 'ombudsmen', 'prisoner exchange',
     # ── v1.2 (Jun 2026) — looser headline/lede/URL-slug phrasings + Kushner ──
     # The narrow contiguous phrases below miss real headline wording such as
     # "peace efforts in positive call with US envoys". These match the words
@@ -814,393 +743,590 @@ CEASEFIRE_NEGATORS = [
 ]
 
 
-def _score_diplomatic_track(scan_data, green_lines_triggered):
-    matches  = _check_keywords(scan_data, CEASEFIRE_TRIGGERS)
-    negators = _check_keywords(scan_data, CEASEFIRE_NEGATORS)
-    # Stance guard: net negative-stance hits against positive matches (floored
-    # at 0) so peace being rejected/collapsing does not count as de-escalation.
-    net_matches = max(0, matches - negators)
+# ============================================================
+# VECTOR VOCABULARY (v1.1.0)
+# ============================================================
 
+# -- US vector: who is Washington leaning on? ------------------------------
+US_AID_STRESS = [
+    'patriot shortage', 'patriot shortfall', 'shortage of patriot', 'patriot interceptors shortage',
+    'aid pause', 'aid paused', 'pauses aid', 'halted military aid', 'halts military aid',
+    'halt military aid', 'no new aid', 'us aid cut', 'cut off aid', 'decline in american',
+    'decline in us support', 'withdrawn support', 'withholding weapons', 'weapons delayed',
+    'deliveries delayed', 'starlink restrictions', 'starshield', 'starlink slowdown',
+    'intelligence sharing paused', 'intelligence pause', 'intelligence cut',
+    'this is not support', 'us support declining', 'russian gas sales',
+]
+# Aid DELAY is read by co-occurrence: a weapons word AND a delay word in one item.
+# "Ukraine won't receive 500 newly approved U.S. Patriot missiles until at least
+# late 2030" names neither 'aid' nor 'pause' -- and is the aid story of the week.
+US_AID_ITEM = ['patriot', 'interceptor', 'weapons', 'military aid', 'missiles', 'air defence', 'air defense',
+               'himars', 'tomahawk', 'atacms', 'f-16']
+US_AID_DELAY = ["won't receive", 'will not receive', 'not receive', 'until at least', 'until 2030', 'in 2030',
+                'delayed until', 'delay in', 'delays', 'shortage', 'shortfall', 'only 24', 'span 3 years',
+                'span three years', 'redirected to', 'diverted to']
+US_AID_FLOW = [
+    'purl', 'weapons package', 'approved sale', 'approves sale', 'patriot delivery',
+    'patriots delivered', 'aid package', 'tomahawk', 'security assistance ukraine',
+    'foreign military sale', 'nato-funded us weapons', 'us weapons ukraine',
+    'us approves', 'state department approves',
+]
+US_PRESS_KYIV = [
+    'trump pressures zelensky', 'trump pressures ukraine', 'trump presses zelensky',
+    'trump blames zelensky', 'trump criticizes zelensky', 'trump criticises zelensky',
+    'trump slams zelensky', 'trump says zelensky', 'trump tells zelensky', 'trump urges ukraine',
+    'trump urges zelensky', 'zelensky has to', 'better deal', 'no cards', 'take the deal',
+    'cede territory', 'give up donbas', 'hand over donbas', 'withdraw from donbas',
+    "i don't care how it's done", 'pressure on kyiv', 'pressure on zelensky',
+    'pressures ukraine to', 'pressures kyiv', 'ultimatum to ukraine', 'deadline for ukraine',
+]
+US_PRESS_MOSCOW = [
+    'trump sanctions russia', 'sanctions on rosneft', 'sanctions on lukoil', 'new sanctions on russia',
+    'trump pressures putin', 'trump threatens russia', 'trump criticizes putin', 'trump criticises putin',
+    'secondary tariffs', 'trump slams putin', 'trump disappointed with putin', 'pressure on moscow',
+    'pressure on putin',
+]
+US_EASE_MOSCOW = [
+    'sanctions waiver', 'waived sanctions', 'waives sanctions', 'lift sanctions on russia',
+    'easing sanctions', 'eases sanctions', 'russian diesel', 'trump putin summit', 'trump invites putin',
+    'russian gas sales', 'resuming russian gas', 'resume russian gas',
+]
+US_ENVOY = [
+    'witkoff', 'kushner', 'us envoy', 'us envoys', 'trilateral talks', 'trilateral meeting',
+    'abu dhabi talks', 'rubio ukraine', 'peace talks ukraine', 'melania trump',
+]
+
+# -- NATO track ------------------------------------------------------------
+NATO_OFF_TABLE = [
+    'drop nato bid', 'drops nato', 'dropping nato', 'abandon nato', 'abandons nato',
+    'renounce nato', 'renounces nato', 'nato renunciation', 'neutral status', 'neutrality for ukraine',
+    'ukrainian neutrality', 'no nato membership', 'never join nato', 'nato off the table',
+    'non-aligned status', 'gives up nato', 'give up nato', 'nato ambitions', 'renouncing nato',
+    'renunciation of nato', 'renunciation of its nato', 'drop its nato', 'abandoning nato',
+]
+NATO_GUARANTEE = [
+    'security guarantees', 'security guarantee', 'article 5-like', 'article 5 like', 'article 5-style',
+    'article five', 'article 5 protection', 'coalition of the willing', 'reassurance force',
+    'multinational force ukraine', 'bilateral security agreement', 'nato-like', 'backstop',
+]
+NATO_MEMBERSHIP = [
+    'nato membership', 'join nato', 'joining nato', 'nato invitation', 'invitation to nato',
+    'nato accession', 'irreversible path', 'nato-ukraine council', 'ukraine in nato',
+]
+# Date-stamped background. Not scored. Review when the trilateral round lands.
+NATO_BASELINE = {
+    'as_of': '2026-10-25',
+    'membership': 'No invitation. Admission needs all 32 allies; the 2008 Bucharest pledge has no date attached.',
+    'support': 'Ankara summit (2026): allies recorded EUR 70bn/yr in military support for 2026, at least the same for 2027.',
+    'moscow_demand': 'A legally binding renunciation of the NATO bid -- the Kremlin calls it a "cornerstone" of any deal.',
+    'kyiv_position': ('Membership, or Article-5-style protection from Europe and the US if membership is blocked. '
+                      'Neutrality and limits on Ukraine\'s army are "not up for discussion" (Zelensky, Oct 25 2026).'),
+    'sources': ['https://kyivindependent.com/zelensky-details-expectations-for-upcoming-trilateral-peace-talks-with-russia-us/',
+                'https://www.fair.org.ua/en/ukraina-v-nato-shliakh-suchasnyi-status-ta-perspektyvy-chlenstva/'],
+}
+
+# -- Drone diplomacy / the Iran link -------------------------------------------
+GULF_DRONE = [
+    'ukrainian drone experts', 'ukrainian military experts', 'ukrainian specialists gulf',
+    'ukrainian interceptor', 'ukrainian interceptors', 'interceptor drones', 'shahed interceptor',
+    'ukraine gulf', 'ukraine saudi drone', 'ukraine uae drone', 'ukraine qatar drone',
+    'ukraine drone deal', 'joint production drones', 'drone advisors', 'drone instructors',
+    'ukrainian advisors uae', 'ukrainian advisors saudi', 'kyiv drone diplomacy',
+    'ukraine drone export', 'ukraine israel drone', 'ukraine drone gcc',
+]
+IRAN_SUPPLY = [
+    'caspian', 'iranian drones to russia', 'iranian drones russia', 'iran supplies russia',
+    'shahed supply', 'iranian missiles to russia', 'iranian missiles russia', 'alabuga',
+    'geran-2', 'geran 2', 'russia iran drone', 'russia supplies iran', 'russia supplied shahed',
+    'brothers in hatred',
+]
+IRAN_FRICTION = [
+    'iran threatens ukraine', 'iran warns ukraine', 'iran accuses ukraine', 'iran claims ukrainian',
+    'ukrainian depot', 'iran condemns ukraine', 'tehran kyiv',
+]
+
+# Which red lines speak for which actor (for actor levels).
+ACTOR_LINES = {
+    'russian_forces_in_ukraine': ['kyiv_strike_significant', 'energy_grid_collapse', 'frontline_collapse',
+                                  'pre_strike_warning_issued', 'tactical_nuclear_signaling',
+                                  'grain_corridor_disruption'],
+    'ukrainian_armed_forces': ['ukraine_strike_russia_significant', 'crimea_bsf_displacement'],
+    'ukrainian_government': ['mobilization_crisis_ukraine'],
+    'us_government': ['us_aid_suspension_total'],
+    'defense_industrial_base': ['drone_advisor_export_disclosed'],
+    'occupied_territories_signals': ['occupation_atrocity_disclosure', 'crimea_bsf_displacement'],
+    'nato_western_support': [],
+}
+# Not an escalation line for Ukraine: read as a vector, kept out of the So What priority.
+NON_ESCALATORY_LINES = {'drone_advisor_export_disclosed'}
+STRATEGIC_LINES = {'kyiv_strike_significant', 'energy_grid_collapse', 'frontline_collapse',
+                   'tactical_nuclear_signaling'}
+
+
+# ============================================================
+# RED / GREEN LINE SCORING (per article, outlets counted)
+# ============================================================
+
+def _score_red_lines(corpus):
+    out = []
+    for rl in RED_LINES:
+        sc = score_line(corpus, rl.get('triggers_breached', []), rl.get('triggers_approaching', []))
+        out.append({'id': rl['id'], 'category': rl['category'], 'title': rl['title'],
+                    'severity': rl['severity'], 'description': rl['description'], **sc})
+    return out
+
+
+def _score_green_lines(corpus):
+    out = []
+    for gl in GREEN_LINES:
+        sc = score_green(corpus, gl.get('triggers_active', []), gl.get('triggers_signaled', []))
+        out.append({'id': gl['id'], 'category': gl['category'], 'title': gl['title'],
+                    'description': gl['description'], **sc})
+    return out
+
+
+def _score_diplomatic_track(corpus, green_lines_triggered):
+    matches = phrase_count(corpus, CEASEFIRE_TRIGGERS)
+    negators = phrase_count(corpus, CEASEFIRE_NEGATORS)
+    net_matches = max(0, matches - negators)
     active_gls = [g for g in green_lines_triggered if g['status'] == 'ACTIVE']
     diplomatic_score = net_matches + (len(active_gls) * 2)
-
-    # Gate (v1.3, Jun 2026): "Active Ceasefire Track" (-10) requires the
-    # ceasefire FRAMEWORK green line to be ACTIVE -- framework-grade evidence
-    # (named venue, line-of-contact talks, signed framework), NOT a high count
-    # of loose keyword matches. Conversations are not negotiations.
-    framework_active = any(
-        g.get('id') == 'ceasefire_framework_active' for g in active_gls
-    )
-
+    framework_active = any(g.get('id') == 'ceasefire_framework_active' for g in active_gls)
     if diplomatic_score >= 6 and framework_active:
-        scenario = 'Active Ceasefire Track'
-        modifier = -10
+        scenario, modifier = 'Active Ceasefire Track', -10
     elif diplomatic_score >= 3:
-        scenario = 'Tentative Diplomatic Signals'
-        modifier = -5
+        scenario, modifier = 'Tentative Diplomatic Signals', -5
     elif diplomatic_score >= 1:
-        scenario = 'Limited De-escalation Indicators'
-        modifier = -2
+        scenario, modifier = 'Limited De-escalation Indicators', -2
     else:
-        scenario = 'No Active Track'
-        modifier = 0
+        scenario, modifier = 'No Active Track', 0
+    return {'score': diplomatic_score, 'scenario': scenario, 'modifier': modifier,
+            'active_green_lines_count': len(active_gls), 'framework_active': framework_active,
+            'negator_hits': negators}
 
+
+def _rl(lines, rid):
+    return next((r for r in lines if r.get('id') == rid), {})
+
+
+def _uniq(evs, n=5):
+    """One headline once, even when it matched two vocabularies."""
+    seen, out = set(), []
+    for e in evs:
+        k = (e.get('title') or '').lower()[:120]
+        if k and k not in seen:
+            seen.add(k)
+            out.append(e)
+    return out[:n]
+
+
+def _st(d):
+    return (d.get('status') or 'INACTIVE').upper()
+
+
+# ============================================================
+# VECTORS (v1.1.0)
+# ============================================================
+
+def _us_vector(corpus, red_lines):
+    """The US spoke. Level = how hard Washington is pulling on this war this cycle,
+    in either direction; `posture` says which way."""
+    stress = find(corpus, US_AID_STRESS)
+    for it in corpus:   # co-occurrence: weapons word + delay word in one item
+        if it['kind'] == 'news' and any(w in it['text'] for w in US_AID_ITEM) \
+                and any(d in it['text'] for d in US_AID_DELAY) and ('ukrain' in it['text'] or 'kyiv' in it['text']):
+            if it['outlet'] not in stress['outlets'] and len(stress['evidence']) < 4:
+                stress['evidence'].append({'title': it['title'][:180], 'outlet': it['outlet'],
+                                           'url': it['url'], 'phrase': 'weapons + delay'})
+            stress['outlets'].add(it['outlet'])
+    flow = find(corpus, US_AID_FLOW)
+    kyiv = find(corpus, US_PRESS_KYIV)
+    moscow = find(corpus, US_PRESS_MOSCOW)
+    ease = find(corpus, US_EASE_MOSCOW)
+    envoy = find(corpus, US_ENVOY)
+    susp = _rl(red_lines, 'us_aid_suspension_total')
+    n = {k: len(v['outlets']) for k, v in (('stress', stress), ('flow', flow), ('kyiv', kyiv),
+                                          ('moscow', moscow), ('ease', ease), ('envoy', envoy))}
+    if _st(susp) == 'BREACHED':
+        aid = 'suspended'
+    elif _st(susp) == 'APPROACHING' or n['stress'] >= 2:
+        aid = 'thinning'
+    elif n['flow'] >= 1:
+        aid = 'flowing'
+    elif n['stress'] == 1:
+        aid = 'questioned'
+    else:
+        aid = 'not_reported'
+    pk, pm = outlet_level(n['kyiv']), outlet_level(n['moscow'])
+    if pk >= 2 and pm >= 2:
+        posture = 'pressing_both'
+    elif pk >= 2 and pk > pm:
+        posture = 'pressing_kyiv'
+    elif pm >= 2:
+        posture = 'pressing_moscow'
+    elif n['envoy'] >= 1:
+        posture = 'mediating'
+    else:
+        posture = 'quiet'
+    aid_lv = {'suspended': 4, 'thinning': 3, 'questioned': 1}.get(aid, 0)
+    level = min(4, max(pk, pm, aid_lv, min(2, outlet_level(n['envoy']))))
+    parts = []
+    if posture == 'pressing_kyiv':
+        parts.append(f"Washington's public pressure is running mainly toward Kyiv ({n['kyiv']} outlets) "
+                     f"rather than Moscow ({n['moscow']}).")
+    elif posture == 'pressing_both':
+        parts.append(f"Washington is leaning on both capitals ({n['kyiv']} outlets on Kyiv, {n['moscow']} on Moscow).")
+    elif posture == 'pressing_moscow':
+        parts.append(f"Washington's pressure is running mainly toward Moscow ({n['moscow']} outlets).")
+    elif posture == 'mediating':
+        parts.append(f"The US envoy track is active ({n['envoy']} outlets) without a clear lean.")
+    if n['ease'] >= 1:
+        parts.append(f"Signals of easing on Moscow (waivers, summitry) in {n['ease']} outlet(s).")
+    parts.append({'suspended': 'US aid: suspension reported by 2+ outlets.',
+                  'thinning': 'US aid: shortfalls reported (interceptors, deliveries, Starlink/intelligence).',
+                  'flowing': 'US aid: deliveries or sales reported.',
+                  'questioned': 'US aid: one outlet reports strain.',
+                  'not_reported': 'US aid: not in the corpus this cycle.'}[aid])
     return {
-        'score':           diplomatic_score,
-        'scenario':        scenario,
-        'modifier':        modifier,
-        'active_green_lines_count': len(active_gls),
-        'framework_active': framework_active,
-        'negator_hits':    negators,
+        'level': level, 'posture': posture, 'aid_pipeline': aid,
+        'pressure_on_kyiv': pk, 'pressure_on_moscow': pm,
+        'easing_on_moscow': outlet_level(n['ease']), 'envoy_track': outlet_level(n['envoy']),
+        'outlets': n, 'read': ' '.join(parts),
+        'evidence': _uniq(kyiv['evidence'][:2] + moscow['evidence'][:1] + stress['evidence'][:2] + ease['evidence'][:1]),
     }
 
 
-# ============================================================
-# SO WHAT BUILDER
-# ============================================================
-
-def _build_so_what_narrative(red_lines_triggered, green_lines_triggered,
-                             diplomatic, commodity_signal):
-    """Multi-dimensional 'peace So-What' (v1.4): weaves four threads into one
-    analyst read -- peace trajectory, the Russia-Ukraine kinetic axis, American
-    leverage, and the grain-corridor corollary. CONVERGENCE FRAMING ONLY:
-    describes signals present, never predicts action. Returns a list of
-    {label, text, tone} threads for structured frontend rendering."""
-    def _rl(rid):
-        return next((r for r in red_lines_triggered if r.get('id') == rid), {})
-    def _gl(gid):
-        return next((g for g in green_lines_triggered if g.get('id') == gid), {})
-    def _st(d):
-        return (d.get('status') or 'INACTIVE').upper()
-
-    threads = []
-
-    # 1) PEACE TRAJECTORY -- from the gated diplomatic track
-    scen = diplomatic.get('scenario', 'No Active Track')
-    fw   = diplomatic.get('framework_active')
-    negs = diplomatic.get('negator_hits', 0)
-    if scen == 'Active Ceasefire Track' and fw:
-        p_text = ("A ceasefire framework is active -- framework-grade evidence "
-                  "(named venue / line-of-contact talks). This is terms, not talk.")
-        p_tone = 'calm'
-    elif scen == 'Tentative Diplomatic Signals':
-        p_text = ("Peace conversations are live -- envoy contact and leader-level "
-                  "messaging -- but no signed framework. Treat as talk, not terms.")
-        p_tone = 'watch'
-    elif scen == 'Limited De-escalation Indicators':
-        p_text = ("Scattered de-escalation chatter; no structured negotiating "
-                  "track yet.")
-        p_tone = 'watch'
+def _nato_track(corpus):
+    off = find(corpus, NATO_OFF_TABLE)
+    gua = find(corpus, NATO_GUARANTEE)
+    mem = find(corpus, NATO_MEMBERSHIP)
+    no, ng, nm = len(off['outlets']), len(gua['outlets']), len(mem['outlets'])
+    if no >= 2:
+        status = 'renunciation_on_table'
+        read = (f'Renouncing the NATO bid is being discussed in {no} outlets. Moscow treats a legally binding '
+                'renunciation as a cornerstone; Kyiv has tied any such step to binding guarantees.')
+    elif ng >= 2:
+        status = 'guarantees_in_play'
+        read = (f'Security guarantees are on the table ({ng} outlets) -- the substitute for membership. '
+                'What matters is whether they are binding and who would enforce them.')
+    elif nm >= 1 or ng == 1 or no == 1:
+        status = 'raised'
+        read = 'NATO is mentioned in the corpus but no direction has corroboration this cycle.'
     else:
-        p_text = "No diplomatic off-ramp detected in the current scan."
-        p_tone = 'alert'
+        status = 'quiet'
+        read = 'NATO is not in this cycle\'s corpus.'
+    return {'status': status, 'level': max(outlet_level(no), outlet_level(ng)),
+            'renunciation_outlets': no, 'guarantee_outlets': ng, 'membership_outlets': nm,
+            'read': read, 'baseline': NATO_BASELINE,
+            'evidence': _uniq(off['evidence'][:2] + gua['evidence'][:2] + mem['evidence'][:1], 4)}
+
+
+def _drone_diplomacy(corpus, red_lines):
+    gulf = find(corpus, GULF_DRONE)
+    supply = find(corpus, IRAN_SUPPLY)
+    fric = find(corpus, IRAN_FRICTION)
+    adv = _rl(red_lines, 'drone_advisor_export_disclosed')
+    ng, ns, nf = len(gulf['outlets']), len(supply['outlets']), len(fric['outlets'])
+    gulf_lv = max(outlet_level(ng), {'APPROACHING': 2, 'BREACHED': 3}.get(_st(adv), 0))
+    level = min(3, max(gulf_lv, outlet_level(ns), outlet_level(nf)))
+    active = gulf_lv >= 2 or _st(adv) in ('APPROACHING', 'BREACHED')
+    bits = []
+    if gulf_lv >= 1:
+        bits.append(f'Ukrainian counter-drone expertise or interceptors in the Gulf ({ng} outlets).')
+    if ns:
+        bits.append(f'The Iran-Russia supply line is in the corpus ({ns} outlets) -- Shahed/Geran, Caspian shipping.')
+    if nf:
+        bits.append(f'Iran-Ukraine friction reported ({nf} outlets).')
+    if not bits:
+        bits.append('The Ukraine-Iran link is quiet this cycle.')
+    return {'level': level, 'active': active, 'gulf_outlets': ng, 'supply_line_outlets': ns,
+            'iran_friction_outlets': nf, 'read': ' '.join(bits),
+            'evidence': _uniq(gulf['evidence'][:2] + supply['evidence'][:2] + fric['evidence'][:1], 4)}
+
+
+def _russia_pressure(red_lines):
+    """The Russia wheel's spoke level. The war is the floor (L4); L5 only when a
+    strategic red line is BREACHED on 2+ outlets."""
+    breached = [r for r in red_lines if r['id'] in STRATEGIC_LINES and r['status'] == 'BREACHED']
+    approaching = [r for r in red_lines if r['id'] in STRATEGIC_LINES | {'pre_strike_warning_issued'}
+                   and r['status'] == 'APPROACHING']
+    top = (breached or approaching or [None])[0]
+    return {'level': 5 if breached else 4,
+            'basis': 'strategic red line breached' if breached else 'active-war floor',
+            'top_signal': (f"{top['title']} -- {top['status']} ({top.get('breach_outlets', 0) or top.get('approach_outlets', 0)} outlets)"
+                           if top else '')}
+
+
+def _actor_levels(scan_data, red_lines, us, drone):
+    out = {}
+    for key, s in (scan_data.get('actor_summaries') or {}).items():
+        outlets = {str(a.get('source') or '').lower() for a in (scan_data.get('by_actor') or {}).get(key, [])
+                   if not a.get('co_credit')}
+        outlets.discard('')
+        vol = min(2, len(outlets))            # breadth, capped: volume never climbs above L2
+        line_lv = max([STATUS_LEVEL.get(_rl(red_lines, rid).get('status', 'INACTIVE'), 0)
+                       for rid in ACTOR_LINES.get(key, [])] or [0])
+        lv = max(vol, line_lv)
+        if key == 'us_government':
+            lv = max(lv, us['level'])
+        if key == 'defense_industrial_base':
+            lv = max(lv, drone['level'])
+        out[key] = {'level': min(4, lv), 'outlet_count': len(outlets), 'line_level': line_lv}
+    return out
+
+
+# ============================================================
+# SO WHAT
+# ============================================================
+
+def _build_so_what_narrative(red_lines, green_lines, diplomatic, commodity_signal, us, nato, drone, health):
+    threads = []
+    if health['thin']:
+        threads.append({'label': 'THIN READ',
+                        'text': (f"This scan is under-read ({health['reason']}). Quiet lines below may be "
+                                 "unread, not quiet -- treat absences as blind spots."),
+                        'tone': 'watch'})
+
+    scen, fw, negs = diplomatic.get('scenario', 'No Active Track'), diplomatic.get('framework_active'), diplomatic.get('negator_hits', 0)
+    if scen == 'Active Ceasefire Track' and fw:
+        p_text, p_tone = 'A ceasefire framework is active -- framework-grade evidence. Terms, not talk.', 'calm'
+    elif scen == 'Tentative Diplomatic Signals':
+        p_text, p_tone = ('Peace conversations are live -- envoy contact, leader-level messaging, a trilateral '
+                          'round -- but no signed framework. Talk, not terms.'), 'watch'
+    elif scen == 'Limited De-escalation Indicators':
+        p_text, p_tone = 'Scattered de-escalation chatter; no structured negotiating track yet.', 'watch'
+    else:
+        p_text, p_tone = 'No diplomatic off-ramp detected in the current scan.', 'alert'
     if negs:
-        p_text += (" Counter-signal present: language consistent with Moscow "
-                   "rejecting terms is also in the corpus.")
+        p_text += ' Counter-signal: language consistent with terms being rejected is also in the corpus.'
     threads.append({'label': 'PEACE TRAJECTORY', 'text': p_text, 'tone': p_tone})
 
-    # 2) RUSSIA-UKRAINE AXIS -- kinetic picture from red lines
-    kyiv  = _rl('kyiv_strike_significant')
-    grid  = _rl('energy_grid_collapse')
-    front = _rl('frontline_collapse')
-    nuke  = _rl('tactical_nuclear_signaling')
-    warn  = _rl('pre_strike_warning_issued')
+    kyiv, grid, front = _rl(red_lines, 'kyiv_strike_significant'), _rl(red_lines, 'energy_grid_collapse'), _rl(red_lines, 'frontline_collapse')
+    nuke, warn, deep = _rl(red_lines, 'tactical_nuclear_signaling'), _rl(red_lines, 'pre_strike_warning_issued'), _rl(red_lines, 'ukraine_strike_russia_significant')
     bits = []
     if _st(kyiv) in ('APPROACHING', 'BREACHED'):
-        bits.append("significant strikes on Kyiv")
+        bits.append(f"significant strikes on Kyiv ({_st(kyiv).lower()}, {kyiv.get('breach_outlets', 0)} outlets)")
     if _st(warn) in ('APPROACHING', 'BREACHED'):
-        bits.append("an active pre-strike warning")
+        bits.append('an active pre-strike warning')
     if _st(grid) in ('WATCHING', 'APPROACHING', 'BREACHED'):
-        bits.append("energy-grid pressure (" + _st(grid).lower() + ")")
+        bits.append(f'energy-grid pressure ({_st(grid).lower()})')
     if _st(front) in ('APPROACHING', 'BREACHED'):
-        bits.append("frontline-collapse indicators")
-    crimea = _rl('crimea_bsf_displacement')
+        bits.append('frontline-collapse indicators')
+    if _st(deep) in ('APPROACHING', 'BREACHED'):
+        bits.append(f'Ukrainian deep strikes into Russia ({_st(deep).lower()})')
+    crimea = _rl(red_lines, 'crimea_bsf_displacement')
     if _st(crimea) in ('APPROACHING', 'BREACHED'):
-        bits.append("Black Sea Fleet displacement from Crimea (RUMINT, "
-                    "unverified — consistent with sea-denial, not concession)")
-    nuke_clause = ("; nuclear signaling inactive" if _st(nuke) == 'INACTIVE'
-                   else "; nuclear signaling " + _st(nuke).lower())
+        bits.append('Black Sea Fleet displacement from Crimea (RUMINT, unverified)')
+    nuke_clause = '; nuclear signalling inactive' if _st(nuke) == 'INACTIVE' else '; nuclear signalling ' + _st(nuke).lower()
     if bits:
-        a_text = "Kinetic picture: " + ", ".join(bits) + nuke_clause + "."
-        a_tone = ('elevated'
-                  if any(_st(x) in ('APPROACHING', 'BREACHED')
-                         for x in (kyiv, front, nuke))
-                  else 'watch')
+        a_text = 'Kinetic picture: ' + ', '.join(bits) + nuke_clause + '.'
+        a_tone = 'elevated' if any(_st(x) in ('APPROACHING', 'BREACHED') for x in (kyiv, front, nuke)) else 'watch'
     else:
-        a_text = ("Kinetic picture: active war continues -- sustained strike "
-                  "tempo across both axes (Russian missile/Shahed campaigns; "
-                  "Ukrainian deep strikes on Russian energy, Crimea, and Black "
-                  "Sea targets)" + nuke_clause + ". No red-line breach this scan.")
+        a_text = ('Kinetic picture: the war continues at its sustained floor' + nuke_clause
+                  + '. No red line above the floor is corroborated this scan.')
         a_tone = 'watch'
     threads.append({'label': 'RUSSIA-UKRAINE AXIS', 'text': a_text, 'tone': a_tone})
 
-    # 3) AMERICAN LEVERAGE -- the decisive variable for war sustainability
-    aid_susp = _rl('us_aid_suspension_total')
-    if _st(aid_susp) in ('APPROACHING', 'BREACHED'):
-        l_text = ("US aid pipeline under stress (" + _st(aid_susp).lower()
-                  + ") -- the decisive variable for Ukrainian war sustainability "
-                  "is wobbling.")
-        l_tone = 'alert'
-    else:
-        eng = (" and engaged on the envoy track"
-               if diplomatic.get('score', 0) > 0 else "")
-        l_text = ("US aid pipeline shows no suspension signal" + eng
-                  + ". Washington's posture remains the decisive variable.")
-        l_tone = 'calm'
+    # AMERICAN LEVERAGE -- the US spoke
+    l_text = us['read']
+    if us['posture'] == 'pressing_kyiv':
+        l_text += (' When the mediator\'s public pressure falls mainly on one side, the terms on the table tend to '
+                   'move toward the other side\'s position -- watch the territorial and NATO clauses.')
+    if us['aid_pipeline'] in ('thinning', 'suspended'):
+        l_text += (' Air defence is the pressure point: interceptor shortfalls show up first as Russian strikes '
+                   'that get through, then as leverage at the table.')
+    l_tone = 'alert' if us['aid_pipeline'] == 'suspended' or us['posture'] == 'pressing_kyiv' else (
+        'watch' if us['level'] >= 2 else 'calm')
     threads.append({'label': 'AMERICAN LEVERAGE', 'text': l_text, 'tone': l_tone})
 
-    # 4) GRAIN COROLLARY -- commodity pressure = news-signal VOLUME, not price
+    # NATO TRACK
+    n_text = nato['read'] + ' Baseline (' + nato['baseline']['as_of'] + '): ' + nato['baseline']['membership']
+    if nato['status'] in ('renunciation_on_table', 'guarantees_in_play'):
+        n_text += (' The trade being negotiated is membership for guarantees: a guarantee with no enforcer leaves '
+                   'Ukraine where Budapest 1994 did; a guarantee backed by forces on the ground changes Moscow\'s '
+                   'cost of a second invasion.')
+    threads.append({'label': 'NATO TRACK', 'text': n_text,
+                    'tone': 'elevated' if nato['status'] == 'renunciation_on_table' else 'watch'})
+
+    # IRAN LINK
+    if drone['level'] >= 1:
+        i_text = drone['read'] + (' Ukraine is fighting the same Iranian-designed drone at both ends of the '
+                                  'Russia-Iran axis: over its own cities and, as an exporter, over the Gulf. That '
+                                  'turns Kyiv from aid recipient into a security provider Washington and the Gulf '
+                                  'states need -- and gives Tehran a reason to treat Ukraine as a party.')
+        threads.append({'label': 'IRAN LINK', 'text': i_text, 'tone': 'watch' if drone['level'] < 3 else 'elevated'})
+
     alert = (commodity_signal or {}).get('alert', 'normal')
     if commodity_signal and alert and alert != 'normal':
-        corridor = _rl('grain_corridor_disruption')
-        corr_clause = (" Black Sea corridor disruption indicator "
-                       + _st(corridor).lower() + "." if corridor else "")
-        g_text = ("Commodity pressure at " + alert.upper()
-                  + " on news-signal volume (not price); wheat / grain corridor "
-                  "the lead exposure." + corr_clause
-                  + " Ripples toward MENA food-security signals.")
+        corridor = _rl(red_lines, 'grain_corridor_disruption')
+        g_text = ('Commodity pressure at ' + alert.upper() + ' on news-signal volume (not price); wheat / grain '
+                  'corridor the lead exposure. Black Sea corridor indicator ' + _st(corridor).lower()
+                  + '. Ripples toward MENA food-security signals.')
         g_tone = 'elevated' if alert in ('surge', 'critical', 'high') else 'watch'
     else:
-        g_text = ("Commodity pressure normal; grain corridor and defense-export "
-                  "vectors quiet.")
-        g_tone = 'calm'
+        g_text, g_tone = 'Commodity pressure normal; grain corridor quiet on the commodity read.', 'calm'
     threads.append({'label': 'GRAIN COROLLARY', 'text': g_text, 'tone': g_tone})
-
     return threads
 
 
-def _build_so_what(scan_data, red_lines_triggered, green_lines_triggered,
-                   diplomatic, commodity_signal):
-    breached    = [r for r in red_lines_triggered if r['status'] == 'BREACHED']
-    approaching = [r for r in red_lines_triggered if r['status'] == 'APPROACHING']
-    active_gl   = [g for g in green_lines_triggered if g['status'] == 'ACTIVE']
-
-    highest_severity = max((r['severity'] for r in breached), default=0)
-
-    if highest_severity >= 5:
-        scenario = 'CRITICAL: Strategic Red Line Breached'
-        priority = 'critical'
-    elif highest_severity >= 4 or len(breached) >= 2:
-        scenario = 'HIGH: Multiple Escalation Indicators'
-        priority = 'high'
-    elif breached or len(approaching) >= 3:
-        scenario = 'ELEVATED: Approaching Threshold'
-        priority = 'elevated'
-    elif approaching:
-        scenario = 'WATCH: Early Warning Indicators Active'
-        priority = 'watch'
+def _top_indicator(red_lines, us, nato, drone, health):
+    esc = [r for r in red_lines if r['id'] not in NON_ESCALATORY_LINES]
+    br = sorted([r for r in esc if r['status'] == 'BREACHED'], key=lambda r: -r['severity'])
+    ap = sorted([r for r in esc if r['status'] == 'APPROACHING'], key=lambda r: -r['severity'])
+    if br:
+        r = br[0]
+        line = f"{r['title']}: corroborated by {r['breach_outlets']} outlets."
+    elif us['posture'] == 'pressing_kyiv' and us['pressure_on_kyiv'] >= 2:
+        line = 'Washington is leaning on Kyiv more than on Moscow ahead of the trilateral round.'
+    elif nato['status'] == 'renunciation_on_table':
+        line = 'Renouncing the NATO bid is on the table -- the trade is membership for guarantees.'
+    elif ap:
+        line = f"Watching: {ap[0]['title'].lower()} -- reported, not yet corroborated."
     else:
-        # Active-war floor: absent a red-line breach, Ukraine is NOT 'normal' --
-        # it is at sustained war. The page headlines the war; escalation above
-        # this floor is what moves it to ELEVATED/HIGH/CRITICAL.
-        scenario = 'ACTIVE WAR: Sustained Kinetic Tempo'
-        priority = 'elevated'
+        line = 'The war continues at its sustained floor; nothing above it is corroborated this cycle.'
+    if health['thin']:
+        line = 'Thin read -- ' + line
+    return line
 
-    assessment_parts = []
 
+def _build_so_what(red_lines, green_lines, diplomatic, commodity_signal, us, nato, drone, health):
+    esc = [r for r in red_lines if r['id'] not in NON_ESCALATORY_LINES]
+    breached = [r for r in esc if r['status'] == 'BREACHED']
+    approaching = [r for r in esc if r['status'] == 'APPROACHING']
+    active_gl = [g for g in green_lines if g['status'] == 'ACTIVE']
+    highest = max((r['severity'] for r in breached), default=0)
+    if highest >= 5:
+        scenario, priority = 'CRITICAL: Strategic Red Line Breached', 'critical'
+    elif highest >= 4 or len(breached) >= 2:
+        scenario, priority = 'HIGH: Multiple Escalation Indicators', 'high'
+    elif breached or len(approaching) >= 3:
+        scenario, priority = 'ELEVATED: Approaching Threshold', 'elevated'
+    elif approaching:
+        scenario, priority = 'WATCH: Early Warning Indicators Active', 'watch'
+    else:
+        scenario, priority = 'ACTIVE WAR: Sustained Kinetic Tempo', 'elevated'
+    if health['thin']:
+        scenario = 'THIN READ -- ' + scenario
+
+    parts = []
+    if health['thin']:
+        parts.append(f"Under-read scan ({health['reason']}): absences below are blind spots, not calm.")
     if breached:
-        breached_titles = ', '.join(r['title'] for r in breached[:3])
-        assessment_parts.append(f"Red line(s) breached: {breached_titles}.")
-
+        parts.append('Red line(s) breached: ' + ', '.join(f"{r['title']} ({r['breach_outlets']} outlets)" for r in breached[:3]) + '.')
     if approaching:
-        approaching_titles = ', '.join(r['title'] for r in approaching[:3])
-        assessment_parts.append(f"Approaching threshold: {approaching_titles}.")
-
+        parts.append('Approaching threshold: ' + ', '.join(r['title'] for r in approaching[:3]) + '.')
     if diplomatic['score'] > 0:
-        assessment_parts.append(
-            f"Diplomatic track: {diplomatic['scenario'].lower()} (score {diplomatic['score']})."
-        )
-
+        parts.append(f"Diplomatic track: {diplomatic['scenario'].lower()} (score {diplomatic['score']}).")
+    if us['posture'] != 'quiet' or us['aid_pipeline'] not in ('not_reported',):
+        parts.append('US: ' + us['read'])
+    if nato['status'] != 'quiet':
+        parts.append('NATO: ' + nato['read'])
     if active_gl:
-        gl_titles = ', '.join(g['title'] for g in active_gl[:2])
-        assessment_parts.append(f"Active de-escalation indicators: {gl_titles}.")
-
-    # ── Hungary bilateral normalization narrative (added May 18 2026) ──
-    # Even though active_gl above names the green line, the structural
-    # significance of Hungary's axis reversal deserves explicit articulation.
-    hungary_gl = next(
-        (g for g in green_lines_triggered if g['id'] == 'hungary_bilateral_normalization'),
-        None
-    )
-    if hungary_gl and hungary_gl['status'] == 'ACTIVE':
-        assessment_parts.append(
-            "Hungary axis reversal CONFIRMED: April 2026 Tisza/Magyar election ended "
-            "16 years of Orban-era anti-Ukraine policy. Hungary lifted Ukraine EU loan "
-            "veto (90 billion euro package unblocked), returned 82 million dollar "
-            "Oschadbank cash and gold shipment, restored NATO weapons transit, "
-            "pledged 'strong NATO ally' posture. Removes Putin's primary EU veto "
-            "vehicle. Transcarpathia ethnic Hungarian minority normalization pathway "
-            "opened. Diplomatic track receives durable bilateral support beyond "
-            "ceasefire-specific signals."
-        )
-    elif hungary_gl and hungary_gl['status'] == 'SIGNALED':
-        assessment_parts.append(
-            "Hungary bilateral normalization SIGNALED: Tisza/Magyar government "
-            "post-election signals are detected but not yet confirmed at concrete "
-            "action level. Monitor for: Oschadbank asset return execution, EU loan "
-            "veto formal lift, NATO weapons transit restoration."
-        )
-
+        parts.append('Active de-escalation indicators: ' + ', '.join(g['title'] for g in active_gl[:2]) + '.')
+    hu = next((g for g in green_lines if g['id'] == 'hungary_bilateral_normalization'), None)
+    if hu and hu['status'] == 'ACTIVE':
+        parts.append('Hungary axis reversal active: the Tisza government lifted the Orban-era vetoes on Ukraine\'s '
+                     'EU path (minority-language law satisfied Budapest, Oct 2026) -- Putin\'s main EU veto vehicle is gone.')
     if commodity_signal and commodity_signal.get('alert') != 'normal':
-        assessment_parts.append(
-            f"Commodity pressure: {commodity_signal['alert']} "
-            f"(grain corridor + defense export dynamics)."
-        )
-
-    if not assessment_parts:
-        assessment_parts.append(
-            "No active red lines. Monitoring baseline frontline pressure, "
-            "Western aid continuity, defense industrial signaling, and "
-            "diplomatic track."
-        )
-
+        parts.append(f"Commodity pressure: {commodity_signal['alert']} (grain corridor + defence export dynamics).")
+    if not parts:
+        parts.append('No active red lines. Monitoring frontline pressure, Western aid continuity, defence-industrial '
+                     'signalling, and the diplomatic track.')
     return {
-        'scenario':            scenario,
-        'priority':            priority,
-        'assessment':          ' '.join(assessment_parts),
-        'narrative':           _build_so_what_narrative(
-                                   red_lines_triggered, green_lines_triggered,
-                                   diplomatic, commodity_signal),
-        'breached_count':      len(breached),
-        'approaching_count':   len(approaching),
-        'active_green_count':  len(active_gl),
+        'scenario': scenario, 'priority': priority, 'assessment': ' '.join(parts),
+        'narrative': _build_so_what_narrative(red_lines, green_lines, diplomatic, commodity_signal, us, nato, drone, health),
+        'breached_count': len(breached), 'approaching_count': len(approaching),
+        'active_green_count': len(active_gl), 'thin_read': health['thin'],
     }
 
 
 # ============================================================
-# TOP SIGNALS BUILDER
+# TOP SIGNALS
 # ============================================================
 
-def _build_top_signals(red_lines_triggered, green_lines_triggered,
-                       diplomatic, commodity_signal, scan_data):
+def _build_top_signals(red_lines, green_lines, diplomatic, commodity_signal, us, nato, drone):
     signals = []
-    SEVERITY_TO_LEVEL = {5: 'critical', 4: 'high', 3: 'elevated',
-                         2: 'normal', 1: 'normal'}
-
-    breached = [r for r in red_lines_triggered if r['status'] == 'BREACHED']
-    breached.sort(key=lambda r: -r['severity'])
-    for r in breached[:3]:
-        signals.append({
-            'category':    r['category'].lower().replace(' ', '_').replace('/', '_'),
-            'level':       SEVERITY_TO_LEVEL.get(r['severity'], 'normal'),
-            'short_text':  f"BREACHED: {r['title']}",
-            'long_text':   r['description'],
-            'icon':        '🚨',
-            'source_link': f"/rhetoric-ukraine.html#{r['id']}",
-        })
-
-    approaching = [r for r in red_lines_triggered if r['status'] == 'APPROACHING']
-    approaching.sort(key=lambda r: -r['severity'])
-    for r in approaching[:2]:
-        signals.append({
-            'category':    r['category'].lower().replace(' ', '_').replace('/', '_'),
-            'level':       'elevated',
-            'short_text':  f"Approaching: {r['title']}",
-            'long_text':   r['description'],
-            'icon':        '⚠️',
-            'source_link': f"/rhetoric-ukraine.html#{r['id']}",
-        })
-
-    active_gl = [g for g in green_lines_triggered if g['status'] == 'ACTIVE']
-    for g in active_gl[:2]:
-        signals.append({
-            'category':    'diplomatic',
-            'level':       'normal',
-            'short_text':  f"De-escalation: {g['title']}",
-            'long_text':   g['description'],
-            'icon':        '🟢',
-            'source_link': f"/rhetoric-ukraine.html#{g['id']}",
-        })
-
+    SEV = {5: 'critical', 4: 'high', 3: 'elevated', 2: 'normal', 1: 'normal'}
+    esc = [r for r in red_lines if r['id'] not in NON_ESCALATORY_LINES]
+    for r in sorted([r for r in esc if r['status'] == 'BREACHED'], key=lambda r: -r['severity'])[:3]:
+        signals.append({'category': r['category'].lower().replace(' ', '_').replace('/', '_'),
+                        'level': SEV.get(r['severity'], 'normal'),
+                        'short_text': f"BREACHED: {r['title']} ({r['breach_outlets']} outlets)",
+                        'long_text': r['description'], 'icon': '🚨',
+                        'source_link': f"/rhetoric-ukraine.html#{r['id']}"})
+    for r in sorted([r for r in esc if r['status'] == 'APPROACHING'], key=lambda r: -r['severity'])[:2]:
+        signals.append({'category': r['category'].lower().replace(' ', '_').replace('/', '_'),
+                        'level': 'elevated', 'short_text': f"Approaching: {r['title']}",
+                        'long_text': r['description'], 'icon': '⚠️',
+                        'source_link': f"/rhetoric-ukraine.html#{r['id']}"})
+    if us['level'] >= 2:
+        signals.append({'category': 'us_posture', 'level': 'elevated' if us['level'] >= 3 else 'normal',
+                        'short_text': f"US: {us['posture'].replace('_', ' ')} · aid {us['aid_pipeline'].replace('_', ' ')}",
+                        'long_text': us['read'], 'icon': '🇺🇸', 'source_link': '/rhetoric-ukraine.html#us-vector'})
+    if nato['status'] in ('renunciation_on_table', 'guarantees_in_play'):
+        signals.append({'category': 'nato_track', 'level': 'elevated',
+                        'short_text': 'NATO: ' + nato['status'].replace('_', ' '),
+                        'long_text': nato['read'], 'icon': '🛡️', 'source_link': '/rhetoric-ukraine.html#nato-track'})
+    if drone['level'] >= 2:
+        signals.append({'category': 'iran_link', 'level': 'normal',
+                        'short_text': 'Iran link: Ukrainian drone defence in the Gulf / Iran-Russia supply line',
+                        'long_text': drone['read'], 'icon': '🛸', 'source_link': '/rhetoric-ukraine.html#iran-link'})
+    for g in [g for g in green_lines if g['status'] == 'ACTIVE'][:2]:
+        signals.append({'category': 'diplomatic', 'level': 'normal', 'short_text': f"De-escalation: {g['title']}",
+                        'long_text': g['description'], 'icon': '🟢', 'source_link': f"/rhetoric-ukraine.html#{g['id']}"})
     if commodity_signal and commodity_signal.get('band'):
         signals.append(commodity_signal['band'])
-
     if diplomatic['score'] >= 3:
-        # Scenario-driven level (v1.3): headline-grade in roll-ups (rhetoric-index,
-        # regional BLUF) instead of stuck at 'normal'. Gate already ensures only a
-        # framework-grade track earns 'Active Ceasefire Track'.
-        _dip_level = {
-            'Active Ceasefire Track':           'high',
-            'Tentative Diplomatic Signals':     'elevated',
-            'Limited De-escalation Indicators': 'normal',
-        }.get(diplomatic['scenario'], 'normal')
-        _sig_n = diplomatic['score']
-        _sig_word = 'signal' if _sig_n == 1 else 'signals'
-        _fw_note = ('Framework-grade evidence present (active ceasefire track).'
-                    if diplomatic.get('framework_active')
-                    else 'Signals only -- conversations, not a signed framework.')
-        signals.append({
-            'category':    'diplomatic',
-            'level':       _dip_level,
-            'short_text':  f"Diplomatic Track: {diplomatic['scenario']}",
-            'long_text':   (f"{diplomatic['scenario']} ({_sig_n} {_sig_word}). "
-                            f"{_fw_note}"),
-            'icon':        '🤝',
-            'source_link': '/rhetoric-ukraine.html#diplomatic',
-        })
-
-    return signals[:7]
+        lvl = {'Active Ceasefire Track': 'high', 'Tentative Diplomatic Signals': 'elevated'}.get(diplomatic['scenario'], 'normal')
+        signals.append({'category': 'diplomatic', 'level': lvl,
+                        'short_text': f"Diplomatic Track: {diplomatic['scenario']}",
+                        'long_text': (f"{diplomatic['scenario']} ({diplomatic['score']} signals). "
+                                      + ('Framework-grade evidence present.' if diplomatic.get('framework_active')
+                                         else 'Signals only -- conversations, not a signed framework.')),
+                        'icon': '🤝', 'source_link': '/rhetoric-ukraine.html#diplomatic'})
+    return signals[:8]
 
 
 # ============================================================
 # CROSS-THEATER FINGERPRINTS
 # ============================================================
 
-def _build_fingerprints(red_lines_triggered, green_lines_triggered,
-                       commodity_signal, scan_data):
-    """
-    Fingerprints written for downstream tracker consumption.
-
-    May 18 2026: Added green_lines_triggered parameter to enable Hungary
-    bilateral normalization fingerprints (read by Europe BLUF + GPI).
-    """
-    fingerprints = {
-        'ukraine_drone_advisor_active':    False,
-        'ukraine_grain_corridor_status':   'open',  # 'open'/'pressured'/'disrupted'
-        'us_aid_continuity':               True,    # default-on, flips on suspension red line
-        'frontline_pressure':              'normal', # 'normal'/'elevated'/'critical'
-        'kyiv_under_strike':               False,
-        'mobilization_crisis_active':      False,
-        'energy_grid_pressure':            False,
-        # Hungary bilateral signals (added May 18 2026)
-        'ukraine_hungary_normalization':   'dormant',  # 'active'/'signaled'/'dormant'
-        'ukraine_eu_loan_veto_status':     'blocked',  # 'unblocked'/'partial'/'blocked'
+def _build_fingerprints(red_lines, green_lines, us, nato, drone):
+    fp = {
+        'ukraine_drone_advisor_active': bool(drone['active']),
+        'ukraine_grain_corridor_status': 'open',
+        'us_aid_continuity': us['aid_pipeline'] != 'suspended',
+        'us_aid_pipeline': us['aid_pipeline'],
+        'us_posture': us['posture'],
+        'nato_track': nato['status'],
+        'ukraine_iran_link_level': drone['level'],
+        'frontline_pressure': 'normal',
+        'kyiv_under_strike': False,
+        'mobilization_crisis_active': False,
+        'energy_grid_pressure': False,
+        'ukraine_hungary_normalization': 'dormant',
+        'ukraine_eu_loan_veto_status': 'blocked',
     }
-
-    # Red-line driven fingerprints (existing)
-    for r in red_lines_triggered:
-        if r['status'] in ('BREACHED', 'APPROACHING'):
-            if r['id'] == 'drone_advisor_export_disclosed':
-                fingerprints['ukraine_drone_advisor_active'] = True
-            elif r['id'] == 'grain_corridor_disruption':
-                fingerprints['ukraine_grain_corridor_status'] = (
-                    'disrupted' if r['status'] == 'BREACHED' else 'pressured'
-                )
-            elif r['id'] == 'us_aid_suspension_total':
-                if r['status'] == 'BREACHED':
-                    fingerprints['us_aid_continuity'] = False
-            elif r['id'] == 'frontline_collapse':
-                fingerprints['frontline_pressure'] = (
-                    'critical' if r['status'] == 'BREACHED' else 'elevated'
-                )
-            elif r['id'] == 'kyiv_strike_significant':
-                fingerprints['kyiv_under_strike'] = True
-            elif r['id'] == 'mobilization_crisis_ukraine':
-                fingerprints['mobilization_crisis_active'] = True
-            elif r['id'] == 'energy_grid_collapse':
-                fingerprints['energy_grid_pressure'] = True
-
-    # Green-line driven fingerprints (added May 18 2026)
-    for g in green_lines_triggered:
+    for r in red_lines:
+        if r['status'] not in ('BREACHED', 'APPROACHING'):
+            continue
+        if r['id'] == 'grain_corridor_disruption':
+            fp['ukraine_grain_corridor_status'] = 'disrupted' if r['status'] == 'BREACHED' else 'pressured'
+        elif r['id'] == 'frontline_collapse':
+            fp['frontline_pressure'] = 'critical' if r['status'] == 'BREACHED' else 'elevated'
+        elif r['id'] == 'kyiv_strike_significant':
+            fp['kyiv_under_strike'] = True
+        elif r['id'] == 'mobilization_crisis_ukraine':
+            fp['mobilization_crisis_active'] = True
+        elif r['id'] == 'energy_grid_collapse':
+            fp['energy_grid_pressure'] = True
+    for g in green_lines:
         if g['id'] == 'hungary_bilateral_normalization':
             if g['status'] == 'ACTIVE':
-                fingerprints['ukraine_hungary_normalization'] = 'active'
-                fingerprints['ukraine_eu_loan_veto_status']   = 'unblocked'
+                fp['ukraine_hungary_normalization'], fp['ukraine_eu_loan_veto_status'] = 'active', 'unblocked'
             elif g['status'] == 'SIGNALED':
-                fingerprints['ukraine_hungary_normalization'] = 'signaled'
-                fingerprints['ukraine_eu_loan_veto_status']   = 'partial'
-
-    return fingerprints
+                fp['ukraine_hungary_normalization'], fp['ukraine_eu_loan_veto_status'] = 'signaled', 'partial'
+    return fp
 
 
 # ============================================================
@@ -1208,72 +1334,66 @@ def _build_fingerprints(red_lines_triggered, green_lines_triggered,
 # ============================================================
 
 def interpret_signals(scan_data):
-    """
-    Main entry point. Called from rhetoric_tracker_ukraine.py.
-    Returns interpretation dict with canonical top_signals[].
-    """
+    """Main entry point. Called from rhetoric_tracker_ukraine.py."""
     try:
-        red_lines      = _score_red_lines(scan_data)
-        green_lines    = _score_green_lines(scan_data)
-        diplomatic     = _score_diplomatic_track(scan_data, green_lines)
-        commodity_sig  = _fetch_commodity_signal()
-        so_what        = _build_so_what(scan_data, red_lines, green_lines,
-                                        diplomatic, commodity_sig)
-        top_signals    = _build_top_signals(red_lines, green_lines,
-                                            diplomatic, commodity_sig, scan_data)
-        fingerprints   = _build_fingerprints(red_lines, green_lines, commodity_sig, scan_data)
+        corpus = build_corpus(scan_data)
+        health = corpus_health(scan_data, corpus, THIN_MIN_ARTICLES)
+        red_lines = _score_red_lines(corpus)
+        green_lines = _score_green_lines(corpus)
+        diplomatic = _score_diplomatic_track(corpus, green_lines)
+        commodity_sig = _fetch_commodity_signal()
+        us = _us_vector(corpus, red_lines)
+        nato = _nato_track(corpus)
+        drone = _drone_diplomacy(corpus, red_lines)
+        russia = _russia_pressure(red_lines)
+        actors = _actor_levels(scan_data, red_lines, us, drone)
+        so_what = _build_so_what(red_lines, green_lines, diplomatic, commodity_sig, us, nato, drone, health)
+        top_signals = _build_top_signals(red_lines, green_lines, diplomatic, commodity_sig, us, nato, drone)
+        fingerprints = _build_fingerprints(red_lines, green_lines, us, nato, drone)
 
-        breached    = [r for r in red_lines if r['status'] == 'BREACHED']
+        breached = [r for r in red_lines if r['status'] == 'BREACHED']
         approaching = [r for r in red_lines if r['status'] == 'APPROACHING']
-        active_gl   = [g for g in green_lines if g['status'] == 'ACTIVE']
-
-        composite_modifier = diplomatic['modifier']
-        if commodity_sig:
-            composite_modifier += commodity_sig.get('escalation_modifier', 0)
+        active_gl = [g for g in green_lines if g['status'] == 'ACTIVE']
+        composite_modifier = diplomatic['modifier'] + ((commodity_sig or {}).get('escalation_modifier', 0))
 
         return {
-            'so_what':             so_what,
-            'top_signals':         top_signals,
-            'red_lines': {
-                'triggered':         red_lines,
-                'breached_count':    len(breached),
-                'approaching_count': len(approaching),
-                'highest_severity':  max((r['severity'] for r in red_lines), default=0),
-            },
-            'green_lines': {
-                'triggered':         green_lines,
-                'active_count':      len(active_gl),
-                'signaled_count':    len([g for g in green_lines if g['status'] == 'SIGNALED']),
-                'diplomatic_score':  diplomatic['score'],
-            },
-            'diplomatic_track':           diplomatic,
-            'commodity_signal':           commodity_sig,
+            'so_what': so_what,
+            'top_signals': top_signals,
+            'top_indicator': _top_indicator(red_lines, us, nato, drone, health),
+            'red_lines': {'triggered': red_lines, 'breached_count': len(breached),
+                          'approaching_count': len(approaching),
+                          'highest_severity': max((r['severity'] for r in breached), default=0)},
+            'green_lines': {'triggered': green_lines, 'active_count': len(active_gl),
+                            'signaled_count': len([g for g in green_lines if g['status'] == 'SIGNALED']),
+                            'diplomatic_score': diplomatic['score']},
+            'diplomatic_track': diplomatic,
+            'us_vector': us,
+            'nato_track': nato,
+            'drone_diplomacy': drone,
+            'russia_pressure': russia,
+            'actor_levels': actors,
+            'corpus_health': health,
+            'thin_read': health['thin'],
+            'commodity_signal': commodity_sig,
             'cross_theater_fingerprints': fingerprints,
-            'composite_modifier':         composite_modifier,
-            'interpreter_version':        INTERPRETER_VERSION,
-            'interpreted_at':             datetime.now(timezone.utc).isoformat(),
+            'composite_modifier': composite_modifier,
+            'interpreter_version': INTERPRETER_VERSION,
+            'interpreted_at': datetime.now(timezone.utc).isoformat(),
         }
-
     except Exception as e:
-        print(f'[Ukraine Interpreter] Error: {str(e)[:120]}')
+        import traceback
+        traceback.print_exc()
+        print(f'[Ukraine Interpreter] Error: {str(e)[:160]}')
         return {
-            'so_what': {
-                'scenario':           'Interpreter error',
-                'priority':           'normal',
-                'assessment':         str(e)[:200],
-                'breached_count':     0,
-                'approaching_count':  0,
-                'active_green_count': 0,
-            },
-            'top_signals':                [],
-            'red_lines':                  {'triggered': [], 'breached_count': 0,
-                                           'approaching_count': 0, 'highest_severity': 0},
-            'green_lines':                {'triggered': [], 'active_count': 0,
-                                           'signaled_count': 0, 'diplomatic_score': 0},
-            'diplomatic_track':           {'score': 0, 'scenario': 'Unknown', 'modifier': 0},
-            'commodity_signal':           None,
-            'cross_theater_fingerprints': {},
-            'composite_modifier':         0,
-            'interpreter_version':        INTERPRETER_VERSION,
-            'error':                      str(e)[:200],
+            'so_what': {'scenario': 'Interpreter error -- unread, not calm', 'priority': 'normal',
+                        'assessment': str(e)[:200], 'breached_count': 0, 'approaching_count': 0,
+                        'active_green_count': 0, 'thin_read': True},
+            'top_signals': [], 'top_indicator': 'Interpreter error this cycle -- unread, not calm.',
+            'red_lines': {'triggered': [], 'breached_count': 0, 'approaching_count': 0, 'highest_severity': 0},
+            'green_lines': {'triggered': [], 'active_count': 0, 'signaled_count': 0, 'diplomatic_score': 0},
+            'diplomatic_track': {'score': 0, 'scenario': 'Unknown', 'modifier': 0},
+            'us_vector': None, 'nato_track': None, 'drone_diplomacy': None, 'russia_pressure': None,
+            'actor_levels': {}, 'corpus_health': {'thin': True, 'reason': 'interpreter error'}, 'thin_read': True,
+            'commodity_signal': None, 'cross_theater_fingerprints': {}, 'composite_modifier': 0,
+            'interpreter_version': INTERPRETER_VERSION, 'error': str(e)[:200],
         }

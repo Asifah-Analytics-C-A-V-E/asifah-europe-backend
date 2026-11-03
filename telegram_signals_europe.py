@@ -1,6 +1,7 @@
 """
 Telegram Signal Source for Europe Conflict Dashboard
-v2 - June 2026
+v2.2.0 - Nov 3 2026  (v2 June 2026)
+  v2.2.0: Moldova channels get tier metadata (were defaulting to 'unverified').
 
 Bridges Telethon (async) with Flask (sync) to pull messages
 from monitored Telegram channels and feed them into the
@@ -94,6 +95,12 @@ CHANNEL_META = {
     'GreekCityTimes':  {'tier': 'mainstream', 'lang': ['en'],      'note': 'Greek City Times'},
     'arctictoday':     {'tier': 'mainstream', 'lang': ['en'],      'note': 'Arctic Today'},
     'ArmenianUnified': {'tier': 'mainstream', 'lang': ['en'],      'note': 'Armenian news aggregator'},
+    # v2.2.0 (Nov 3 2026): MOLDOVA_CHANNELS had no metadata, so every message
+    # defaulted to tier 'unverified' and could never corroborate a red line.
+    'newsmakerlive':   {'tier': 'mainstream', 'lang': ['ru','ro'], 'note': 'NewsMaker -- Chisinau, RU-language'},
+    'nokta_md':        {'tier': 'mainstream', 'lang': ['ru'],      'note': 'Nokta -- Gagauzia-focused independent (Comrat)'},
+    'tv8md':           {'tier': 'mainstream', 'lang': ['ro','ru'], 'note': 'TV8 -- independent Moldovan broadcaster'},
+    'zdgmd':           {'tier': 'mainstream', 'lang': ['ro'],      'note': 'Ziarul de Garda -- investigative'},
 
     # ---- Aggregators / OSINT ----
     'OSINTdefender':   {'tier': 'aggregator', 'lang': ['en'],      'note': 'RUMINT anchor'},

@@ -1,8 +1,26 @@
 """
 ═══════════════════════════════════════════════════════════════════════
   ASIFAH ANALYTICS — UKRAINE RHETORIC TRACKER
-  v1.1.0 (Oct 4 2026)
+  v1.2.0 (Nov 3 2026)
 ═══════════════════════════════════════════════════════════════════════
+
+v1.2.0 (Nov 3 2026) -- BREADTH, HONESTY, SPOKES
+  1. GOOGLE NEWS breadth. With GDELT dark platform-wide, the Nov 2 scan ran on
+     RSS alone: 120 articles from 7 publishers, four of ten feeds dead (Kyiv
+     Independent, ISW, Reuters, Kiel). Google News search feeds add the wires
+     and majors; the PUBLISHER is read from each item, so two GNews items from
+     one outlet are one outlet, never two.
+  2. TOPIC FILTER on generic feeds. War on the Rocks, USNI, Bellingcat and
+     Politico were 60 of the 120 articles -- DC golf courses, AUKUS boats, Mali.
+     They now pass only items that are about Ukraine or the war.
+  3. Interpreter v1.1.0: red lines need 2 outlets to breach (with evidence),
+     per-actor levels, THIN READ honesty, top_indicator, the US vector, the
+     NATO track, and the Iran link.
+  4. SPOKES (spoke_wheel_reader convention 1):
+       spoke:russia:ukraine  node 'adversary'            -- the war (floor L4)
+       spoke:us:ukraine      node 'security_assistance'  -- aid, and who
+                                                            Washington is leaning on
+     30h TTL: a dead tracker goes NOT REPORTING, never "quiet".
 
 v1.1.0 (Oct 4 2026) — SOURCE DISCIPLINE PASS
   1. GDELT now routes through gdelt_gateway. This tracker was calling
@@ -92,7 +110,8 @@ REDIS_KEY_LATEST     = 'rhetoric:ukraine:latest'
 REDIS_KEY_HISTORY    = 'rhetoric:ukraine:history'
 REFRESH_INTERVAL_SEC = 6 * 3600
 
-TRACKER_VERSION = '1.1.0'
+TRACKER_VERSION = '1.2.0'
+SPOKE_TTL = 30 * 3600
 
 # Honest identification. See v1.1.0 note 2 in the module docstring: the
 # browser impersonation this replaces was earning 403s, not avoiding them.
@@ -123,15 +142,31 @@ RSS_FEEDS = [
     {'name': 'Ukrinform',                'url': 'https://www.ukrinform.net/rss/block-lastnews', 'weight': 0.90},
     # Defense / OSINT
     {'name': 'ISW',                      'url': 'https://www.understandingwar.org/rss.xml',     'weight': 0.95},
-    {'name': 'War on the Rocks',         'url': 'https://warontherocks.com/feed/',              'weight': 0.85},
-    {'name': 'USNI News',                'url': 'https://news.usni.org/feed',                   'weight': 0.85},
+    {'name': 'War on the Rocks',         'url': 'https://warontherocks.com/feed/',              'weight': 0.85, 'topic_filter': True},
+    {'name': 'USNI News',                'url': 'https://news.usni.org/feed',                   'weight': 0.85, 'topic_filter': True},
     # Investigative / Russia-focused
-    {'name': 'Meduza (English)',         'url': 'https://meduza.io/rss/en/all',                 'weight': 0.90},
-    {'name': 'Bellingcat',               'url': 'https://www.bellingcat.com/feed/',             'weight': 0.95},
+    {'name': 'Meduza (English)',         'url': 'https://meduza.io/rss/en/all',                 'weight': 0.90, 'topic_filter': True},
+    {'name': 'Bellingcat',               'url': 'https://www.bellingcat.com/feed/',             'weight': 0.95, 'topic_filter': True},
     # International
-    {'name': 'Reuters World',            'url': 'https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best',  'weight': 0.90},
-    {'name': 'Politico Europe',          'url': 'https://www.politico.eu/feed/',                'weight': 0.85},
+    # VERIFY-IN-LOGS: this Reuters agency URL has returned nothing for months --
+    # Reuters stories now arrive through the Google News feeds below.
+    {'name': 'Reuters World',            'url': 'https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best',  'weight': 0.90, 'topic_filter': True},
+    {'name': 'Politico Europe',          'url': 'https://www.politico.eu/feed/',                'weight': 0.85, 'topic_filter': True},
 ]
+
+# ── v1.2.0: Google News search feeds (publisher read per item) ──
+GNEWS_QUERIES = [
+    ('ukraine russia war', 'en'),
+    ('zelensky trump', 'en'),
+    ('ukraine peace talks', 'en'),
+    ('ukraine NATO security guarantees', 'en'),
+    ('kyiv strike', 'en'),
+    ('ukraine drones Iran Gulf', 'en'),
+    ('black sea ukraine', 'en'),
+    ('ukraine air defence patriot', 'en'),
+    ('Україна війна', 'uk'),
+]
+GNEWS_MAX_ITEMS = 25
 
 
 # ============================================================
@@ -460,7 +495,8 @@ GDELT_QUERIES = {
 UKRAINE_TOPIC_KEYWORDS = [
     'ukraine', 'ukrainian', 'kyiv', 'kiev', 'zelensky', 'zelenskyy',
     'kharkiv', 'odesa', 'odessa', 'donbas', 'mariupol', 'crimea',
-    'kherson', 'sumy', 'zaporizhzhia',
+    'kherson', 'sumy', 'zaporizhzhia', 'donetsk', 'pokrovsk', 'dnipro', 'kremlin', 'putin',
+    'shahed', 'black sea', 'zelenskyy', 'witkoff',
     # -- v1.2 (Jun 18 2026): outbound targets (specific; watch for noise) --
     'moscow', 'russian capital', 'russian refinery',
     'україна', 'украина', 'киев', 'київ',
@@ -546,7 +582,12 @@ def _parse_pub_date(pub_str):
         return pub_str
 
 
-def _fetch_rss(url, source_name, weight=0.85, max_items=20):
+def _topical(entry_text):
+    t = entry_text.lower()
+    return any(kw in t for kw in UKRAINE_TOPIC_KEYWORDS)
+
+
+def _fetch_rss(url, source_name, weight=0.85, max_items=20, topic_filter=False):
     """Fetch over requests FIRST so transport failures are visible.
 
     feedparser.parse(url) reports a 403, a 404, a dropped connection and a
@@ -564,20 +605,62 @@ def _fetch_rss(url, source_name, weight=0.85, max_items=20):
             print(f'[Ukraine RSS] {source_name}: unparseable feed '
                   f'({str(getattr(feed, "bozo_exception", ""))[:90]})')
             return out
+        dropped = 0
         for entry in (feed.entries or [])[:max_items]:
+            title = entry.get('title', '')[:300]
+            desc = (entry.get('summary') or entry.get('description') or '')[:600]
+            if topic_filter and not _topical(title + ' ' + desc):
+                dropped += 1
+                continue
             out.append({
-                'title':       entry.get('title', '')[:300],
-                'description': (entry.get('summary') or entry.get('description') or '')[:600],
+                'title':       title,
+                'description': desc,
                 'url':         entry.get('link', ''),
                 'published':   _parse_pub_date(entry.get('published') or entry.get('updated')),
                 'source':      source_name,
                 'source_type': 'rss',
+                'feed':        'rss',
                 'weight':      weight,
             })
-        print(f'[Ukraine RSS] {source_name}: {len(out)} items')
+        print(f'[Ukraine RSS] {source_name}: {len(out)} items'
+              + (f' ({dropped} off-topic dropped)' if dropped else ''))
     except Exception as e:
         print(f'[Ukraine RSS] {source_name}: {type(e).__name__}: {str(e)[:110]}')
     return out
+
+
+def _fetch_gnews(query, lang='en', max_items=GNEWS_MAX_ITEMS):
+    """Google News search RSS. Each item's PUBLISHER comes from its <source> tag
+    (or the ' - Outlet' title suffix) -- never 'Google News'. Returns (items, ok)."""
+    from urllib.parse import quote_plus
+    region = {'en': ('en-US', 'US', 'US:en'), 'uk': ('uk', 'UA', 'UA:uk'), 'ru': ('ru', 'RU', 'RU:ru')}.get(lang, ('en-US', 'US', 'US:en'))
+    url = (f'https://news.google.com/rss/search?q={quote_plus(query + " when:7d")}'
+           f'&hl={region[0]}&gl={region[1]}&ceid={region[2]}')
+    out = []
+    try:
+        r = requests.get(url, headers={'User-Agent': TRACKER_USER_AGENT}, timeout=12)
+        if r.status_code != 200:
+            print(f'[Ukraine GNews] "{query}": HTTP {r.status_code}')
+            return out, False
+        feed = feedparser.parse(r.content)
+        for e in (feed.entries or [])[:max_items]:
+            title = (e.get('title') or '')[:300]
+            src = ''
+            if isinstance(e.get('source'), dict):
+                src = e['source'].get('title') or ''
+            if not src and ' - ' in title:
+                src = title.rsplit(' - ', 1)[1].strip()
+            out.append({
+                'title': title, 'description': '', 'url': e.get('link', ''),
+                'published': _parse_pub_date(e.get('published')),
+                'source': src or 'unknown', 'source_type': 'gnews', 'feed': 'gnews',
+                'language': {'en': 'eng', 'uk': 'ukr', 'ru': 'rus'}.get(lang, 'eng'),
+                'weight': 0.80,
+            })
+        return out, True
+    except Exception as e:
+        print(f'[Ukraine GNews] "{query}": {type(e).__name__}: {str(e)[:100]}')
+        return out, False
 
 
 def _shape_gdelt(raw, language):
@@ -786,6 +869,7 @@ def _fetch_all_articles():
     articles = []
     sensing = {
         'rss':     {'attempted': 0, 'ok': 0, 'empty': []},
+        'gnews':   {'attempted': 0, 'ok': 0, 'items': 0},
         'gdelt':   {'attempted': 0, 'sensed': 0},
         'newsapi': {'attempted': 0, 'ok': 0},
         'brave':   {'attempted': 0, 'ok': 0},
@@ -793,12 +877,24 @@ def _fetch_all_articles():
 
     for feed in RSS_FEEDS:
         sensing['rss']['attempted'] += 1
-        got = _fetch_rss(feed['url'], feed['name'], feed['weight'])
+        got = _fetch_rss(feed['url'], feed['name'], feed['weight'],
+                         topic_filter=feed.get('topic_filter', False))
         if got:
             sensing['rss']['ok'] += 1
         else:
             sensing['rss']['empty'].append(feed['name'])
         articles.extend(got)
+
+    # v1.2.0: Google News breadth -- always, not only as a fallback. The 2-outlet
+    # rule needs publishers, and RSS alone gives seven.
+    for q, lang in GNEWS_QUERIES:
+        sensing['gnews']['attempted'] += 1
+        got, ok = _fetch_gnews(q, lang)
+        if ok:
+            sensing['gnews']['ok'] += 1
+        sensing['gnews']['items'] += len(got)
+        articles.extend(got)
+        time.sleep(0.4)
 
     # No sleep here any more: the gateway serialises and paces every GDELT
     # call process-wide. A second delay on top of it was paying the toll twice.
@@ -832,7 +928,7 @@ def _fetch_all_articles():
             unique.append(a)
 
     sensing['any_sensed'] = bool(
-        sensing['rss']['ok'] or sensing['gdelt']['sensed']
+        sensing['rss']['ok'] or sensing['gdelt']['sensed'] or sensing['gnews']['ok']
         or sensing['newsapi']['ok'] or sensing['brave']['ok'])
     sensing['degraded'] = (
         sensing['gdelt']['attempted'] > 0
@@ -980,6 +1076,9 @@ def _write_canonical_spoke_fingerprint(result):
     fingerprint:ukraine:* writes (emit once, consume many)."""
     alert = result.get('alert_level', 'elevated')
     level = _SPOKE_LEVEL_BY_ALERT.get(alert, 4)   # default to war floor, never below
+    _rp = result.get('russia_pressure') or {}
+    if isinstance(_rp.get('level'), int):
+        level = max(4, _rp['level'])              # v1.2.0: evidence-based, floor L4
     green = result.get('green_lines') or {}
     fingerprint = {
         'ts':          datetime.now(timezone.utc).isoformat(),
@@ -1006,6 +1105,57 @@ def _write_canonical_spoke_fingerprint(result):
         print(f'[Ukraine Rhetoric] Canonical fingerprint write failed: {e}')
 
 
+def _redis_setex(key, value, ttl):
+    if not (UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN):
+        return False
+    try:
+        r = requests.post(UPSTASH_REDIS_URL,
+                          headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}',
+                                   'Content-Type': 'application/json'},
+                          json=['SET', key, json.dumps(value, default=str), 'EX', int(ttl)],
+                          timeout=10)
+        return r.status_code == 200
+    except Exception as e:
+        print(f'[Ukraine Rhetoric] Redis setex error: {str(e)[:120]}')
+        return False
+
+
+def _write_spokes(result):
+    """v1.2.0 -- explicit hub-first spokes (spoke_wheel_reader convention 1).
+
+    spoke:russia:ukraine -- the war. Floor L4 (active conflict); L5 only when a
+        strategic red line (Kyiv, grid, front, nuclear) is BREACHED on 2+ outlets.
+    spoke:us:ukraine -- the US relationship, read BOTH ways: the aid pipeline AND
+        Washington's public pressure on Kyiv vs on Moscow. The level is how hard
+        Washington is pulling on this war; `posture` says in which direction. A
+        guarantor leaning on the party it arms is a different signal from a
+        guarantor leaning on the aggressor, and a wheel that only read 'aid
+        flowing / not flowing' would miss it."""
+    ts = result.get('scanned_at') or result.get('cached_at')
+    rp = result.get('russia_pressure') or {}
+    us = result.get('us_vector') or {}
+    nato = result.get('nato_track') or {}
+    common = {'ts': ts, 'spoke': 'ukraine', 'thin_read': bool(result.get('thin_read')),
+              'source': 'rhetoric_tracker_ukraine', 'version': TRACKER_VERSION}
+    _redis_setex('spoke:russia:ukraine', dict(common, **{
+        'hub': 'russia', 'node_class': 'adversary', 'level': int(rp.get('level') or 4),
+        'relationship': 'Full-scale invasion since Feb 2022; the war is the floor.',
+        'top_signal': rp.get('top_signal') or result.get('top_indicator') or '',
+        'basis': rp.get('basis', 'active-war floor'),
+        'nato_track': nato.get('status'),
+    }), SPOKE_TTL)
+    _redis_setex('spoke:us:ukraine', dict(common, **{
+        'hub': 'us', 'node_class': 'security_assistance', 'level': int(us.get('level') or 0),
+        'relationship': ('Security assistance (now largely sold via NATO-funded purchases) and the '
+                         'mediator of the peace track -- both at once.'),
+        'posture': us.get('posture'), 'aid_pipeline': us.get('aid_pipeline'),
+        'pressure_on_kyiv': us.get('pressure_on_kyiv'), 'pressure_on_moscow': us.get('pressure_on_moscow'),
+        'top_signal': us.get('read', '') if (us.get('level') or 0) >= 2 else '',
+    }), SPOKE_TTL)
+    print(f"[Ukraine Rhetoric] Spokes written: russia L{int(rp.get('level') or 4)}, "
+          f"us L{int(us.get('level') or 0)} ({us.get('posture')})")
+
+
 # ============================================================
 # MAIN SCAN
 # ============================================================
@@ -1029,6 +1179,7 @@ def run_ukraine_rhetoric_scan(force=False):
     articles, sensing = _fetch_all_articles()
     print(f'[Ukraine Rhetoric] Articles: {len(articles)} '
           f'(RSS {sensing["rss"]["ok"]}/{sensing["rss"]["attempted"]}, '
+          f'GNews {sensing["gnews"]["ok"]}/{sensing["gnews"]["attempted"]} ({sensing["gnews"]["items"]} items), '
           f'GDELT {sensing["gdelt"]["sensed"]}/{sensing["gdelt"]["attempted"]} sensed)')
     if not sensing['any_sensed']:
         print('[Ukraine Rhetoric] BLIND -- no source family answered. The score '
@@ -1156,9 +1307,16 @@ def run_ukraine_rhetoric_scan(force=False):
         'actor_summaries':   actor_summaries,
         'theatre_score':     score,
         'alert_level':       alert,
+        'sensing':           sensing,
     }
 
     interpretation = interpret_signals(scan_data)
+
+    # v1.2.0: per-actor levels from the interpreter (breadth + red lines, capped L4)
+    for _k, _lv in (interpretation.get('actor_levels') or {}).items():
+        if _k in actor_summaries:
+            actor_summaries[_k]['level'] = _lv['level']
+            actor_summaries[_k]['outlet_count'] = _lv['outlet_count']
     _write_cross_theater_fingerprints(
         interpretation.get('cross_theater_fingerprints') or {}
     )
@@ -1240,6 +1398,7 @@ def run_ukraine_rhetoric_scan(force=False):
         'total_articles':    len(articles),
         'articles_by_source': {
             'rss':     sum(1 for a in articles if a.get('source_type') == 'rss'),
+            'gnews':   sum(1 for a in articles if a.get('source_type') == 'gnews'),
             'gdelt':   sum(1 for a in articles if a.get('source_type') == 'gdelt'),
             'newsapi': sum(1 for a in articles if a.get('source_type') == 'newsapi'),
             'brave':   sum(1 for a in articles if a.get('source_type') == 'brave'),
@@ -1262,6 +1421,15 @@ def run_ukraine_rhetoric_scan(force=False):
         'contradiction_flags':    _contradiction_flags,
         'diplomatic_max_raw':     _dt.get('score', 0),
         'crimea_posture':    crimea_posture,   # v1.3 RUMINT sub-read (unverified, score-neutral)
+        # -- v1.2.0 --
+        'scanned_at':        datetime.now(timezone.utc).isoformat(),
+        'top_indicator':     interpretation.get('top_indicator'),
+        'thin_read':         bool(interpretation.get('thin_read')),
+        'corpus_health':     interpretation.get('corpus_health'),
+        'us_vector':         interpretation.get('us_vector'),
+        'nato_track':        interpretation.get('nato_track'),
+        'drone_diplomacy':   interpretation.get('drone_diplomacy'),
+        'russia_pressure':   interpretation.get('russia_pressure'),
         'commodity_signal':  interpretation.get('commodity_signal'),
         'cross_theater_fingerprints': interpretation.get('cross_theater_fingerprints'),
         'composite_modifier': interpretation.get('composite_modifier', 0),
@@ -1270,11 +1438,17 @@ def run_ukraine_rhetoric_scan(force=False):
 
     _redis_set(REDIS_KEY_LATEST, result)
     _write_canonical_spoke_fingerprint(result)   # Rim Emission Pass -- feed the Russia wheel
+    _write_spokes(result)                        # v1.2.0: spoke:russia:ukraine + spoke:us:ukraine
     _redis_lpush_trim(REDIS_KEY_HISTORY, {
         'cached_at':     result['cached_at'],
         'theatre_score': result['theatre_score'],
         'alert_level':   result['alert_level'],
         'top_signals':   result['top_signals'][:5],
+        'top_indicator': result.get('top_indicator'),
+        'thin_read':     result.get('thin_read'),
+        'russia_level':  (result.get('russia_pressure') or {}).get('level'),
+        'us_level':      (result.get('us_vector') or {}).get('level'),
+        'us_posture':    (result.get('us_vector') or {}).get('posture'),
     })
 
     print(f'[Ukraine Rhetoric] Scan complete: score={score}, alert={alert}, '
@@ -1333,6 +1507,8 @@ def register_ukraine_rhetoric_endpoints(app):
                 'alert_level':     d.get('alert_level', 'normal'),
                 'top_signals':     (d.get('top_signals') or [])[:3],
                 'so_what_scenario': (d.get('so_what') or {}).get('scenario'),
+                'top_indicator':   d.get('top_indicator'),
+                'thin_read':       d.get('thin_read'),
                 'cached_at':       d.get('cached_at'),
             })
         except Exception as e:

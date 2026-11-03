@@ -1,6 +1,14 @@
 """
-Asifah Analytics -- Europe Actor Matrix v1.0.0
-November 3, 2026
+Asifah Analytics -- Europe Actor Matrix v1.1.0
+November 3, 2026   (v1.0.0 same day)
+
+v1.1.0 -- reads the Ukraine v1.2 / Moldova v1.2 trackers:
+  * US -> Ukraine (patron) from Ukraine's us_vector: aid AND who Washington leans on
+  * Ukraine -> the Russia-Iran axis: drone defence in the Gulf, the Caspian supply line
+  * Russia -> Moldova and drone incursions read Moldova's new airspace red line
+  * Russia -> Ukraine also reads Ukraine's evidence-based russia_pressure
+  * a tracker's own `thin_read` (corpus too small) wins over `sensing_degraded`
+    (GDELT absent) -- a 300-article scan without GDELT is not blind
 
 The Europe sibling of the ME, Africa and Asia actor matrices. A READER, NOT A
 SCANNER: every cell comes from a tracker that already runs -- the Europe
@@ -63,7 +71,7 @@ from datetime import datetime, timezone
 
 import requests
 
-MATRIX_VERSION = '1.0.0'
+MATRIX_VERSION = '1.1.0'
 CACHE_KEY = 'actor_matrix:europe:latest'
 PREV_KEY = 'actor_matrix:europe:previous_levels'
 CACHE_SEC = 15 * 60
@@ -119,7 +127,8 @@ FRONT_LABELS = {'russia>poland': 'Poland', 'russia>moldova': 'Moldova',
 PAIRS = [
     # ---------------- THE WAR (both directions) ----------------
     _P('russia>ukraine', 'pressure', 'Russia', RU, 'Ukraine (the war)', UA, ['russia', 'ukraine'],
-       [('path', 'russia', 'ground_ops_level', 'int5'), ('redline', 'ukraine', 'kyiv_strike_significant'),
+       [('path', 'russia', 'ground_ops_level', 'int5'), ('path', 'ukraine', 'russia_pressure.level', 'int5'),
+        ('redline', 'ukraine', 'kyiv_strike_significant'),
         ('redline', 'ukraine', 'energy_grid_collapse'), ('military', 'actor', 'russia')], 'russia',
        note='The war is the floor, not the finding: corroborated ground operations read L5 Active Conflict '
             'every day. The only row allowed to assert L5.'),
@@ -138,11 +147,12 @@ PAIRS = [
        [('path', 'moldova', 'interference_tempo.status', 'status'), ('path', 'moldova', 'transnistria_watch.status', 'status'),
         ('path', 'moldova', 'energy_lever.status', 'status'), ('redline', 'moldova', 'transnistria_mobilization'),
         ('redline', 'moldova', 'energy_cutoff'), ('redline', 'moldova', 'election_capture'),
+        ('path', 'moldova', 'russia_pressure.level', 'int4'), ('actor', 'moldova', 'russia_inbound'),
         ('military', 'actor', 'moldova')], 'moldova'),
     _P('drones>nonbelligerents', 'space', 'Russian drones', SKY,
        'Countries not at war (Poland · Romania · Moldova · Baltics)', NATO,
        ['russia', 'poland', 'moldova'],
-       [('path', 'russia', 'drone_incursion_level', 'int4')], 'russia',
+       [('path', 'russia', 'drone_incursion_level', 'int4'), ('redline', 'moldova', 'airspace_violation')], 'russia',
        note='Drones INTO a country not at war. Battlefield strikes inside Ukraine never count here.'),
     _P('black_sea', 'space', 'Russia ↔ Ukraine at sea', SEA, 'The Black Sea (passage · mines · shipping)', SEA,
        ['russia', 'ukraine', 'turkey'],
@@ -178,8 +188,21 @@ PAIRS = [
        note='Greece runs its own six-rung ladder; its rung 5 (detente rupture) maps to platform L4.'),
 
     # ---------------- PATRONS / BACKERS ----------------
-    _P('nato>ukraine', 'patron', 'NATO & the United States', NATO, 'Ukraine (aid · air defence)', UA, ['ukraine'],
-       [('actor', 'russia', 'nato_alliance'), ('actor', 'russia', 'united_states')], 'russia'),
+    _P('us>ukraine', 'patron', 'United States', US, 'Ukraine (aid · and who Washington leans on)', UA,
+       ['ukraine'],
+       [('path', 'ukraine', 'us_vector.level', 'int4'), ('actor', 'ukraine', 'us_government'),
+        ('actor', 'russia', 'united_states')], 'ukraine',
+       note=('Read both ways: the aid pipeline AND public pressure on Kyiv vs on Moscow. A guarantor leaning on '
+             'the side it arms is a different signal from one leaning on the aggressor -- see the Ukraine page.')),
+    _P('nato>ukraine', 'patron', 'Europe & NATO allies', NATO, 'Ukraine (aid · air defence · guarantees)', UA,
+       ['ukraine'],
+       [('actor', 'ukraine', 'nato_western_support'), ('path', 'ukraine', 'nato_track.level', 'int4'),
+        ('actor', 'russia', 'nato_alliance')], 'ukraine'),
+    _P('ukraine>iran_axis', 'pressure', 'Ukraine', UA, 'The Russia–Iran axis (Gulf drone defence · Caspian supply)',
+       IR, ['ukraine'],
+       [('path', 'ukraine', 'drone_diplomacy.level', 'int4')], 'ukraine',
+       note=('Kyiv fights the same Shahed design at both ends: over its cities, and as an exporter of '
+             'counter-drone expertise to the Gulf. Capped L3 -- a vector, not a front.')),
     _P('russia>belarus', 'patron', 'Russia', RU, 'Belarus (forces · nuclear basing)', BY, ['belarus', 'russia'],
        [('actor', 'russia', 'belarus')], 'russia'),
     _P('russia>hungary', 'patron', 'Russia', RU, 'Hungary (energy · the EU veto)', HU, ['hungary', 'russia'],
@@ -305,9 +328,10 @@ def read_trackers(redis_get=None):
         if isinstance(raw, dict) and raw:
             ts = raw.get('scanned_at') or raw.get('cached_at') or raw.get('timestamp') or raw.get('updated_at') or ''
             age = _age_hours(ts)
+            degraded = raw.get('thin_read') if 'thin_read' in raw else raw.get('sensing_degraded')
             out[th] = {'raw': raw, 'scanned_at': ts,
                        'freshness': 'stale' if (age is not None and age > STALE_HOURS) else 'live',
-                       'degraded': bool(raw.get('sensing_degraded'))}
+                       'degraded': bool(degraded)}
         else:
             missing.append(th)
     mil = rget(MILITARY_KEY)
@@ -426,7 +450,7 @@ def _name(c):
     return f"{c['actor']} → {c['target']}"
 
 
-def build_lines(cells, prev):
+def build_lines(cells, prev, trackers=None):
     lines = []
     by = {c['id']: c for c in cells}
     read = [c for c in cells if c['state'] == 'read']
@@ -475,6 +499,17 @@ def build_lines(cells, prev):
     elif bs and bs['state'] == 'read' and bs['level'] >= 3:
         lines.append(f"The Black Sea is contested (L{bs['level']}): shipping, ports and passage are under pressure -- "
                      "grain and energy exporters feel it first.")
+
+    # The US spoke, read both ways (Ukraine tracker us_vector)
+    usv = (((trackers or {}).get('ukraine') or {}).get('raw') or {}).get('us_vector') or {}
+    if usv.get('posture') == 'pressing_kyiv' and (usv.get('pressure_on_kyiv') or 0) >= 2:
+        lines.append(f"Washington's public pressure is running toward Kyiv (L{usv.get('pressure_on_kyiv')}) more than "
+                     f"Moscow (L{usv.get('pressure_on_moscow') or 0}), aid pipeline {str(usv.get('aid_pipeline') or '').replace('_', ' ')} "
+                     "-- the mediator leaning on the side it arms moves the terms toward the other side.")
+    ia = by.get('ukraine>iran_axis')
+    if ia and ia['state'] == 'read' and ia['level'] >= 2:
+        lines.append(f"Ukraine is active against the Russia-Iran axis beyond its borders (L{ia['level']}): Gulf drone "
+                     "defence and the Caspian supply line tie this war to the Middle East.")
 
     # Poland's two-sided read: pressure from Moscow, and the cohabitation gap it works through
     pl = by.get('russia>poland')
@@ -527,7 +562,7 @@ def build_matrix(redis_get, redis_set, trackers=None, missing=None):
                           'not_read': [i for i in MOSCOW_FRONTS if i not in {c['id'] for c in fronts}]},
         'pairs': cells,
         'kinds': KIND_LABELS,
-        'lines': build_lines(cells, prev),
+        'lines': build_lines(cells, prev, trackers),
         'trackers_read': sorted(trackers), 'trackers_missing': sorted(missing or []),
         'trackers_degraded': sorted(t for t, v in trackers.items() if v.get('degraded')),
         'coverage': {'tracked_countries': sorted(_tracker_keys()), 'gaps': COVERAGE_GAPS},

@@ -1,6 +1,22 @@
 """
-Moldova Rhetoric Tracker (sensor) -- v1.1.0 -- October 4, 2026
+Moldova Rhetoric Tracker (sensor) -- v1.2.0 -- November 3, 2026
 Asifah Analytics -- Europe backend
+
+v1.2.0 (Nov 3 2026) -- BREADTH, HONESTY, THE RUSSIA SPOKE
+  1. TOPIC FILTER on the regional feeds. bne IntelliNews, Balkan Insight and
+     Emerging Europe cover twenty countries; their Serbia and Kazakhstan stories
+     were counted as Moldova's corpus. Now only Moldova items pass.
+  2. GOOGLE NEWS (EN / RO / RU) for breadth while GDELT is dark. The publisher is
+     read per item, so the interpreter's 2-outlet rule counts real outlets.
+  3. TELEGRAM, finally wired. fetch_moldova_telegram_signals() has existed since
+     Jul 16 (NewsMaker, Nokta, TV8, ZdG -- the Gagauzia and Shor stories break
+     there first) but this tracker never called it.
+  4. Interpreter v1.1.0: evidence-based red lines, the new AIRSPACE line (Russian
+     drones over Moldova), THIN READ honesty, canonical top_signals (the BLUF
+     printed Moldova's top signal blank), actor levels, top_indicator.
+  5. spoke:russia:moldova (node 'inbound_target', 30h TTL). The canonical
+     fingerprint's level came from the VOLUME band, so a blind scan read "L1".
+     The spoke carries the strongest corroborated lever instead.
 
 v1.1.0 (Oct 4 2026) -- SOURCE DISCIPLINE PASS
   1. GDELT routes through gdelt_gateway (was: direct, 5s read timeout, no
@@ -91,7 +107,8 @@ SPOKE_KEY_CANONICAL = 'crosstheater:moldova:fingerprint'
 SCAN_LOCK_KEY       = 'lock:rhetoric:moldova:scan'
 REFRESH_INTERVAL_SEC = 6 * 3600
 
-TRACKER_VERSION = '1.1.0'
+TRACKER_VERSION = '1.2.0'
+SPOKE_TTL = 30 * 3600
 
 TRACKER_USER_AGENT = (f'AsifahAnalytics-Europe-Moldova/{TRACKER_VERSION} '
                       f'(OSINT monitoring tool; +https://asifahanalytics.com)')
@@ -182,7 +199,7 @@ ACTORS = {
             'The breakaway region east of the Dniester -- the frozen conflict that '
             'could unfreeze. Hosts the Russian Operational Group of Forces (~1,500 '
             'troops) and the Cobasna ammunition depot (~20,000 tons of Soviet-era '
-            'munitions, 2km from Ukraine, ~40km from Odesa -- a standing flank '
+            'munitions, a few km from the Ukrainian border in a region bordering Odesa oblast -- a standing flank '
             'threat to Ukraine\'s most important remaining port). This is the '
             'classic CONFLICT-TRACKER read: watch for escalation language, '
             '"peacekeeper" framing, left-bank gas status, troop-activity reports, '
@@ -337,7 +354,8 @@ GDELT_QUERIES = {
 MOLDOVA_TOPIC_KEYWORDS = [
     'moldova', 'moldovan', 'chisinau', 'sandu', 'transnistria', 'tiraspol',
     'gagauzia', 'comrat', 'shor', 'gutul', 'cobasna', 'moldovagaz',
-    'pridnestrovie', 'dniester', 'cuciurgan',
+    'pridnestrovie', 'dniester', 'cuciurgan', 'moldovagaz', 'tiraspol', 'gagauz', 'giurgiulesti',
+    'moldavia', 'moldovei', 'moldovan', 'r. moldova', 'молдав', 'приднестр',
     '\u043c\u043e\u043b\u0434\u043e\u0432\u0430', '\u043a\u0438\u0448\u0438\u043d\u0451\u0432',
     '\u043f\u0440\u0438\u0434\u043d\u0435\u0441\u0442\u0440\u043e\u0432\u044c\u0435',
 ]
@@ -349,13 +367,29 @@ MOLDOVA_TOPIC_KEYWORDS = [
 # VERIFY-IN-LOGS: any feed logging 0 items across two scans needs its URL fixed.
 
 RSS_FEEDS = [
-    {'url': 'https://www.intellinews.com/feed',          'name': 'bne IntelliNews',   'weight': 0.85},
-    {'url': 'https://balkaninsight.com/feed/',           'name': 'Balkan Insight',    'weight': 0.85},
-    {'url': 'https://emerging-europe.com/feed/',         'name': 'Emerging Europe',   'weight': 0.80},
+    # v1.2.0: regional feeds are TOPIC-FILTERED -- only Moldova items pass.
+    {'url': 'https://www.intellinews.com/feed',          'name': 'bne IntelliNews',   'weight': 0.85, 'topic_filter': True},
+    {'url': 'https://balkaninsight.com/feed/',           'name': 'Balkan Insight',    'weight': 0.85, 'topic_filter': True},
+    {'url': 'https://emerging-europe.com/feed/',         'name': 'Emerging Europe',   'weight': 0.80, 'topic_filter': True},
     {'url': 'https://www.rferl.org/api/zrqiteuuir',      'name': 'RFE/RL Moldova',    'weight': 0.85},
     {'url': 'https://newsmaker.md/feed/',                'name': 'NewsMaker',         'weight': 0.80},
     {'url': 'https://www.zdg.md/feed/',                  'name': 'Ziarul de Garda',   'weight': 0.80},
 ]
+
+# v1.2.0: Google News search feeds (publisher read per item).
+GNEWS_QUERIES = [
+    ('moldova', 'en'), ('transnistria', 'en'), ('moldova russia', 'en'),
+    ('moldova drone', 'en'), ('gagauzia', 'en'), ('moldova EU accession', 'en'),
+    ('Moldova Transnistria', 'ro'), ('Молдова Приднестровье', 'ru'),
+]
+GNEWS_MAX_ITEMS = 20
+
+try:
+    from telegram_signals_europe import fetch_moldova_telegram_signals
+    TELEGRAM_AVAILABLE = True
+except ImportError:
+    TELEGRAM_AVAILABLE = False
+    print('[Moldova Tracker] Telegram signals unavailable')
 
 
 # ============================================================
@@ -439,7 +473,12 @@ def _parse_pub_date(pub_str):
         return pub_str
 
 
-def _fetch_rss(url, source_name, weight=0.85, max_items=20):
+def _topical(text):
+    t = text.lower()
+    return any(kw in t for kw in MOLDOVA_TOPIC_KEYWORDS)
+
+
+def _fetch_rss(url, source_name, weight=0.85, max_items=20, topic_filter=False):
     """Fetch over requests FIRST so transport failures are visible.
 
     The VERIFY-IN-LOGS note on RSS_FEEDS says any feed logging 0 items across
@@ -458,21 +497,62 @@ def _fetch_rss(url, source_name, weight=0.85, max_items=20):
             print(f'[Moldova RSS] {source_name}: unparseable feed '
                   f'({str(getattr(feed, "bozo_exception", ""))[:90]})')
             return out
-        for entry in (feed.entries or [])[:max_items]:
+        dropped = 0
+        for entry in (feed.entries or [])[:max(max_items, 40 if topic_filter else max_items)]:
+            title = entry.get('title', '')[:300]
+            desc = (entry.get('summary') or entry.get('description') or '')[:600]
+            if topic_filter and not _topical(title + ' ' + desc + ' ' + entry.get('link', '')):
+                dropped += 1
+                continue
             out.append({
-                'title':       entry.get('title', '')[:300],
-                'description': (entry.get('summary') or entry.get('description') or '')[:600],
+                'title':       title,
+                'description': desc,
                 'url':         entry.get('link', ''),
                 'published':   _parse_pub_date(entry.get('published') or entry.get('updated')),
                 'source':      source_name,
                 'source_type': 'rss',
+                'feed':        'rss',
                 'language':    'eng',
                 'weight':      weight,
             })
-        print(f'[Moldova RSS] {source_name}: {len(out)} items')
+        print(f'[Moldova RSS] {source_name}: {len(out)} items'
+              + (f' ({dropped} off-topic dropped)' if dropped else ''))
     except Exception as e:
         print(f'[Moldova RSS] {source_name}: {str(e)[:120]}')
     return out
+
+
+def _fetch_gnews(query, lang='en', max_items=GNEWS_MAX_ITEMS):
+    """Google News search RSS; publisher from <source> or the ' - Outlet' suffix.
+    Returns (items, ok)."""
+    from urllib.parse import quote_plus
+    region = {'en': ('en-US', 'US', 'US:en'), 'ro': ('ro', 'RO', 'RO:ro'),
+              'ru': ('ru', 'RU', 'RU:ru')}.get(lang, ('en-US', 'US', 'US:en'))
+    url = (f'https://news.google.com/rss/search?q={quote_plus(query + " when:7d")}'
+           f'&hl={region[0]}&gl={region[1]}&ceid={region[2]}')
+    out = []
+    try:
+        r = requests.get(url, headers={'User-Agent': TRACKER_USER_AGENT}, timeout=12)
+        if r.status_code != 200:
+            print(f'[Moldova GNews] "{query}": HTTP {r.status_code}')
+            return out, False
+        feed = feedparser.parse(r.content)
+        for e in (feed.entries or [])[:max_items]:
+            title = (e.get('title') or '')[:300]
+            src = e['source'].get('title', '') if isinstance(e.get('source'), dict) else ''
+            if not src and ' - ' in title:
+                src = title.rsplit(' - ', 1)[1].strip()
+            out.append({
+                'title': title, 'description': '', 'url': e.get('link', ''),
+                'published': _parse_pub_date(e.get('published')),
+                'source': src or 'unknown', 'source_type': 'gnews', 'feed': 'gnews',
+                'language': {'en': 'eng', 'ro': 'ron', 'ru': 'rus'}.get(lang, 'eng'),
+                'weight': 0.80,
+            })
+        return out, True
+    except Exception as e:
+        print(f'[Moldova GNews] "{query}": {type(e).__name__}: {str(e)[:100]}')
+        return out, False
 
 
 def _shape_gdelt(raw, language):
@@ -644,6 +724,7 @@ def _fetch_all_articles():
     articles = []
     sensing = {
         'rss':     {'attempted': 0, 'ok': 0, 'empty': []},
+        'gnews':   {'attempted': 0, 'ok': 0, 'items': 0},
         'gdelt':   {'attempted': 0, 'sensed': 0},
         'newsapi': {'attempted': 0, 'ok': 0},
         'brave':   {'attempted': 0, 'ok': 0},
@@ -651,12 +732,22 @@ def _fetch_all_articles():
 
     for feed in RSS_FEEDS:
         sensing['rss']['attempted'] += 1
-        got = _fetch_rss(feed['url'], feed['name'], feed['weight'])
+        got = _fetch_rss(feed['url'], feed['name'], feed['weight'],
+                         topic_filter=feed.get('topic_filter', False))
         if got:
             sensing['rss']['ok'] += 1
         else:
             sensing['rss']['empty'].append(feed['name'])
         articles.extend(got)
+
+    for q, lang in GNEWS_QUERIES:
+        sensing['gnews']['attempted'] += 1
+        got, ok = _fetch_gnews(q, lang)
+        if ok:
+            sensing['gnews']['ok'] += 1
+        sensing['gnews']['items'] += len(got)
+        articles.extend(got)
+        time.sleep(0.4)
 
     # No local sleep: the gateway paces every GDELT call process-wide.
     for lang, queries in GDELT_QUERIES.items():
@@ -689,7 +780,7 @@ def _fetch_all_articles():
             unique.append(a)
 
     sensing['any_sensed'] = bool(
-        sensing['rss']['ok'] or sensing['gdelt']['sensed']
+        sensing['rss']['ok'] or sensing['gdelt']['sensed'] or sensing['gnews']['ok']
         or sensing['newsapi']['ok'] or sensing['brave']['ok'])
     sensing['degraded'] = (
         sensing['gdelt']['attempted'] > 0
@@ -817,6 +908,20 @@ def _alert_level_from_score(score):
 _SPOKE_LEVEL_BY_ALERT = {'normal': 1, 'elevated': 2, 'high': 3, 'critical': 4}
 
 
+def _redis_post_setex(key, value, ttl):
+    if not (UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN):
+        return False
+    try:
+        r = requests.post(UPSTASH_REDIS_URL,
+                          headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}',
+                                   'Content-Type': 'application/json'},
+                          json=['SET', key, json.dumps(value, default=str), 'EX', int(ttl)], timeout=10)
+        return r.status_code == 200
+    except Exception as e:
+        print(f'[Moldova Tracker] Redis setex error: {str(e)[:120]}')
+        return False
+
+
 def _write_canonical_spoke_fingerprint(result, fingerprints):
     """crosstheater:moldova:fingerprint -- the Russia wheel's reader is deployed
     and listening. node_class = inbound_target (Russia acts UPON Moldova; same
@@ -827,11 +932,15 @@ def _write_canonical_spoke_fingerprint(result, fingerprints):
     spoke carries the pressure-vs-anchor balance so the GPI Russia recompute can
     read Moldova as an inbound-target data point in the network read."""
     alert = result.get('alert_level', 'normal')
+    _rp = result.get('russia_pressure') or {}
     fp = {
         'ts':          datetime.now(timezone.utc).isoformat(),
         'country':     'moldova',
         'node_class':  'inbound_target',
-        'level':       _SPOKE_LEVEL_BY_ALERT.get(alert, 1),
+        # v1.2.0: the strongest corroborated lever, not the volume band
+        'level':       int(_rp.get('level') or 0),
+        'thin_read':   bool(result.get('thin_read')),
+        'airspace_watch':        fingerprints.get('airspace_watch', {}),
         'score':       result.get('theatre_score', 0),
         'alert_level': alert,
         # Moldova-specific slices (the pressure-vs-anchor balance)
@@ -843,6 +952,15 @@ def _write_canonical_spoke_fingerprint(result, fingerprints):
         'commodity_convergence': fingerprints.get('commodity_convergence', {}),
     }
     try:
+        _redis_post_setex('spoke:russia:moldova', {
+            'ts': fp['ts'], 'spoke': 'moldova', 'hub': 'russia', 'node_class': 'inbound_target',
+            'level': fp['level'], 'thin_read': fp['thin_read'],
+            'relationship': ('Capture from within: Transnistria garrison and Cobasna depot, energy, '
+                             'interference networks, Gagauzia -- and now drones crossing from the Odesa strikes.'),
+            'lever': _rp.get('lever'), 'top_signal': _rp.get('top_signal', ''),
+            'capture_vs_anchor': (result.get('capture_vs_anchor') or {}).get('tilt'),
+            'source': 'rhetoric_tracker_moldova', 'version': TRACKER_VERSION,
+        }, SPOKE_TTL)
         _redis_set(SPOKE_KEY_CANONICAL, fp)
         print('[Moldova Tracker] Canonical spoke fingerprint written '
               '(crosstheater:moldova:fingerprint, node_class=inbound_target)')
@@ -873,6 +991,7 @@ def run_moldova_rhetoric_scan(force=False):
     articles, sensing = _fetch_all_articles()
     print(f'[Moldova Tracker] Articles: {len(articles)} '
           f'(RSS {sensing["rss"]["ok"]}/{sensing["rss"]["attempted"]}, '
+          f'GNews {sensing["gnews"]["ok"]}/{sensing["gnews"]["attempted"]} ({sensing["gnews"]["items"]} items), '
           f'GDELT {sensing["gdelt"]["sensed"]}/{sensing["gdelt"]["attempted"]} sensed)')
     if sensing['rss']['empty']:
         print(f'[Moldova Tracker] Feeds returning nothing: '
@@ -884,6 +1003,14 @@ def run_moldova_rhetoric_scan(force=False):
         print('[Moldova Tracker] DEGRADED -- GDELT contributed nothing this scan.')
     reddit_signals, reddit_probe = _fetch_reddit()
     sensing['reddit'] = reddit_probe
+    telegram_messages = []
+    if TELEGRAM_AVAILABLE:
+        try:
+            telegram_messages = fetch_moldova_telegram_signals() or []
+            print(f'[Moldova Tracker] Telegram: {len(telegram_messages)} messages')
+        except Exception as e:
+            print(f'[Moldova Tracker] Telegram fetch error: {str(e)[:120]}')
+    sensing['telegram'] = {'messages': len(telegram_messages)}
     commodity_data = _read_commodity()
 
     by_actor = _classify_articles(articles)
@@ -901,6 +1028,10 @@ def run_moldova_rhetoric_scan(force=False):
     alert = _alert_level_from_score(score)
 
     articles_en = [a for a in articles if a.get('language', 'eng') in ('eng', None)]
+    # Telegram joins the classification pass (RU-first, where Gagauzia/Shor stories break)
+    for _k, _arts in _classify_articles(telegram_messages).items():
+        by_actor[_k].extend(_arts)
+        actor_summaries[_k]['article_count'] += len(_arts)
     articles_ru = [a for a in articles if a.get('language') == 'rus']
     articles_ro = [a for a in articles if a.get('language') == 'ron']
 
@@ -909,6 +1040,8 @@ def run_moldova_rhetoric_scan(force=False):
         'articles_ru':     articles_ru,
         'articles_ro':     articles_ro,
         'reddit_signals':  reddit_signals,
+        'telegram_messages': telegram_messages,
+        'sensing':         sensing,
         'by_actor':        by_actor,
         'actor_summaries': actor_summaries,
         'theatre_score':   score,
@@ -917,6 +1050,12 @@ def run_moldova_rhetoric_scan(force=False):
     }
 
     interpretation = interpret_signals(scan_data)
+
+    # v1.2.0: per-actor levels (breadth + red lines, capped L4)
+    for _k, _lv in (interpretation.get('actor_levels') or {}).items():
+        if _k in actor_summaries:
+            actor_summaries[_k]['level'] = _lv['level']
+            actor_summaries[_k]['outlet_count'] = _lv['outlet_count']
 
     # -- Structural-breach band floor. theatre_score is article VOLUME, so a
     #    BREACHED Transnistria/energy-cutoff/interference line can sit at
@@ -958,6 +1097,13 @@ def run_moldova_rhetoric_scan(force=False):
         'alert_level':       alert,
         'pressure_score':    score,
         'tracker_version':   TRACKER_VERSION,
+        'scanned_at':        datetime.now(timezone.utc).isoformat(),
+        'top_indicator':     interpretation.get('top_indicator'),
+        'thin_read':         bool(interpretation.get('thin_read')),
+        'corpus_health':     interpretation.get('corpus_health'),
+        'russia_pressure':   interpretation.get('russia_pressure'),
+        'airspace_watch':    interpretation.get('airspace_watch'),
+        'telegram_count':    len(telegram_messages),
         # Absence-honest sensing record. any_sensed=False means nothing
         # answered, and theatre_score is then the baseline floor.
         'sensing':           sensing,
@@ -969,6 +1115,7 @@ def run_moldova_rhetoric_scan(force=False):
         'total_articles':    len(articles),
         'articles_by_source': {
             'rss':     sum(1 for a in articles if a.get('source_type') == 'rss'),
+            'gnews':   sum(1 for a in articles if a.get('source_type') == 'gnews'),
             'gdelt':   sum(1 for a in articles if a.get('source_type') == 'gdelt'),
             'newsapi': sum(1 for a in articles if a.get('source_type') == 'newsapi'),
             'brave':   sum(1 for a in articles if a.get('source_type') == 'brave'),
@@ -1025,6 +1172,9 @@ def run_moldova_rhetoric_scan(force=False):
         'theatre_score': result['theatre_score'],
         'alert_level':   result['alert_level'],
         'top_signals':   result['top_signals'][:5],
+        'top_indicator': result.get('top_indicator'),
+        'thin_read':     result.get('thin_read'),
+        'russia_level':  (result.get('russia_pressure') or {}).get('level'),
     })
 
     print(f'[Moldova Tracker] Scan complete: score={score}, alert={alert}, '
@@ -1086,6 +1236,8 @@ def register_moldova_rhetoric_endpoints(app):
                 'top_signals':      (d.get('top_signals') or [])[:3],
                 'so_what_scenario': (d.get('so_what') or {}).get('scenario'),
                 'capture_vs_anchor': (d.get('capture_vs_anchor') or {}).get('balance'),
+                'top_indicator':    d.get('top_indicator'),
+                'thin_read':        d.get('thin_read'),
                 'cached_at':        d.get('cached_at'),
             })
         except Exception as e:
