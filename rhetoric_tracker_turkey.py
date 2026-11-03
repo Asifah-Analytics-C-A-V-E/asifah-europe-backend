@@ -1,8 +1,38 @@
 """
 =======================================================================
   ASIFAH ANALYTICS -- TURKEY RHETORIC TRACKER
-  v1.4.0 (Oct 4 2026)
+  v1.5.0 (Nov 3 2026)
 =======================================================================
+
+v1.5.0 (Nov 3 2026) -- THE HUB LISTENS
+  1. HUB READ. Turkey is the platform's busiest wheel, but this tracker only
+     ever WROTE: Greece, Cyprus, Azerbaijan, Armenia and Kazakhstan publish
+     spoke:turkey:<c> every scan and nothing here read them back (the GPI on
+     the ME backend did; Turkey's own page did not). The scan now reads the
+     wheel through spoke_wheel_reader.read_wheel('turkey'), joins it with the
+     projection footprints (Libya / Syria / Iraq / West Bank) and this scan's
+     own Israel and Lebanon reads, and publishes result['hub_read'] and
+     result['spoke_reads']. Same convergence gate as the GPI, so the page
+     and the GPI cannot disagree.
+  2. Turkey now WRITES its Israel spoke: spoke:israel:turkey (node_class
+     friction, 30h TTL). The Israel wheel registry has listed Turkey as a
+     friction node since July; nothing was emitting it.
+  3. Interpreter v1.1 -- red lines need two outlets (europe_evidence), every
+     line carries its evidence, and the buffer-zone phrases are Turkey-
+     anchored. top_indicator / thin_read / corpus_health on the result.
+  4. Google News (EN + TR) added: publisher-attributed breadth, so a story
+     carried by Reuters and Hurriyet counts as two outlets, not one feed.
+  5. Evidence cap on the alert band: with no red line APPROACHING the band
+     cannot exceed 'elevated'; with none BREACHED it cannot exceed 'high'.
+     theatre_score is UNCHANGED (history stays comparable); the raw band is
+     kept as alert_level_raw.
+  6. The crosstheater dict carries lebanon_vector_stage capped at 4 (the L5
+     assertion rule -- presence is not hostilities); the raw rung is
+     lebanon_vector_rung.
+  7. ?force=true is rate-limited to one fresh scan per 10 minutes.
+  8. Upstash env vars accept the *_REST_URL / *_REST_TOKEN spellings.
+
+v1.4.0 (Oct 4 2026)
 
 v1.4.0 (Oct 4 2026) -- SOURCE DISCIPLINE PASS
   1. GDELT routes through gdelt_gateway, replacing this file's private
@@ -86,14 +116,30 @@ except ImportError:
     BLUESKY_AVAILABLE = False
     print('[Turkey Rhetoric] Bluesky signals not available')
 
-from turkey_signal_interpreter import interpret_signals
+from turkey_signal_interpreter import interpret_signals, build_hub_read, spoke_reads_from_hub
+
+try:
+    from europe_feeds import gnews_url, fetch_rss_items
+    FEEDS_AVAILABLE = True
+except ImportError:
+    FEEDS_AVAILABLE = False
+    print('[Turkey Rhetoric] europe_feeds not available -- Google News skipped')
+
+try:
+    from spoke_wheel_reader import read_wheel
+    WHEEL_AVAILABLE = True
+except ImportError:
+    WHEEL_AVAILABLE = False
+    print('[Turkey Rhetoric] spoke_wheel_reader not available -- hub read skipped')
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-UPSTASH_REDIS_URL    = os.environ.get('UPSTASH_REDIS_URL')
-UPSTASH_REDIS_TOKEN  = os.environ.get('UPSTASH_REDIS_TOKEN')
+UPSTASH_REDIS_URL    = (os.environ.get('UPSTASH_REDIS_URL')
+                        or os.environ.get('UPSTASH_REDIS_REST_URL'))
+UPSTASH_REDIS_TOKEN  = (os.environ.get('UPSTASH_REDIS_TOKEN')
+                        or os.environ.get('UPSTASH_REDIS_REST_TOKEN'))
 NEWSAPI_KEY          = os.environ.get('NEWSAPI_KEY')
 BRAVE_API_KEY        = os.environ.get('BRAVE_API_KEY')
 
@@ -105,7 +151,7 @@ REDIS_KEY_LATEST     = 'rhetoric:turkey:latest'
 REDIS_KEY_HISTORY    = 'rhetoric:turkey:history'
 REFRESH_INTERVAL_SEC = 6 * 3600
 
-TRACKER_VERSION = '1.4.0'
+TRACKER_VERSION = '1.5.0'
 
 TRACKER_USER_AGENT = (f'AsifahAnalytics-Europe-Turkey/{TRACKER_VERSION} '
                       f'(OSINT monitoring tool; +https://asifahanalytics.com)')
@@ -119,6 +165,11 @@ except ImportError:
     print('[Turkey GDELT] gdelt_gateway unavailable -- direct calls (local breaker)')
 
 _scan_lock = threading.Lock()
+_last_force = {'ts': 0.0}
+FORCE_MIN_INTERVAL = 600      # seconds between public ?force=true fresh scans
+
+SPOKE_KEY_ISRAEL = 'spoke:israel:turkey'
+SPOKE_TTL        = 30 * 3600  # platform spoke convention
 
 # ============================================================
 # RSS FEEDS
@@ -390,6 +441,19 @@ GDELT_QUERIES = [
     {'query': 'تركيا اسرائيل', 'language': 'ara'},   # Turkey Israel
     {'query': 'ארדואן טורקיה', 'language': 'heb'},     # Erdogan Turkey
     {'query': 'ארדואן לבנון', 'language': 'heb'},           # Erdogan Lebanon
+]
+
+# Google News (v1.5.0): publisher-attributed. Each item's source is the
+# PUBLISHER, so corroboration counts outlets rather than feeds.
+GNEWS_QUERIES = [
+    ('Turkey Erdogan', 'en'),
+    ('Turkey Israel Syria', 'en'),
+    ('Turkey Lebanon', 'en'),
+    ('Turkey NATO', 'en'),
+    ('PKK peace process Turkey', 'en'),
+    ('Erdoğan', 'tr'),
+    ('Türkiye İsrail Suriye', 'tr'),
+    ('terörsüz Türkiye süreç', 'tr'),
 ]
 
 # Topic gate: NewsAPI/Brave noise filter -- an article must touch Turkey
@@ -861,6 +925,29 @@ def _fetch_all_articles():
         sensing['brave']['ok'] += 1
     articles.extend(got)
 
+    sensing['gnews'] = {'attempted': 0, 'ok': 0}
+    if FEEDS_AVAILABLE:
+        for q, lang in GNEWS_QUERIES:
+            sensing['gnews']['attempted'] += 1
+            items, ok = fetch_rss_items(gnews_url(q, lang), 'Turkey', max_items=20)
+            if ok and items:
+                sensing['gnews']['ok'] += 1
+            for it in items:
+                articles.append({
+                    'title':       it.get('title', ''),
+                    'description': it.get('description', ''),
+                    'url':         it.get('url', ''),
+                    'source':      it.get('source') or 'Google News',
+                    'feed':        'gnews',
+                    'source_type': 'gnews',
+                    'weight':      0.80,
+                    'language':    'tur' if lang == 'tr' else 'eng',
+                    'published':   it.get('published'),
+                    # Evidence only: kept OUT of the volume score so the
+                    # theatre_score series stays comparable with v1.4.
+                    'co_credit':   True,
+                })
+
     # De-duplicate by URL
     seen, unique = set(), []
     for a in articles:
@@ -871,7 +958,8 @@ def _fetch_all_articles():
 
     sensing['any_sensed'] = bool(
         sensing['rss']['ok'] or sensing['gdelt']['sensed']
-        or sensing['newsapi']['ok'] or sensing['brave']['ok'])
+        or sensing['newsapi']['ok'] or sensing['brave']['ok']
+        or sensing['gnews']['ok'])
     sensing['degraded'] = (
         sensing['gdelt']['attempted'] > 0
         and sensing['gdelt']['sensed'] == 0) or not sensing['any_sensed']
@@ -1227,7 +1315,9 @@ def _write_crosstheater_dict_entry(score, alert, interpretation, projection=None
             'score':                score,
             'theatre_score':        score,
             'lebanon_vector':       fp.get('turkey_lebanon_vector', 'dormant'),
-            'lebanon_vector_stage': lebanon_vector.get('stage', 0),
+            # L5 assertion rule: rung 5 (presence) is not hostilities -> cap at 4.
+            'lebanon_vector_stage': min(int(lebanon_vector.get('stage', 0) or 0), 4),
+            'lebanon_vector_rung':  lebanon_vector.get('stage', 0),
             'israel_friction':      fp.get('turkey_israel_friction', 'normal'),
             'nato_divergence':      fp.get('turkey_nato_divergence', 'anchored'),
             'east_alignment':       fp.get('turkey_east_alignment', 'baseline'),
@@ -1258,10 +1348,98 @@ def _write_crosstheater_dict_entry(score, alert, interpretation, projection=None
 
 
 # ============================================================
+# HUB READ + ISRAEL SPOKE  (v1.5.0)
+# ============================================================
+
+_ALERT_ORDER = ['normal', 'elevated', 'high', 'critical']
+
+
+def _evidence_capped_alert(raw_alert, interpretation):
+    """Volume cannot climb above evidence: no red line APPROACHING caps the band
+    at 'elevated'; none BREACHED caps it at 'high'. Returns (alert, note)."""
+    rl = (interpretation or {}).get('red_lines') or {}
+    if rl.get('breached_count'):
+        cap = 'critical'
+    elif rl.get('approaching_count'):
+        cap = 'high'
+    else:
+        cap = 'elevated'
+    if _ALERT_ORDER.index(raw_alert) > _ALERT_ORDER.index(cap):
+        return cap, (f'Volume alone read {raw_alert.upper()}; capped at {cap.upper()} because '
+                     + ('no red line is breached.' if cap == 'high' else 'no red line is approaching.'))
+    return raw_alert, ''
+
+
+def _read_hub(interpretation, projection):
+    """Turkey's wheel: periphery spokes (spoke:turkey:*), projection footprints,
+    and this scan's own Israel/Lebanon reads. Never raises."""
+    wheel = {}
+    if WHEEL_AVAILABLE:
+        try:
+            wheel = read_wheel('turkey', freshness_hours=30) or {}
+        except Exception as e:
+            print(f'[Turkey Hub] wheel read failed (non-fatal): {str(e)[:100]}')
+            wheel = {'readable': False, 'note': 'wheel read failed'}
+    hub = build_hub_read(wheel, projection,
+                         interpretation.get('mirror_friction') or {},
+                         interpretation.get('lebanon_vector') or {})
+    if wheel and not wheel.get('readable', True):
+        hub['note'] = wheel.get('note', '')
+    print(f"[Turkey Hub] {hub['reporting']} reporting, {hub['active_count']} active, "
+          f"converged={hub['converged']}, silent={hub['silent']}")
+    return hub
+
+
+_FRICTION_TO_LEVEL = {'normal': 0, 'simmering': 1, 'elevated': 2, 'high': 3}
+
+
+def _write_israel_spoke(interpretation):
+    """spoke:israel:turkey -- Turkey as a FRICTION node on the Israel wheel.
+    Level = friction band, lifted to 3 if the direct-clash line is approaching
+    and 4 if it is breached (kinetic line). 30h TTL: a dead scan goes dark
+    instead of lingering as a stale reading."""
+    if not (UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN):
+        return False
+    mf = interpretation.get('mirror_friction') or {}
+    level = _FRICTION_TO_LEVEL.get(mf.get('band'), 0)
+    clash = next((r for r in ((interpretation.get('red_lines') or {}).get('triggered') or [])
+                  if r.get('id') == 'turkey_israel_direct_clash'), {})
+    if clash.get('status') == 'BREACHED':
+        level = max(level, 4)
+    elif clash.get('status') == 'APPROACHING':
+        level = max(level, 3)
+    top = (clash.get('plain') if clash.get('status') in ('BREACHED', 'APPROACHING')
+           else 'Turkey-Israel friction: ' + str(mf.get('band', 'normal')))
+    payload = {
+        'ts': datetime.now(timezone.utc).isoformat(),
+        'spoke': 'turkey', 'hub': 'israel', 'node_class': 'friction',
+        'relationship': 'friction', 'level': level, 'top_signal': top,
+        'friction_band': mf.get('band', 'normal'),
+        'synchronized': bool(mf.get('synchronized')),
+        'deconfliction': (interpretation.get('deconfliction_track') or {}).get('status', 'quiet'),
+        'source': 'rhetoric_tracker_turkey', 'version': TRACKER_VERSION,
+    }
+    try:
+        r = requests.post(UPSTASH_REDIS_URL,
+                          headers={'Authorization': f'Bearer {UPSTASH_REDIS_TOKEN}'},
+                          json=['SET', SPOKE_KEY_ISRAEL, json.dumps(payload), 'EX', str(SPOKE_TTL)],
+                          timeout=10)
+        print(f'[Turkey Rhetoric] {SPOKE_KEY_ISRAEL} L{level}')
+        return r.status_code == 200
+    except Exception as e:
+        print(f'[Turkey Rhetoric] Israel spoke write failed (non-fatal): {str(e)[:80]}')
+        return False
+
+
+# ============================================================
 # MAIN SCAN
 # ============================================================
 
 def run_turkey_rhetoric_scan(force=False):
+    if force and time.time() - _last_force['ts'] < FORCE_MIN_INTERVAL:
+        force = False          # rate limit: serve the cache instead of a new scan
+    if force:
+        _last_force['ts'] = time.time()
     if not force:
         cached = _redis_get(REDIS_KEY_LATEST)
         if cached and cached.get('cached_at'):
@@ -1345,8 +1523,19 @@ def run_turkey_rhetoric_scan(force=False):
         'alert_level':       alert,
     }
 
+    scan_data['sensing'] = sensing
     interpretation = interpret_signals(scan_data)
+    alert_raw = alert
+    alert, alert_cap_note = _evidence_capped_alert(alert_raw, interpretation)
     projection = _build_projection_node()   # Slice 3: Erdogan Projection Node
+    hub = _read_hub(interpretation, projection)
+    if hub.get('converged'):
+        interpretation.setdefault('top_signals', []).insert(0, {
+            'category': 'hub_convergence', 'level': 'elevated',
+            'short_text': f"Turkey wheel converged: {hub['active_count']} theatres active",
+            'long_text': hub['headline'], 'icon': '\u2638\ufe0f',
+            'source_link': '/rhetoric-turkey.html#evLayer'})
+    _write_israel_spoke(interpretation)
     _emit_tempo_counts(articles, by_actor)  # v1.3.0 -- tempo emitter (mode='tape')
     _write_cross_theater_fingerprints(
         interpretation.get('cross_theater_fingerprints') or {}
@@ -1360,8 +1549,18 @@ def run_turkey_rhetoric_scan(force=False):
         'display_name':      'Turkey',
         'theatre_score':     score,
         'alert_level':       alert,
+        'alert_level_raw':   alert_raw,
+        'alert_cap_note':    alert_cap_note,
         'pressure_score':    score,
         'tracker_version':   TRACKER_VERSION,
+        # v1.5.0 -- the one line, the under-read flag, and the hub
+        'top_indicator':     interpretation.get('top_indicator'),
+        'thin_read':         interpretation.get('thin_read'),
+        'corpus_health':     interpretation.get('corpus_health'),
+        'hub_read':          hub,
+        'spoke_reads':       spoke_reads_from_hub(hub),
+        'kurdish_track':     interpretation.get('kurdish_track'),
+        'deconfliction_track': interpretation.get('deconfliction_track'),
         # Absence-honest sensing record. any_sensed=False means nothing
         # answered, and theatre_score is then the baseline floor.
         'sensing':           sensing,
@@ -1377,6 +1576,7 @@ def run_turkey_rhetoric_scan(force=False):
             'gdelt':   sum(1 for a in articles if a.get('source_type') == 'gdelt'),
             'newsapi': sum(1 for a in articles if a.get('source_type') == 'newsapi'),
             'brave':   sum(1 for a in articles if a.get('source_type') == 'brave'),
+            'gnews':   sum(1 for a in articles if a.get('source_type') == 'gnews'),
         },
         'telegram_count':    len(telegram_messages),
         'bluesky_count':     len(bluesky_signals),
@@ -1414,6 +1614,9 @@ def run_turkey_rhetoric_scan(force=False):
         },
         'lebanon_vector_stage': (result.get('lebanon_vector') or {}).get('stage'),
         'top_signals':   result['top_signals'][:5],
+        'top_indicator': result.get('top_indicator'),
+        'thin_read':     result.get('thin_read'),
+        'hub_active':    hub.get('active', []),
     })
 
     print(f'[Turkey Rhetoric] Scan complete: score={score}, alert={alert}, '
@@ -1475,6 +1678,18 @@ def register_turkey_rhetoric_endpoints(app):
                 'lebanon_vector_stage': (d.get('lebanon_vector') or {}).get('stage'),
                 'top_signals':     (d.get('top_signals') or [])[:3],
                 'so_what_scenario': (d.get('so_what') or {}).get('scenario'),
+                'top_indicator':   d.get('top_indicator'),
+                'thin_read':       d.get('thin_read'),
+                'alert_cap_note':  d.get('alert_cap_note', ''),
+                'hub': {
+                    'headline':  (d.get('hub_read') or {}).get('headline', ''),
+                    'converged': (d.get('hub_read') or {}).get('converged', False),
+                    'active':    (d.get('hub_read') or {}).get('active', []),
+                    'silent':    (d.get('hub_read') or {}).get('silent', []),
+                },
+                'kurdish_track':  ((d.get('kurdish_track') or {}).get('status')),
+                'deconfliction_track': ((d.get('deconfliction_track') or {}).get('status')),
+                'tracker_version': d.get('tracker_version'),
                 'cached_at':       d.get('cached_at'),
             })
         except Exception as e:
@@ -1498,11 +1713,13 @@ def register_turkey_rhetoric_endpoints(app):
                     history.append(json.loads(item))
                 except Exception:
                     pass
+            history.reverse()        # LPUSH stores newest first; charts want oldest -> newest
             return jsonify({
                 'success': True,
                 'theatre': 'turkey',
                 'count':   len(history),
                 'history': history,
+                'entries': history,
             })
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)[:200], 'history': []}), 500

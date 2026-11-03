@@ -1,8 +1,35 @@
 """
 =======================================================================
   ASIFAH ANALYTICS -- TURKEY SIGNAL INTERPRETER
-  v1.0.0 (Jun 11 2026)
+  v1.1.0 (Nov 3 2026)  -- EVIDENCE PASS + HUB READ
 =======================================================================
+
+v1.1.0 (Nov 3 2026)
+  1. Red and green lines are scored PER ARTICLE and counted by PUBLISHER
+     (europe_evidence): BREACHED needs two outlets. v1.0 pooled every
+     headline into one string, so one blog post could breach a sev-5 line.
+     Each line now carries its evidence (title, outlet, phrase) and a
+     plain-language 'plain' title for the page.
+  2. Topic gate: lines and indices read only Turkey items. The Israeli and
+     analyst feeds are not Turkey-filtered; "buffer zone" in a JPost story
+     about Israel's own zone used to light Turkey's buffer-zone line. Every
+     buffer-zone phrase is now Turkey-anchored.
+  3. Alignment indices, mirror friction, mediation and the election clock
+     count OUTLETS, not phrases -- volume cannot climb above evidence.
+  4. Lebanon ladder: rungs 3+ need 2 outlets, rung 5 (presence) needs 3;
+     platform outputs cap the ladder at L4 (L5 assertion rule).
+  5. Only kinetic lines (direct Turkey-Israel clash, new Syria operation)
+     may print 'critical' in top_signals.
+  6. top_indicator + thin_read + corpus_health; two dated background
+     tracks (Kurdish file, Turkey-Israel deconfliction).
+  7. build_hub_read(): Turkey as a WHEEL -- periphery spokes, projection
+     footprints and this scan's own Israel/Lebanon reads, under the same
+     convergence gate as the GPI's Turkey narrative.
+  8. Domestic tripwires updated for 2026: the Imamoglu trial and the May
+     2026 CHP court ruling are baseline now; Ozel's new party is the
+     opposition to watch.
+
+v1.0.0 (Jun 11 2026) -- original design notes follow.
 
 Analytical layer for rhetoric_tracker_turkey.py. The platform's FIRST
 SWING-STATE interpreter: Turkey is neither an outbound-coercion tracker
@@ -55,7 +82,10 @@ Cross-theater fingerprints written for Lebanon / Israel / Syria trackers
 
 from datetime import datetime, timezone
 
-INTERPRETER_VERSION = '1.0.0'
+from europe_evidence import (EVIDENCE_VERSION, build_corpus, corpus_health,
+                              find, score_green, score_line)
+
+INTERPRETER_VERSION = '1.1.0'
 
 CONVERGENCE_DISCLAIMER = (
     'This composite is a CONVERGENCE indicator, NOT a probability of '
@@ -190,6 +220,8 @@ def _score_rumint(scan_data):
 RED_LINES = [
     {
         'id':       'buffer_zone_levant',
+        'plain':    'Turkey talking about a new buffer zone in Lebanon, Syria or Iran',
+        'kinetic':  False,
         'category': 'Kinetic Precursor',
         'title':    'Buffer-Zone Framing Toward Lebanon / Syria / Iran',
         'severity': 5,
@@ -203,20 +235,25 @@ RED_LINES = [
             'Iran buffer zone in a collapse scenario (denied by MSB). '
             'Language of this class is consistent with operational '
             'planning conditions, not proof of intent.',
+        # v1.1: every phrase is TURKEY-anchored. 'buffer zone lebanon' alone was
+        # Israel's own south-Lebanon zone as often as Turkey's.
         'triggers_breached': [
-            'buffer zone lebanon', 'safe zone lebanon', 'security corridor lebanon',
-            'buffer zone iran', 'safe zone iran', 'turkish buffer zone',
-            'turkey safe zone syria expansion', 'new buffer zone syria',
-            'guvenli bolge lubnan', 'tampon bolge',
+            'turkish buffer zone in lebanon', 'turkey buffer zone lebanon',
+            'turkey safe zone lebanon', 'turkish safe zone in lebanon',
+            'turkish buffer zone in iran', 'turkey buffer zone iran',
+            'turkey expands safe zone', 'turkey expands buffer zone',
+            'new turkish buffer zone', 'lubnan guvenli bolge', 'iran tampon bolge',
         ],
         'triggers_approaching': [
-            'buffer zone', 'safe zone proposal', 'security corridor',
-            'turkey security zone', 'protective zone turkey',
-            'guvenli bolge',
+            'turkish buffer zone', 'turkey buffer zone', 'turkey safe zone',
+            'turkish safe zone', 'turkey security corridor', 'turkish security zone',
+            'ankara buffer zone', 'protective zone turkey', 'tampon bolge',
         ],
     },
     {
         'id':       'defense_mou_lebanon',
+        'plain':    'Turkey and Lebanon moving toward a defence agreement',
+        'kinetic':  False,
         'category': 'Levant Vector',
         'title':    'Turkey-Lebanon Defense Cooperation Agreement',
         'severity': 5,
@@ -241,6 +278,8 @@ RED_LINES = [
     },
     {
         'id':       'turkey_israel_direct_clash',
+        'plain':    'Turkish and Israeli forces in direct confrontation',
+        'kinetic':  True,
         'category': 'Mirror Friction',
         'title':    'Turkey-Israel Direct Confrontation Indicator',
         'severity': 5,
@@ -252,19 +291,21 @@ RED_LINES = [
             'with collapsing deconfliction is the tail risk this '
             'tracker exists to surface early.',
         'triggers_breached': [
-            'turkey israel clash', 'turkish israeli forces clash',
+            'turkish israeli forces clash',
             'israel strikes turkish', 'turkey strikes israeli',
             'turkish israeli incident syria', 'turkey israel military confrontation',
             'turkish jets israeli jets', 'turkey israel exchange fire',
         ],
         'triggers_approaching': [
-            'turkey israel deconfliction', 'turkey israel tensions syria',
+            'turkey israel clash', 'turkey israel tensions syria',
             'israel warns turkey', 'turkey warns israel',
             'turkey israel collision course', 'erdogan netanyahu confrontation',
         ],
     },
     {
         'id':       'nato_rupture',
+        'plain':    'Turkey taking concrete steps away from NATO',
+        'kinetic':  False,
         'category': 'Alignment',
         'title':    'NATO-Anchor Rupture Signals',
         'severity': 4,
@@ -290,6 +331,8 @@ RED_LINES = [
     },
     {
         'id':       'straits_restriction',
+        'plain':    'Turkey threatening to restrict the Bosphorus and Dardanelles',
+        'kinetic':  False,
         'category': 'Straits Leverage',
         'title':    'Montreux / Straits Restriction Signaling',
         'severity': 4,
@@ -311,6 +354,8 @@ RED_LINES = [
     },
     {
         'id':       'syria_new_operation',
+        'plain':    'Turkey preparing a new military operation in Syria',
+        'kinetic':  True,
         'category': 'Syria Lead Indicator',
         'title':    'New Turkish Operation Language in Syria',
         'severity': 4,
@@ -334,6 +379,8 @@ RED_LINES = [
     },
     {
         'id':       'kurdish_file_reversal',
+        'plain':    'The PKK peace process going into reverse',
+        'kinetic':  False,
         'category': 'Kurdish File',
         'title':    'Kurdish Peace-Process Reversal',
         'severity': 3,
@@ -357,6 +404,8 @@ RED_LINES = [
     },
     {
         'id':       'domestic_crisis_escalation',
+        'plain':    "Turkey's domestic political crisis escalating",
+        'kinetic':  False,
         'category': 'Domestic',
         'title':    'Domestic Crisis Escalation',
         'severity': 3,
@@ -368,14 +417,19 @@ RED_LINES = [
             'to foreign-policy risk appetite in both directions -- '
             'caution before elections, diversion plays under stress.',
         'triggers_breached': [
+            # v1.1: the Imamoglu trial has run since March 2026 and the CHP court
+            # ruling landed May 21 2026 -- reporting ON them is baseline now.
+            # Breach = a new rupture: emergency rule, capital controls, the
+            # arrest of Ozel (new opposition leader), mass unrest.
             'state of emergency turkey', 'mass protests turkey', 'lira collapse',
-            'imamoglu sentenced', 'chp leader arrested', 'martial law turkey',
-            'capital controls turkey',
+            'ozel arrested', 'ozel detained', 'martial law turkey',
+            'capital controls turkey', 'opposition party closed turkey',
         ],
         'triggers_approaching': [
-            'imamoglu trial', 'imamoglu verdict', 'lira plunge', 'lira record low',
-            'cbrt governor fired', 'protests istanbul', 'chp crackdown',
-            'opposition crackdown turkey', 'early elections turkey',
+            'imamoglu conviction upheld', 'imamoglu political ban upheld',
+            'lira plunge', 'lira record low', 'cbrt governor fired',
+            'borsa istanbul circuit breaker', 'protests istanbul', 'opposition crackdown turkey',
+            'early elections turkey', 'case against ozel', 'ozel immunity',
         ],
     },
 ]
@@ -404,6 +458,7 @@ GREEN_LINES = [
         ],
         'triggers_signaled': [
             'turkey f-35 talks', 'turkey nato cooperation', 'turkey eu defense talks',
+            'caatsa sanctions lifted', 'turkey f-35 return',
             'turkey us defense talks', 'caatsa relief turkey', 'turkey f-16 upgrade',
         ],
     },
@@ -440,6 +495,7 @@ GREEN_LINES = [
         'triggers_active': [
             'pkk disarmament', 'pkk dissolves', 'kurdish peace agreement',
             'dem akp framework', 'reintegration law turkey', 'sdf integration agreed',
+            'pkk weapons handover', 'peace process law', 'pkk members released',
         ],
         'triggers_signaled': [
             'kurdish peace talks', 'ocalan statement peace', 'pkk congress',
@@ -471,7 +527,7 @@ GREEN_LINES = [
 
 
 # ============================================================
-# DUAL ALIGNMENT INDICES -- the swing-state core
+# KEYWORD LISTS (unchanged from v1.0 -- the counting changed, not the words)
 # ============================================================
 
 NATO_ANCHOR_KEYWORDS = [
@@ -508,48 +564,6 @@ STRATEGIC_AUTONOMY_KEYWORDS = [
     'erdogan hamas', 'turkey hosts hamas', 'erdogan jerusalem',
     'erdogan muslim world', 'erdogan ummah',
 ]
-
-
-def _score_alignment_indices(scan_data):
-    """The swing-state product: parallel NATO-anchor and strategic-
-    autonomy indices. Baseline expectation is BOTH elevated ("Turkey is
-    Turkey"); the analytical signal is divergence between them."""
-    anchor_hits = _check_keywords(scan_data, NATO_ANCHOR_KEYWORDS)
-    autonomy_hits = _check_keywords(scan_data, STRATEGIC_AUTONOMY_KEYWORDS)
-    # Scale hit counts to 0-100 index (8+ distinct keyword classes = saturated)
-    anchor_index = min(100, int(anchor_hits * 12.5))
-    autonomy_index = min(100, int(autonomy_hits * 12.5))
-    divergence = autonomy_index - anchor_index
-
-    if divergence >= 40:
-        posture = 'DECOUPLING SIGNALS -- autonomy track running well ahead of Alliance track'
-        band = 'decoupling'
-    elif divergence >= 20:
-        posture = 'DRIFT -- autonomy signals outpacing NATO-anchor signals this cycle'
-        band = 'drifting'
-    elif divergence <= -20:
-        posture = 'ANCHORING -- Alliance-track signals outpacing autonomy this cycle'
-        band = 'anchoring'
-    else:
-        posture = 'DUAL-TRACK BASELINE -- both tracks active, no decoupling pattern'
-        band = 'anchored'
-
-    return {
-        'nato_anchor_index':       anchor_index,
-        'strategic_autonomy_index': autonomy_index,
-        'anchor_hits':             anchor_hits,
-        'autonomy_hits':           autonomy_hits,
-        'divergence':              divergence,
-        'band':                    band,
-        'posture':                 posture,
-        'method': ('Keyword-class hit counts scaled to 0-100 per index. '
-                   'Signal = divergence between indices, not either level alone.'),
-    }
-
-
-# ============================================================
-# LEBANON-VECTOR PLAYBOOK LADDER
-# ============================================================
 
 LEBANON_VECTOR_STAGES = [
     {
@@ -596,68 +610,6 @@ LEBANON_VECTOR_STAGES = [
     },
 ]
 
-
-def _score_lebanon_vector(scan_data):
-    """Score the Lebanon vector against the playbook ladder. The HIGHEST
-    stage with keyword hits sets the reading; lower-stage activity is
-    reported as breadth. Stage language is estimative throughout."""
-    stage_hits = []
-    for st in LEBANON_VECTOR_STAGES:
-        hits = _check_keywords(scan_data, st['keywords'])
-        stage_hits.append({'stage': st['stage'], 'name': st['name'], 'hits': hits})
-
-    active = [sh for sh in stage_hits if sh['hits'] > 0]
-    top = max(active, key=lambda x: x['stage']) if active else None
-
-    if not top:
-        reading = ('No Lebanon-vector signals detected this cycle. The ladder '
-                   'is instrumented; silence is the honest reading.')
-        band = 'dormant'
-    elif top['stage'] <= 1:
-        reading = ('Perimeter-rhetoric signals present -- language extending '
-                   'Turkey\'s declared security perimeter over Lebanon. This is '
-                   'the ladder\'s lowest rung and is consistent with narrative '
-                   'positioning, not operational preparation.')
-        band = 'rhetoric'
-    elif top['stage'] == 2:
-        reading = ('Soft-power-penetration signals present (Diyanet/TIKA/'
-                   'community instruments). This layer resembles Turkey\'s '
-                   'Balkans pattern and historically precedes economic stakes, '
-                   'not kinetic moves.')
-        band = 'soft_power'
-    elif top['stage'] == 3:
-        reading = ('Economic-strategic stake signals present (ports, '
-                   'reconstruction, energy). On the documented playbook this '
-                   'rung historically precedes security-cooperation overtures. '
-                   'Port-concession reporting is the highest-value watch item.')
-        band = 'economic'
-    elif top['stage'] == 4:
-        reading = ('SECURITY-FOOTPRINT signals present -- defense-cooperation '
-                   'class language. This is the Libya-model tripwire rung: in '
-                   'the 2019-2020 precedent, an MOU of this class preceded '
-                   'deployment by invitation within months.')
-        band = 'security'
-    else:
-        reading = ('PRESENCE/BUFFER-class signals present -- deployment or '
-                   'buffer-zone framing applied to Lebanon. This is the '
-                   'pattern that has immediately preceded every Turkish '
-                   'cross-border operation since 2016.')
-        band = 'kinetic_risk'
-
-    return {
-        'stage':       top['stage'] if top else 0,
-        'stage_name':  top['name'] if top else 'Dormant',
-        'band':        band,
-        'stages':      stage_hits,
-        'reading':     reading,
-        'precedents':  'N. Cyprus 1974 · Syria 2016-19 · Libya 2020 · Somalia · Iraq (Bashiqa) · Balkans soft power',
-    }
-
-
-# ============================================================
-# MIRROR-IMAGING FRICTION INDEX
-# ============================================================
-
 ISRAEL_CLAIMS_TURKEY_KEYWORDS = [
     'israel warns turkey', 'israeli officials turkey', 'turkish takeover lebanon',
     'turkey threat israel', 'israel turkey malign', 'netanyahu turkey',
@@ -673,165 +625,11 @@ TURKEY_CLAIMS_ISRAEL_KEYWORDS = [
     'turkey israel aggression', 'israeli expansionism turkey',
 ]
 
-
-def _score_mirror_friction(scan_data):
-    """Both capitals accusing the other of Levant expansion, escalating
-    in sync, is itself the signal -- an action-reaction spiral read."""
-    israel_claims = _check_keywords(scan_data, ISRAEL_CLAIMS_TURKEY_KEYWORDS)
-    turkey_claims = _check_keywords(scan_data, TURKEY_CLAIMS_ISRAEL_KEYWORDS)
-    combined = israel_claims + turkey_claims
-    synchronized = israel_claims >= 2 and turkey_claims >= 2
-
-    if synchronized and combined >= 8:
-        band, reading = 'high', (
-            'Mirror-imaging spiral active: Israeli claims about Turkish '
-            'expansion and Turkish claims about Israeli expansion are BOTH '
-            'elevated this cycle. Synchronized escalation of mutual threat '
-            'narratives is the pattern that has historically preceded '
-            'deconfliction failures between regional rivals operating in '
-            'shared space.')
-    elif synchronized:
-        band, reading = 'elevated', (
-            'Both directions of the Turkey-Israel threat narrative are '
-            'active this cycle -- each capital is framing the other as the '
-            'expansionist. Watch the Azerbaijan-mediated deconfliction '
-            'channel for whether machinery is keeping pace with rhetoric.')
-    elif combined >= 3:
-        band, reading = 'simmering', (
-            'One-directional friction rhetoric detected. Not yet a '
-            'synchronized spiral; the asymmetry itself is informative.')
-    else:
-        band, reading = 'normal', 'No significant mirror-friction signals this cycle.'
-
-    return {
-        'israel_claims_turkey': israel_claims,
-        'turkey_claims_israel': turkey_claims,
-        'synchronized':         synchronized,
-        'band':                 band,
-        'reading':              reading,
-    }
-
-
-# ============================================================
-# CONSTITUTIONAL-CLOCK MULTIPLIER (calendar discipline)
-# ============================================================
-
 ELECTION_PROXIMITY_KEYWORDS = [
     'early elections turkey', 'turkey snap election', 'new constitution turkey',
     'erdogan constitution', 'constitutional amendment turkey', 'erdogan 2028',
     'erdogan re-election', 'turkey election date', 'erdogan term',
 ]
-
-
-def _election_clock_multiplier(scan_data, red_lines_triggered):
-    """Election/constitution proximity amplifies an ACTIVE signal stack
-    by 15%; it contributes ZERO on its own (multiplier, never signal --
-    the Black Swan calendar discipline). FDD assessment: election math
-    is currently suppressing Ankara's appetite for war entanglement, so
-    the multiplier reads as context on risk appetite in either direction."""
-    hits = _check_keywords(scan_data, ELECTION_PROXIMITY_KEYWORDS)
-    active_stack = any(r['status'] in ('BREACHED', 'APPROACHING')
-                       for r in red_lines_triggered)
-    active = hits >= 2 and active_stack
-    return {
-        'active':     active,
-        'hits':       hits,
-        'multiplier': 0.15 if active else 0.0,
-        'note': ('Constitutional-clock window detected alongside an active '
-                 'signal stack -- domestic timing pressure amplifies the '
-                 'composite by 15%.') if active else
-                ('Calendar condition contributes zero without an active '
-                 'signal stack (multiplier discipline).'),
-    }
-
-
-# ============================================================
-# CORPUS KEYWORD MATCHER
-# ============================================================
-
-def _check_keywords(scan_data, keywords):
-    """Match keywords against scan_data article corpus + social signals.
-    URL slugs are de-hyphenated so multi-word keywords match headline
-    slugs (the Ukraine v1.2 lesson)."""
-    if not keywords:
-        return 0
-    corpus_parts = []
-    for key in ('articles_en', 'articles_tr', 'articles_other'):
-        for art in (scan_data.get(key) or []):
-            corpus_parts.append((art.get('title') or '').lower())
-            corpus_parts.append((art.get('description') or '').lower())
-            corpus_parts.append((art.get('summary') or '').lower())
-            corpus_parts.append((art.get('content') or '').lower())
-            _url = (art.get('url') or art.get('link') or '').lower()
-            if _url:
-                corpus_parts.append(_url.replace('-', ' ').replace('_', ' ').replace('/', ' '))
-    for key in ('telegram_messages', 'bluesky_signals', 'reddit_signals'):
-        for sig in (scan_data.get(key) or []):
-            corpus_parts.append((sig.get('text') or sig.get('title') or '').lower())
-    corpus = ' | '.join(corpus_parts)
-    if not corpus:
-        return 0
-    matches = 0
-    for kw in keywords:
-        if kw.lower() in corpus:
-            matches += 1
-    return matches
-
-
-# ============================================================
-# RED / GREEN LINE SCORING
-# ============================================================
-
-def _score_red_lines(scan_data):
-    triggered = []
-    for line in RED_LINES:
-        breached_hits = _check_keywords(scan_data, line['triggers_breached'])
-        approaching_hits = _check_keywords(scan_data, line['triggers_approaching'])
-        if breached_hits > 0:
-            status = 'BREACHED'
-        elif approaching_hits > 0:
-            status = 'APPROACHING'
-        else:
-            status = 'QUIET'
-        triggered.append({
-            'id':               line['id'],
-            'category':         line['category'],
-            'title':            line['title'],
-            'severity':         line['severity'],
-            'description':      line['description'],
-            'status':           status,
-            'breached_hits':    breached_hits,
-            'approaching_hits': approaching_hits,
-        })
-    return triggered
-
-
-def _score_green_lines(scan_data):
-    triggered = []
-    for line in GREEN_LINES:
-        active_hits = _check_keywords(scan_data, line['triggers_active'])
-        signaled_hits = _check_keywords(scan_data, line['triggers_signaled'])
-        if active_hits > 0:
-            status = 'ACTIVE'
-        elif signaled_hits > 0:
-            status = 'SIGNALED'
-        else:
-            status = 'QUIET'
-        triggered.append({
-            'id':            line['id'],
-            'category':      line['category'],
-            'title':         line['title'],
-            'description':   line['description'],
-            'status':        status,
-            'active_hits':   active_hits,
-            'signaled_hits': signaled_hits,
-        })
-    return triggered
-
-
-# ============================================================
-# DIPLOMATIC / MEDIATION TRACK
-# ============================================================
 
 MEDIATION_TRIGGERS = [
     'turkey mediates', 'ankara mediates', 'turkey brokers', 'erdogan mediation',
@@ -848,15 +646,347 @@ MEDIATION_NEGATORS = [
 ]
 
 
-def _score_diplomatic_track(scan_data, green_lines_triggered):
-    """Mediation posture: Turkey's diplomatic identity. Active mediation
-    yields a small negative (de-escalatory) composite modifier --
-    reputational capital in play is historically associated with
-    restraint on Ankara's own vectors."""
-    raw = _check_keywords(scan_data, MEDIATION_TRIGGERS)
-    negated = _check_keywords(scan_data, MEDIATION_NEGATORS)
-    score = max(0, raw - negated)
+# ============================================================
+# EVIDENCE CORPUS (v1.1.0)
+# ============================================================
+# v1.0 pooled every headline into one string and counted distinct phrases
+# anywhere in it: one blog post carrying "buffer zone" was enough to light a
+# severity-5 red line. v1.1 scores PER ARTICLE and counts PUBLISHERS through
+# europe_evidence (the rule the rest of Europe already runs):
+#   BREACHED     breach phrase carried by 2+ outlets
+#   APPROACHING  breach phrase from 1 outlet, or approach phrases from 2+
+#   WATCHING     approach phrase from 1 outlet, or social chatter only
+#   INACTIVE     nothing
+#
+# TOPIC GATE. The Israeli and analyst RSS feeds (JPost, Times of Israel, MEE)
+# are NOT Turkey-filtered, so a JPost story about Israel's own buffer zone in
+# south Lebanon used to light Turkey's buffer-zone line. Lines and indices now
+# read only items that mention Turkey -- or come from a Turkish outlet, where
+# the subject is implicit ("Fidan meets...", "Ankara says...").
 
+TURKEY_TERMS = [
+    'turkey', 'turkish', 'turkiye', 'erdogan', 'ankara', 'istanbul', 'fidan',
+    'bosphorus', 'dardanelles', 'incirlik', 'tsk', 'mit chief',
+    'bayraktar', 'baykar', 'diyanet', 'akp', 'mhp', 'chp', 'dem party',
+    'imamoglu', 'ozel', 'bahceli', 'ocalan', 'pkk', 'montreux',
+    'turkiye', 'turkler', 'tbmm',
+    'טורקיה', 'ארדואן', 'تركيا', 'اردوغان', 'أردوغان', 'التركي', 'التركية',
+]
+TURKISH_OUTLET_HINTS = [
+    'daily sabah', 'dailysabah', 'hurriyet', 'trt', 'anadolu', 'aa.com.tr',
+    'duvar', 'bianet', 'turkiye today', 'turkiyetoday', 'turkish minute',
+    'turkishminute', 'sozcu', 'cumhuriyet', 'milliyet', 'sabah', 'yeni safak',
+    'yenisafak', 'medyascope', 't24', 'bloomberg ht', 'ntv', 'haberturk',
+]
+
+
+def _is_turkey_item(item):
+    outlet = item.get('outlet') or ''
+    if any(h in outlet for h in TURKISH_OUTLET_HINTS):
+        return True
+    text = item.get('text') or ''
+    return any(t in text for t in TURKEY_TERMS)
+
+
+def _corpus_for(scan_data):
+    """(full corpus, Turkey-gated corpus). Built once per interpret call."""
+    full = scan_data.get('_corpus')
+    if not isinstance(full, list):
+        full = build_corpus(scan_data,
+                            article_keys=('articles_en', 'articles_tr', 'articles_other'))
+    gated = [c for c in full if _is_turkey_item(c)]
+    return full, gated
+
+
+# ============================================================
+# DUAL ALIGNMENT INDICES -- the swing-state core (v1.1 evidence-weighted)
+# ============================================================
+
+def _breadth_index(found):
+    """Phrases count only as far as the outlet breadth behind them: one outlet
+    carrying six phrases reads 25, not 75. 8 classes = saturated (100)."""
+    phrases = len(found['phrases'])
+    outlets = len(found['outlets'])
+    return min(100, int(12.5 * min(phrases, outlets + 1)))
+
+
+def _score_alignment_indices(corpus, thin=False):
+    """Parallel NATO-anchor and strategic-autonomy indices. Baseline is BOTH
+    elevated ("Turkey is Turkey"); the signal is the divergence between them."""
+    anchor = find(corpus, NATO_ANCHOR_KEYWORDS)
+    autonomy = find(corpus, STRATEGIC_AUTONOMY_KEYWORDS)
+    anchor_index = _breadth_index(anchor)
+    autonomy_index = _breadth_index(autonomy)
+    divergence = autonomy_index - anchor_index
+
+    if thin:
+        posture = ('UNDER-READ -- too few outlets this cycle to read alignment; the indices '
+                   'below are a floor, not a finding')
+        band = 'anchored' if abs(divergence) < 40 else ('decoupling' if divergence > 0 else 'anchoring')
+    elif divergence >= 40:
+        posture = 'DECOUPLING SIGNALS -- autonomy track running well ahead of Alliance track'
+        band = 'decoupling'
+    elif divergence >= 20:
+        posture = 'DRIFT -- autonomy signals outpacing NATO-anchor signals this cycle'
+        band = 'drifting'
+    elif divergence <= -20:
+        posture = 'ANCHORING -- Alliance-track signals outpacing autonomy this cycle'
+        band = 'anchoring'
+    else:
+        posture = 'DUAL-TRACK BASELINE -- both tracks active, no decoupling pattern'
+        band = 'anchored'
+
+    return {
+        'nato_anchor_index':        anchor_index,
+        'strategic_autonomy_index': autonomy_index,
+        'anchor_hits':              len(anchor['phrases']),
+        'autonomy_hits':            len(autonomy['phrases']),
+        'anchor_outlets':           len(anchor['outlets']),
+        'autonomy_outlets':         len(autonomy['outlets']),
+        'divergence':               divergence,
+        'band':                     band,
+        'posture':                  posture,
+        'evidence': {'anchor': anchor['evidence'][:3], 'autonomy': autonomy['evidence'][:3]},
+        'method': ('Distinct signal classes per index, counted only as far as the number of '
+                   'outlets carrying them (phrases <= outlets + 1), scaled to 0-100. The '
+                   'signal is the divergence between the two, not either level alone.'),
+    }
+
+
+# ============================================================
+# LEBANON-VECTOR PLAYBOOK LADDER (v1.1 corroboration-gated)
+# ============================================================
+# Rungs 1-2 (rhetoric, soft power) may light on one outlet. Rungs 3+ need two
+# outlets -- the platform's L3+ rule -- and rung 5 (presence) needs three,
+# because it is the only rung that describes Turkish forces on the ground.
+# A single-outlet hit on an upper rung is RECORDED, not asserted.
+
+_STAGE_MIN_OUTLETS = {1: 1, 2: 1, 3: 2, 4: 2, 5: 3}
+
+
+def _score_lebanon_vector(corpus):
+    stage_hits = []
+    for st in LEBANON_VECTOR_STAGES:
+        f = find(corpus, st['keywords'])
+        n = len(f['outlets'])
+        stage_hits.append({'stage': st['stage'], 'name': st['name'],
+                           'hits': len(f['phrases']), 'outlets': n,
+                           'reached': n >= _STAGE_MIN_OUTLETS[st['stage']],
+                           'evidence': f['evidence'][:2]})
+
+    reached = [sh for sh in stage_hits if sh['reached']]
+    top = max(reached, key=lambda x: x['stage']) if reached else None
+    single = [sh for sh in stage_hits if sh['outlets'] >= 1 and not sh['reached']]
+    unconfirmed = max(single, key=lambda x: x['stage']) if single else None
+
+    if not top:
+        reading = ('No corroborated Lebanon-vector signal this cycle. The ladder is '
+                   'instrumented; quiet here means nothing reached two outlets.')
+        band = 'dormant'
+    elif top['stage'] <= 1:
+        reading = ('Perimeter rhetoric only -- Ankara talking about Lebanon as inside its '
+                   'security perimeter. The lowest rung: narrative positioning, not preparation.')
+        band = 'rhetoric'
+    elif top['stage'] == 2:
+        reading = ('Soft-power activity (Diyanet, TIKA, schools, aid). This is the Balkans '
+                   'pattern; historically it precedes economic stakes, not military moves.')
+        band = 'soft_power'
+    elif top['stage'] == 3:
+        reading = ('Economic-strategic stakes (ports, reconstruction, energy), carried by '
+                   'two or more outlets. On the documented playbook this rung comes before '
+                   'security-cooperation offers. Port-concession reporting is the item to watch.')
+        band = 'economic'
+    elif top['stage'] == 4:
+        reading = ('SECURITY-FOOTPRINT language -- defence-cooperation talk with Beirut, '
+                   'corroborated. This is the Libya-model tripwire: in 2019-20 an MOU of this '
+                   'class came months before Turkish forces arrived by invitation.')
+        band = 'security'
+    else:
+        reading = ('PRESENCE reporting -- Turkish forces in Lebanon, carried by three or more '
+                   'outlets. Every Turkish cross-border deployment since 2016 has followed '
+                   'this pattern. Ladder rung 5; platform outputs cap it at L4 (presence is '
+                   'not hostilities -- the L5 assertion rule).')
+        band = 'kinetic_risk'
+    if unconfirmed and (not top or unconfirmed['stage'] > top['stage']):
+        reading += (f" One outlet also carried rung-{unconfirmed['stage']} language "
+                    f"({unconfirmed['name'].lower()}); single-source, so recorded rather than read.")
+
+    stage = top['stage'] if top else 0
+    return {
+        'stage':          stage,
+        'platform_level': min(stage, 4),
+        'stage_name':     top['name'] if top else 'Dormant',
+        'band':           band,
+        'stages':         stage_hits,
+        'unconfirmed_stage': unconfirmed['stage'] if unconfirmed else 0,
+        'reading':        reading,
+        'precedents':     'N. Cyprus 1974 · Syria 2016-19 · Libya 2020 · Somalia · Iraq (Bashiqa) · Balkans soft power',
+    }
+
+
+# ============================================================
+# MIRROR-IMAGING FRICTION INDEX (v1.1 outlet-counted)
+# ============================================================
+
+def _score_mirror_friction(corpus):
+    """Both capitals accusing the other of Levant expansion, in sync, is the
+    signal. v1.1 counts OUTLETS per direction, not phrases."""
+    il = find(corpus, ISRAEL_CLAIMS_TURKEY_KEYWORDS)
+    tr = find(corpus, TURKEY_CLAIMS_ISRAEL_KEYWORDS)
+    n_il, n_tr = len(il['outlets']), len(tr['outlets'])
+    combined = n_il + n_tr
+    synchronized = n_il >= 2 and n_tr >= 2
+
+    if synchronized and combined >= 7:
+        band, reading = 'high', (
+            'Mirror-imaging spiral: Israeli claims of Turkish expansion and Turkish claims of '
+            'Israeli expansion are BOTH running across several outlets this cycle. Mutual '
+            'threat narratives rising together is the pattern that has preceded deconfliction '
+            'failures between rivals sharing airspace.')
+    elif synchronized:
+        band, reading = 'elevated', (
+            'Both directions of the Turkey-Israel threat story are live this cycle -- each '
+            'capital casting the other as the expansionist. The question is whether the '
+            'US-run deconfliction channel is keeping pace with the rhetoric.')
+    elif combined >= 3:
+        louder = 'Israeli claims about Turkey' if n_il > n_tr else 'Turkish claims about Israel'
+        band, reading = 'simmering', (
+            f'One-sided friction: {louder} are carrying the story. Not yet a synchronized '
+            'spiral -- and which side is louder is itself informative.')
+    else:
+        band, reading = 'normal', 'No significant Turkey-Israel friction rhetoric this cycle.'
+
+    return {
+        'israel_claims_turkey': n_il,
+        'turkey_claims_israel': n_tr,
+        'synchronized':         synchronized,
+        'band':                 band,
+        'reading':              reading,
+        'evidence':             (il['evidence'][:2] + tr['evidence'][:2]),
+        'method':               'Outlets carrying each direction of the claim (not phrase counts).',
+    }
+
+
+# ============================================================
+# CONSTITUTIONAL-CLOCK MULTIPLIER (calendar discipline)
+# ============================================================
+
+def _election_clock_multiplier(corpus, red_lines_triggered):
+    """Election/constitution proximity amplifies an ACTIVE signal stack by 15%;
+    it contributes ZERO on its own (multiplier, never signal)."""
+    f = find(corpus, ELECTION_PROXIMITY_KEYWORDS)
+    outlets = len(f['outlets'])
+    active_stack = any(r['status'] in ('BREACHED', 'APPROACHING') for r in red_lines_triggered)
+    active = outlets >= 2 and active_stack
+    return {
+        'active':     active,
+        'hits':       len(f['phrases']),
+        'outlets':    outlets,
+        'multiplier': 0.15 if active else 0.0,
+        'note': ('Constitution / early-election talk is running alongside an active signal '
+                 'stack -- domestic timing amplifies the composite by 15%.') if active else
+                ('Calendar condition contributes zero without an active signal stack '
+                 '(multiplier discipline).'),
+    }
+
+
+# ============================================================
+# CORPUS KEYWORD MATCHER -- LEGACY (RUMINT only)
+# ============================================================
+
+def _check_keywords(scan_data, keywords):
+    """v1.0 pooled matcher, kept ONLY for the RUMINT pill (which rides alongside
+    the score and never moves it). Red/green lines and indices no longer use it."""
+    if not keywords:
+        return 0
+    corpus_parts = []
+    for key in ('articles_en', 'articles_tr', 'articles_other'):
+        for art in (scan_data.get(key) or []):
+            corpus_parts.append((art.get('title') or '').lower())
+            corpus_parts.append((art.get('description') or '').lower())
+            _url = (art.get('url') or art.get('link') or '').lower()
+            if _url:
+                corpus_parts.append(_url.replace('-', ' ').replace('_', ' ').replace('/', ' '))
+    for key in ('telegram_messages', 'bluesky_signals', 'reddit_signals'):
+        for sig in (scan_data.get(key) or []):
+            corpus_parts.append((sig.get('text') or sig.get('title') or '').lower())
+    corpus = ' | '.join(corpus_parts)
+    if not corpus:
+        return 0
+    return sum(1 for kw in keywords if kw.lower() in corpus)
+
+
+# ============================================================
+# RED / GREEN LINE SCORING (v1.1 evidence-based)
+# ============================================================
+
+def _score_red_lines(corpus):
+    triggered = []
+    for line in RED_LINES:
+        s = score_line(corpus, line['triggers_breached'], line['triggers_approaching'])
+        triggered.append({
+            'id':               line['id'],
+            'category':         line['category'],
+            'title':            line['title'],
+            'plain':            line.get('plain', ''),
+            'severity':         line['severity'],
+            'kinetic':          bool(line.get('kinetic')),
+            'description':      line['description'],
+            'status':           s['status'],
+            'breached_hits':    s['breached_hits'],
+            'approaching_hits': s['approaching_hits'],
+            'breach_outlets':   s['breach_outlets'],
+            'approach_outlets': s['approach_outlets'],
+            'evidence':         s['evidence'],
+            'trigger':          _trigger_words(s),
+        })
+    return triggered
+
+
+def _trigger_words(s):
+    """Plain-language 'why this status' line for the page."""
+    st = s['status']
+    if st == 'BREACHED':
+        return f"Breach language carried by {s['breach_outlets']} outlets."
+    if st == 'APPROACHING':
+        if s['breach_outlets'] == 1:
+            return 'Breach language from one outlet only -- needs a second to count as breached.'
+        return f"Approach language carried by {s['approach_outlets']} outlets."
+    if st == 'WATCHING':
+        return 'One outlet, or social chatter only -- noted, not counted.'
+    return ''
+
+
+def _score_green_lines(corpus):
+    triggered = []
+    for line in GREEN_LINES:
+        s = score_green(corpus, line['triggers_active'], line['triggers_signaled'])
+        triggered.append({
+            'id':              line['id'],
+            'category':        line['category'],
+            'title':           line['title'],
+            'description':     line['description'],
+            'status':          s['status'],
+            'active_hits':     s['active_hits'],
+            'signaled_hits':   s['signaled_hits'],
+            'active_outlets':  s['active_outlets'],
+            'signaled_outlets': s['signaled_outlets'],
+            'evidence':        s['evidence'],
+        })
+    return triggered
+
+
+# ============================================================
+# DIPLOMATIC / MEDIATION TRACK (v1.1 outlet-counted)
+# ============================================================
+
+def _score_diplomatic_track(corpus, green_lines_triggered):
+    """Mediation posture: Turkey's diplomatic identity. The score is now the
+    number of OUTLETS carrying mediation language, net of outlets carrying its
+    collapse -- one press release no longer reads as an active track."""
+    pos = find(corpus, MEDIATION_TRIGGERS)
+    neg = find(corpus, MEDIATION_NEGATORS)
+    score = max(0, len(pos['outlets']) - len(neg['outlets']))
     deconfliction_active = any(
         g['id'] == 'israel_deconfliction_track' and g['status'] == 'ACTIVE'
         for g in green_lines_triggered)
@@ -872,91 +1002,285 @@ def _score_diplomatic_track(scan_data, green_lines_triggered):
 
     return {
         'score':    score,
-        'raw_hits': raw,
-        'negated':  negated,
+        'raw_hits': len(pos['phrases']),
+        'negated':  len(neg['outlets']),
         'scenario': scenario,
         'modifier': modifier,
         'deconfliction_active': deconfliction_active,
+        'evidence': pos['evidence'][:3],
+        'unit':     'outlets',
     }
+
+
+# ============================================================
+# DATED BACKGROUND TRACKS (v1.1) -- what has already happened
+# ============================================================
+# The scan asks whether these are holding. Facts are dated and sourced; they
+# are background, never this cycle's evidence. Refresh at each review.
+
+KURDISH_BASELINE = {
+    'as_of': '2026-11-03',
+    'what': ('Feb 2025: Ocalan calls on the PKK to disarm. May 2025: the PKK announces it '
+             'will end its armed struggle. Jul and Oct 2025: weapons-handover ceremonies in '
+             'northern Iraq. Aug 2025: parliament sets up a commission to oversee the process.'),
+    'status': ('Aug 10 2026: parliament passed the framework law for the PKK\'s dissolution '
+               '(468 votes; AKP, MHP and DEM in favour) -- legal protection and sentence '
+               'suspension for some former members, plus reintegration.'),
+    'constraint': ('Still open: Ocalan\'s status, anti-terror law changes, wider Kurdish '
+                   'political and cultural rights, and SDF integration in Syria.'),
+    'sources': ['https://www.al-monitor.com/originals/2026/08/turkish-parliament-passes-landmark-law-advance-pkk-peace-process'],
+}
+
+DECONFLICTION_BASELINE = {
+    'as_of': '2026-11-03',
+    'what': ('Turkey and Israel both operate in Syrian airspace. The US runs an '
+             'information-sharing channel between Ankara, Jerusalem and Damascus.'),
+    'status': ('Aug 18 2026: Israel struck the runway at Abu al-Duhur airfield (Idlib) after '
+               'reports that Turkey would use it; Ankara was not warned and denied any troop '
+               'move. Aug 19: US envoy Tom Barrack said Washington is building a "more '
+               'robust" Turkey-Israel-Syria deconfliction mechanism -- not yet in place.'),
+    'constraint': 'Israel\'s October 2026 election and coalition formation shape Jerusalem\'s posture.',
+    'sources': ['https://www.thenationalnews.com/news/mena/2026/08/19/us-working-on-deconfliction-mechanism-between-turkey-syria-and-israel-says-barrack/'],
+}
+
+
+def _status_of(lines, line_id):
+    for ln in lines:
+        if ln['id'] == line_id:
+            return ln
+    return {}
+
+
+def _kurdish_track(red_lines, green_lines):
+    rev = _status_of(red_lines, 'kurdish_file_reversal')
+    grn = _status_of(green_lines, 'kurdish_peace_process')
+    rs, gs = rev.get('status', 'INACTIVE'), grn.get('status', 'DORMANT')
+    if rs in ('BREACHED', 'APPROACHING'):
+        status = 'strain'
+        read = ('The PKK process is under strain this cycle: reversal language '
+                + ('is carried by two or more outlets.' if rs == 'BREACHED' else 'is reported.')
+                + ' A reversal would reopen the Syria and Iraq files at once.')
+    elif rs == 'WATCHING':
+        status = 'contested'
+        read = 'One outlet or social chatter questions the process; the August 2026 law still stands.'
+    elif gs in ('ACTIVE', 'SIGNALED'):
+        status = 'holding'
+        read = ('The process is in the news and moving forward: '
+                + ('implementation steps are reported.' if gs == 'ACTIVE' else 'talks and statements, not new steps.'))
+    else:
+        status = 'quiet'
+        read = ('The process is not in this scan\'s reporting. Quiet means unread this cycle, '
+                'not stalled -- the August 2026 law is the standing baseline.')
+    return {'status': status, 'read': read,
+            'evidence': (rev.get('evidence') or []) + (grn.get('evidence') or []),
+            'baseline': KURDISH_BASELINE,
+            'title': 'THE KURDISH FILE — PKK DISSOLUTION PROCESS'}
+
+
+def _deconfliction_track(red_lines, green_lines, mirror):
+    clash = _status_of(red_lines, 'turkey_israel_direct_clash')
+    dec = _status_of(green_lines, 'israel_deconfliction_track')
+    cs, ds = clash.get('status', 'INACTIVE'), dec.get('status', 'DORMANT')
+    if cs == 'BREACHED':
+        status = 'strain'
+        read = ('Two or more outlets report Turkish and Israeli forces in direct confrontation -- '
+                'the tail risk the deconfliction channel exists to stop.')
+    elif cs == 'APPROACHING':
+        status = 'contested'
+        read = ('Tension language about Turkish and Israeli forces in Syria is in the reporting '
+                f"({clash.get('trigger', '').rstrip('.').lower()}). No incident is reported.")
+    elif mirror.get('band') in ('elevated', 'high'):
+        status = 'contested'
+        read = ('No incident, but both capitals are accusing each other in sync. Rhetoric is '
+                'outrunning the deconfliction machinery.')
+    elif ds in ('ACTIVE', 'SIGNALED'):
+        status = 'holding'
+        read = 'Deconfliction contacts are reported and no confrontation language is present.'
+    else:
+        status = 'quiet'
+        read = ('Neither confrontation nor deconfliction is in this scan\'s reporting. Unread, '
+                'not calm -- the Abu al-Duhur strike showed how fast this file moves.')
+    return {'status': status, 'read': read,
+            'evidence': (clash.get('evidence') or []) + (dec.get('evidence') or []),
+            'baseline': DECONFLICTION_BASELINE,
+            'title': 'TURKEY–ISRAEL IN SYRIA — THE DECONFLICTION CHANNEL'}
+
+
+# ============================================================
+# HUB READ (v1.1) -- Turkey as a WHEEL: what its spokes are reporting
+# ============================================================
+# Three inputs, one picture (the same unification the GPI's Turkey-convergence
+# narrative uses, so the page and the GPI cannot disagree):
+#   periphery   spoke:turkey:<c>  (Greece, Cyprus, Azerbaijan, Armenia, Kazakhstan
+#               -- countries REACTING to Turkey), read through spoke_wheel_reader
+#   projection  turkey:theater_footprints  (Libya, Syria, Iraq, West Bank --
+#               theatres Turkey is pushing INTO), via the Projection Node
+#   self        this scan's own Israel-friction and Lebanon-vector reads
+# Gate (GPI-identical): converged when 3+ theatres are at L2+, or 2+ that span
+# BOTH a projection theatre and a periphery spoke.
+
+HUB_ACTIVE_LEVEL = 2
+_FRICTION_LEVEL = {'normal': 0, 'simmering': 1, 'elevated': 2, 'high': 3}
+_KIND_WORDS = {'periphery': 'reacting to Ankara', 'projection': 'Turkey pushing in'}
+
+
+def build_hub_read(periphery_wheel, projection, mirror, lebanon_vector):
+    """Pure function -- no Redis. Returns the hub block for the page and summary."""
+    nodes = {}
+
+    def put(n):
+        cur = nodes.get(n['theatre'])
+        if cur is None or n['level'] > cur['level'] or (cur['state'] != 'lit' and n['state'] == 'lit'):
+            nodes[n['theatre']] = n
+
+    wheel = periphery_wheel or {}
+    proj_detail = (projection or {}).get('theater_detail') or {}
+    for s in wheel.get('spokes') or []:
+        c = s.get('country')
+        if not c or c in proj_detail:
+            continue          # projection footprint is the Turkey-specific read for that theatre
+        put({'theatre': c, 'display': s.get('display') or c.title(), 'kind': 'periphery',
+             'level': int(s.get('level') or 0), 'state': s.get('state') or 'not_reporting',
+             'node_class': s.get('node_class') or '', 'relationship': s.get('relationship') or '',
+             'top': s.get('top_signal') or '', 'age_hours': s.get('age_hours'),
+             'source': s.get('source') or ''})
+    for t, d in proj_detail.items():
+        lvl = int(d.get('level') or 0)
+        put({'theatre': t, 'display': t.replace('_', ' ').title(), 'kind': 'projection',
+             'level': lvl, 'state': 'lit' if lvl >= HUB_ACTIVE_LEVEL else 'dark',
+             'node_class': d.get('mode') or 'dormant', 'relationship': ', '.join(d.get('objective_tags') or []),
+             'top': (d.get('top_phrases') or [''])[0], 'age_hours': None, 'source': 'footprint'})
+    fl = _FRICTION_LEVEL.get((mirror or {}).get('band'), 0)
+    put({'theatre': 'israel', 'display': 'Israel', 'kind': 'periphery', 'level': fl,
+         'state': 'lit' if fl >= HUB_ACTIVE_LEVEL else 'dark', 'node_class': 'friction',
+         'relationship': 'friction', 'top': 'Turkey-Israel friction: ' + (mirror or {}).get('band', 'normal'),
+         'age_hours': 0, 'source': 'this_scan'})
+    lv = int((lebanon_vector or {}).get('platform_level') or 0)
+    put({'theatre': 'lebanon', 'display': 'Lebanon', 'kind': 'projection', 'level': lv,
+         'state': 'lit' if lv >= HUB_ACTIVE_LEVEL else 'dark', 'node_class': 'playbook_ladder',
+         'relationship': (lebanon_vector or {}).get('band', 'dormant'),
+         'top': 'Lebanon vector: ' + (lebanon_vector or {}).get('stage_name', 'Dormant'),
+         'age_hours': 0, 'source': 'this_scan'})
+
+    allnodes = sorted(nodes.values(), key=lambda n: (-n['level'], n['theatre']))
+    active = [n for n in allnodes if n['level'] >= HUB_ACTIVE_LEVEL and n['state'] != 'not_reporting']
+    has_p = any(n['kind'] == 'projection' for n in active)
+    has_r = any(n['kind'] == 'periphery' for n in active)
+    converged = len(active) >= 3 or (len(active) >= 2 and has_p and has_r)
+    silent = [n for n in allnodes if n['state'] == 'not_reporting']
+    reporting = [n for n in allnodes if n['state'] != 'not_reporting']
+
+    names = ', '.join(n['display'] for n in active)
+    if converged:
+        span = 'both pushing in and drawing reactions' if (has_p and has_r) else (
+            'pushing into several theatres' if has_p else 'drawing reactions across the periphery')
+        headline = (f'Turkey\'s wheel is turning: {len(active)} theatres are active at once '
+                    f'({names}) -- Ankara {span}. That breadth is the read no single-country '
+                    'page can give.')
+    elif len(active) == 1:
+        headline = (f'One theatre is active on Turkey\'s wheel ({names}); the rest are quiet. '
+                    'A lone spoke is local -- convergence needs two or more.')
+    elif reporting:
+        headline = (f'Turkey\'s wheel is quiet: {len(reporting)} theatres reporting, none above L1. '
+                    'No multi-theatre push this cycle.')
+    else:
+        headline = 'No Turkey spoke is reporting -- the wheel is unread, not quiet.'
+    if silent and reporting:
+        headline += (f' {len(silent)} expected spoke{"s" if len(silent) != 1 else ""} '
+                     f'({", ".join(n["display"] for n in silent)}) did not report: unread, not calm.')
+
+    return {
+        'converged':   converged,
+        'active':      [n['theatre'] for n in active],
+        'active_count': len(active),
+        'reporting':   len(reporting),
+        'silent':      [n['theatre'] for n in silent],
+        'nodes':       allnodes,
+        'headline':    headline,
+        'wheel_readable': bool(wheel.get('readable', bool(wheel))),
+        'projection_bluf': (projection or {}).get('bluf', ''),
+        'gate':        ('Converged when 3+ theatres are at L2+, or 2+ spanning a projection '
+                        'theatre and a periphery spoke (same gate as the GPI).'),
+        'kind_words':  _KIND_WORDS,
+    }
+
+
+def spoke_reads_from_hub(hub):
+    """Compact {country: {present, fresh, level, node_class}} for the shared
+    evidence-layer wheel card."""
+    out = {}
+    for n in (hub or {}).get('nodes') or []:
+        out[n['theatre']] = {'present': n['state'] != 'not_reporting',
+                             'fresh': n['state'] != 'not_reporting',
+                             'level': n['level'], 'node_class': n['node_class'],
+                             'kind': n['kind']}
+    return out
 
 
 # ============================================================
 # SO-WHAT NARRATIVE (estimative voice, doctrine-compliant)
 # ============================================================
 
-def _build_so_what(scan_data, red_lines_triggered, green_lines_triggered,
-                   diplomatic, alignment, lebanon_vector, mirror_friction,
-                   election_clock):
+def _build_so_what(red_lines_triggered, green_lines_triggered, diplomatic, alignment,
+                   lebanon_vector, mirror_friction, election_clock, health):
     breached = [r for r in red_lines_triggered if r['status'] == 'BREACHED']
     approaching = [r for r in red_lines_triggered if r['status'] == 'APPROACHING']
     active_gl = [g for g in green_lines_triggered if g['status'] == 'ACTIVE']
 
-    # Scenario selection: worst active pattern wins the headline
     kinetic_class = [r for r in breached if r['id'] in
                      ('buffer_zone_levant', 'defense_mou_lebanon',
                       'turkey_israel_direct_clash', 'syria_new_operation')]
     if kinetic_class:
-        scenario = 'Kinetic-Precursor Signals Active'
-        priority = 'critical'
+        scenario, priority = 'Kinetic-Precursor Signals Active', 'critical'
         assessment = (
-            'Signals in the kinetic-precursor class are present this cycle: '
+            'Two or more outlets carry kinetic-precursor language this cycle: '
             + '; '.join(r['title'] for r in kinetic_class[:2]) + '. '
-            'On Turkey\'s documented operational pattern, language of this '
-            'class has historically preceded cross-border action -- it does '
-            'not predict action, and the distinction is the analysis. '
-            'Watch deconfliction channels and border force posture for '
-            'corroboration across independent layers.')
+            'On Turkey\'s documented pattern, language of this class has come before '
+            'cross-border action -- it does not predict action, and that distinction is the '
+            'analysis. Watch border force posture and the deconfliction channel.')
     elif mirror_friction['band'] == 'high':
-        scenario = 'Mirror-Friction Spiral'
-        priority = 'high'
+        scenario, priority = 'Mirror-Friction Spiral', 'high'
         assessment = mirror_friction['reading']
     elif mirror_friction['band'] == 'elevated' and mirror_friction['synchronized']:
-        scenario = 'Mirror Friction Building'
-        priority = 'elevated'
-        assessment = mirror_friction['reading'] + (
-            ' Lebanon vector currently reads at the '
-            + lebanon_vector['stage_name'].lower() + ' level.')
-    elif alignment['band'] == 'decoupling':
-        scenario = 'Alignment Decoupling Signals'
-        priority = 'high'
+        scenario, priority = 'Mirror Friction Building', 'elevated'
+        assessment = (mirror_friction['reading'] + ' Lebanon vector reads at the '
+                      + lebanon_vector['stage_name'].lower() + ' level.')
+    elif alignment['band'] == 'decoupling' and not health.get('thin'):
+        scenario, priority = 'Alignment Decoupling Signals', 'high'
         assessment = (
-            'The strategic-autonomy index is running well ahead of the '
-            'NATO-anchor index this cycle (divergence '
-            f"{alignment['divergence']:+d}). Sustained divergence of this "
-            'class -- rather than any single S-400 or SCO headline -- is '
-            'the pattern consistent with genuine drift from the Alliance '
-            'anchor. One cycle is weather; watch for persistence.')
+            'The strategic-autonomy index is running well ahead of the NATO-anchor index '
+            f"(divergence {alignment['divergence']:+d}). Sustained divergence -- not any single "
+            'S-400 or SCO headline -- is what genuine drift from the Alliance looks like. One '
+            'cycle is weather; watch for persistence.')
     elif breached or len(approaching) >= 2:
-        scenario = 'Elevated Signal Stack'
-        priority = 'elevated'
+        scenario, priority = 'Elevated Signal Stack', 'elevated'
         names = [r['title'] for r in (breached + approaching)[:3]]
         assessment = (
-            'Multiple tripwires show activity this cycle: ' + '; '.join(names)
-            + '. No kinetic-precursor class signals are present; the stack '
-            'is consistent with elevated friction rather than operational '
-            'preparation. ' + lebanon_vector['reading'])
+            'Several tripwires show corroborated activity: ' + '; '.join(names) + '. No '
+            'kinetic-precursor line is breached, so the stack reads as friction, not '
+            'operational preparation. ' + lebanon_vector['reading'])
     elif lebanon_vector['stage'] >= 3:
-        scenario = 'Levant Vector Advancing'
-        priority = 'elevated'
+        scenario, priority = 'Levant Vector Advancing', 'elevated'
         assessment = lebanon_vector['reading']
-    else:
-        scenario = 'Dual-Track Baseline'
-        priority = 'normal'
+    elif health.get('thin'):
+        scenario, priority = 'Under-Read Cycle', 'normal'
         assessment = (
-            'Turkey holds its characteristic posture this cycle: both the '
-            'NATO-anchor and strategic-autonomy tracks active, no '
-            'kinetic-precursor signals, Lebanon vector at the '
-            f"{lebanon_vector['stage_name'].lower()} level. "
-            '"Turkey is Turkey" is the baseline reading; the tracker '
-            'exists for the cycles when it stops being true.')
+            f"This scan is thin ({health.get('reason')}). Quiet lines below are UNREAD, not "
+            'calm -- read the baseline tracks and the hub wheel, and treat the score as a floor.')
+    else:
+        scenario, priority = 'Dual-Track Baseline', 'normal'
+        assessment = (
+            'Turkey holds its usual posture: NATO-anchor and strategic-autonomy tracks both '
+            'active, no kinetic-precursor line corroborated, Lebanon vector at the '
+            f"{lebanon_vector['stage_name'].lower()} level. \"Turkey is Turkey\" is the baseline; "
+            'the tracker exists for the cycle when it stops being true.')
 
     if election_clock['active']:
-        assessment += (' Constitutional-clock context: domestic election '
-                       'timing is active alongside this signal stack, '
-                       'historically associated with amplified risk '
+        assessment += (' Constitutional-clock context: election and constitution talk is running '
+                       'alongside this signal stack -- historically associated with sharper risk '
                        'calculus in both directions.')
     if active_gl:
-        assessment += (' Stabilization tracks active: '
+        assessment += (' Stabilizing tracks active: '
                        + ', '.join(g['title'] for g in active_gl[:2]) + '.')
 
     return {
@@ -974,81 +1298,120 @@ def _build_so_what(scan_data, red_lines_triggered, green_lines_triggered,
 
 
 # ============================================================
-# TOP SIGNALS (canonical schema)
+# TOP INDICATOR (v1.1) -- the one plain-language line
 # ============================================================
 
-def _build_top_signals(red_lines_triggered, green_lines_triggered,
-                       diplomatic, alignment, lebanon_vector,
-                       mirror_friction, scan_data):
-    signals = []
-    SEVERITY_TO_LEVEL = {5: 'critical', 4: 'high', 3: 'elevated',
-                         2: 'normal', 1: 'normal'}
+def _top_indicator(red_lines, alignment, lebanon_vector, mirror, kurdish, deconf, health):
+    breached = sorted([r for r in red_lines if r['status'] == 'BREACHED'], key=lambda r: -r['severity'])
+    approaching = sorted([r for r in red_lines if r['status'] == 'APPROACHING'], key=lambda r: -r['severity'])
+    if breached:
+        r = breached[0]
+        line = (f"{r.get('plain') or r['title']} -- {r['breach_outlets']} outlets carry it this cycle. "
+                'That is a corroborated tripwire, not a forecast.')
+    elif lebanon_vector['stage'] >= 3:
+        line = (f"Turkey's Lebanon playbook reads rung {lebanon_vector['stage']} "
+                f"({lebanon_vector['stage_name'].lower()}) on two or more outlets -- the rung before "
+                'security cooperation.')
+    elif mirror['band'] in ('elevated', 'high'):
+        line = ('Turkey and Israel are accusing each other of expansion in the same cycle -- the '
+                'rhetoric is running ahead of the deconfliction channel.')
+    elif approaching:
+        r = approaching[0]
+        line = (f"Closest tripwire: {r.get('plain') or r['title']} -- not breached; "
+                f"{r['trigger'].rstrip('.').lower()}.")
+    elif alignment['band'] in ('drifting', 'decoupling') and not health.get('thin'):
+        line = (f"Alignment drift: autonomy signals are outrunning NATO-anchor signals "
+                f"({alignment['divergence']:+d}). Watch for a second cycle.")
+    else:
+        line = ('Turkey is playing both tracks as usual -- NATO and strategic autonomy at once -- '
+                'with no tripwire corroborated this cycle.')
+    if kurdish['status'] == 'strain':
+        line += ' The PKK process is also under strain.'
+    elif deconf['status'] == 'strain' and 'Israel' not in line:
+        line += ' Turkey-Israel confrontation language is also present.'
+    if health.get('thin'):
+        line = 'Thin read -- ' + line
+    return line
 
-    breached = [r for r in red_lines_triggered if r['status'] == 'BREACHED']
-    breached.sort(key=lambda r: -r['severity'])
+
+# ============================================================
+# TOP SIGNALS (canonical schema)
+# ============================================================
+# Levels stay strings (critical/high/elevated/normal) for the page and BLUF.
+# L5 assertion rule: only a KINETIC line (direct Turkey-Israel clash, a new
+# Syria operation) may print 'critical'; every other red line caps at 'high'.
+
+def _build_top_signals(red_lines_triggered, green_lines_triggered, diplomatic, alignment,
+                       lebanon_vector, mirror_friction, hub=None):
+    signals = []
+
+    def red_level(r, breached):
+        if breached:
+            if r.get('kinetic') and r['severity'] >= 4:
+                return 'critical'
+            return 'high' if r['severity'] >= 4 else 'elevated'
+        return 'elevated'
+
+    breached = sorted([r for r in red_lines_triggered if r['status'] == 'BREACHED'], key=lambda r: -r['severity'])
     for r in breached[:3]:
         signals.append({
             'category':    r['category'].lower().replace(' ', '_').replace('/', '_'),
-            'level':       SEVERITY_TO_LEVEL.get(r['severity'], 'normal'),
-            'short_text':  f"BREACHED: {r['title']}",
+            'level':       red_level(r, True),
+            'short_text':  f"BREACHED: {r.get('plain') or r['title']} ({r['breach_outlets']} outlets)",
             'long_text':   r['description'],
             'icon':        '\U0001f6a8',
             'source_link': f"/rhetoric-turkey.html#{r['id']}",
         })
-
-    approaching = [r for r in red_lines_triggered if r['status'] == 'APPROACHING']
-    approaching.sort(key=lambda r: -r['severity'])
+    approaching = sorted([r for r in red_lines_triggered if r['status'] == 'APPROACHING'], key=lambda r: -r['severity'])
     for r in approaching[:2]:
         signals.append({
             'category':    r['category'].lower().replace(' ', '_').replace('/', '_'),
             'level':       'elevated',
-            'short_text':  f"Approaching: {r['title']}",
-            'long_text':   r['description'],
-            'icon':        '\u26a0\ufe0f',
+            'short_text':  f"Approaching: {r.get('plain') or r['title']}",
+            'long_text':   r['trigger'] + ' ' + r['description'],
+            'icon':        '⚠️',
             'source_link': f"/rhetoric-turkey.html#{r['id']}",
         })
-
-    # Swing-state signal: alignment divergence (when it says something)
     if alignment['band'] in ('drifting', 'decoupling', 'anchoring'):
-        level = 'high' if alignment['band'] == 'decoupling' else 'elevated'
         signals.append({
             'category':    'alignment_divergence',
-            'level':       level if alignment['band'] != 'anchoring' else 'normal',
-            'short_text':  (f"Alignment divergence {alignment['divergence']:+d}: "
-                            f"{alignment['band'].upper()}"),
+            'level':       ('high' if alignment['band'] == 'decoupling' else
+                            'elevated' if alignment['band'] == 'drifting' else 'normal'),
+            'short_text':  f"Alignment divergence {alignment['divergence']:+d}: {alignment['band'].upper()}",
             'long_text':   alignment['posture'] + ' ' + alignment['method'],
-            'icon':        '\u2693',
+            'icon':        '⚓',
             'source_link': '/rhetoric-turkey.html#alignment',
         })
-
-    # Lebanon vector signal (stage 2+ is reportable)
     if lebanon_vector['stage'] >= 2:
-        lv_level = {2: 'normal', 3: 'elevated', 4: 'high', 5: 'critical'}[lebanon_vector['stage']]
         signals.append({
             'category':    'lebanon_vector',
-            'level':       lv_level,
-            'short_text':  (f"Lebanon vector: L{lebanon_vector['stage']} "
-                            f"{lebanon_vector['stage_name']}"),
+            'level':       {2: 'normal', 3: 'elevated', 4: 'high', 5: 'high'}[lebanon_vector['stage']],
+            'short_text':  f"Lebanon vector: rung {lebanon_vector['stage']} {lebanon_vector['stage_name']}",
             'long_text':   lebanon_vector['reading'],
             'icon':        '\U0001f1f1\U0001f1e7',
             'source_link': '/rhetoric-turkey.html#lebanon-vector',
         })
-
-    # Mirror friction signal
     if mirror_friction['band'] in ('elevated', 'high'):
         signals.append({
             'category':    'mirror_friction',
             'level':       'high' if mirror_friction['band'] == 'high' else 'elevated',
             'short_text':  (f"Turkey-Israel mirror friction: {mirror_friction['band'].upper()} "
-                            f"(IL\u2192TR {mirror_friction['israel_claims_turkey']} / "
-                            f"TR\u2192IL {mirror_friction['turkey_claims_israel']})"),
+                            f"(IL→TR {mirror_friction['israel_claims_turkey']} / "
+                            f"TR→IL {mirror_friction['turkey_claims_israel']} outlets)"),
             'long_text':   mirror_friction['reading'],
-            'icon':        '\u2694\ufe0f',
+            'icon':        '⚔️',
             'source_link': '/rhetoric-turkey.html#mirror-friction',
         })
-
-    active_gl = [g for g in green_lines_triggered if g['status'] == 'ACTIVE']
-    for g in active_gl[:2]:
+    if hub and hub.get('converged'):
+        signals.append({
+            'category':    'hub_convergence',
+            'level':       'elevated',
+            'short_text':  f"Turkey wheel converged: {hub['active_count']} theatres active",
+            'long_text':   hub['headline'],
+            'icon':        '☸️',
+            'source_link': '/rhetoric-turkey.html#evLayer',
+        })
+    for g in [g for g in green_lines_triggered if g['status'] == 'ACTIVE'][:2]:
         signals.append({
             'category':    'diplomatic',
             'level':       'normal',
@@ -1057,7 +1420,6 @@ def _build_top_signals(red_lines_triggered, green_lines_triggered,
             'icon':        '\U0001f7e2',
             'source_link': f"/rhetoric-turkey.html#{g['id']}",
         })
-
     return signals[:8]
 
 
@@ -1065,16 +1427,13 @@ def _build_top_signals(red_lines_triggered, green_lines_triggered,
 # CROSS-THEATER FINGERPRINTS
 # ============================================================
 
-def _build_fingerprints(red_lines_triggered, green_lines_triggered,
-                        alignment, lebanon_vector, mirror_friction,
-                        diplomatic, scan_data):
-    """Written to shared Redis as fingerprint:turkey:{key} for
-    consumption by Lebanon / Israel / Syria trackers (ME backend) and
-    both ME + Europe regional BLUFs (Hungary dual-theater precedent)."""
+def _build_fingerprints(red_lines_triggered, alignment, lebanon_vector, mirror_friction, diplomatic):
+    """fingerprint:turkey:{key} for the ME trackers and both regional BLUFs. Now
+    evidence-gated, so the GPI's Turkey-convergence read inherits the rule."""
     fingerprints = {
-        'turkey_lebanon_vector':   lebanon_vector['band'],   # dormant/rhetoric/soft_power/economic/security/kinetic_risk
-        'turkey_israel_friction':  mirror_friction['band'],  # normal/simmering/elevated/high
-        'turkey_nato_divergence':  alignment['band'],        # anchored/anchoring/drifting/decoupling
+        'turkey_lebanon_vector':   lebanon_vector['band'],
+        'turkey_israel_friction':  mirror_friction['band'],
+        'turkey_nato_divergence':  alignment['band'],
         'turkey_east_alignment':   ('high' if alignment['strategic_autonomy_index'] >= 60
                                     else 'elevated' if alignment['strategic_autonomy_index'] >= 30
                                     else 'baseline'),
@@ -1097,54 +1456,58 @@ def _build_fingerprints(red_lines_triggered, green_lines_triggered,
 # ============================================================
 
 def interpret_signals(scan_data):
-    """Main entry point. Called from rhetoric_tracker_turkey.py.
-    Returns interpretation dict with canonical top_signals[]."""
+    """Called from rhetoric_tracker_turkey.py. Returns the interpretation dict
+    with canonical top_signals[]. scan_data may carry '_corpus' (pre-built) and
+    'sensing'; the hub block is attached by the tracker after its Redis reads."""
     try:
-        red_lines      = _score_red_lines(scan_data)
-        green_lines    = _score_green_lines(scan_data)
-        diplomatic     = _score_diplomatic_track(scan_data, green_lines)
-        alignment      = _score_alignment_indices(scan_data)
-        lebanon_vector = _score_lebanon_vector(scan_data)
-        mirror         = _score_mirror_friction(scan_data)
-        election_clock = _election_clock_multiplier(scan_data, red_lines)
+        full, corpus = _corpus_for(scan_data)
+        health = corpus_health(scan_data, full, min_articles=25, min_outlets=5)
+        red_lines      = _score_red_lines(corpus)
+        green_lines    = _score_green_lines(corpus)
+        diplomatic     = _score_diplomatic_track(corpus, green_lines)
+        alignment      = _score_alignment_indices(corpus, thin=health['thin'])
+        lebanon_vector = _score_lebanon_vector(corpus)
+        mirror         = _score_mirror_friction(corpus)
+        election_clock = _election_clock_multiplier(corpus, red_lines)
         rumint         = _score_rumint(scan_data)
-        so_what        = _build_so_what(scan_data, red_lines, green_lines,
-                                        diplomatic, alignment, lebanon_vector,
-                                        mirror, election_clock)
-        top_signals    = _build_top_signals(red_lines, green_lines, diplomatic,
-                                            alignment, lebanon_vector, mirror,
-                                            scan_data)
-        fingerprints   = _build_fingerprints(red_lines, green_lines, alignment,
-                                             lebanon_vector, mirror, diplomatic,
-                                             scan_data)
+        kurdish        = _kurdish_track(red_lines, green_lines)
+        deconf         = _deconfliction_track(red_lines, green_lines, mirror)
+        so_what        = _build_so_what(red_lines, green_lines, diplomatic, alignment,
+                                        lebanon_vector, mirror, election_clock, health)
+        top_signals    = _build_top_signals(red_lines, green_lines, diplomatic, alignment,
+                                            lebanon_vector, mirror)
+        fingerprints   = _build_fingerprints(red_lines, alignment, lebanon_vector, mirror, diplomatic)
+        top_indicator  = _top_indicator(red_lines, alignment, lebanon_vector, mirror,
+                                        kurdish, deconf, health)
 
         breached    = [r for r in red_lines if r['status'] == 'BREACHED']
         approaching = [r for r in red_lines if r['status'] == 'APPROACHING']
+        watching    = [r for r in red_lines if r['status'] == 'WATCHING']
         active_gl   = [g for g in green_lines if g['status'] == 'ACTIVE']
 
-        # Composite modifier: diplomatic (de-escalatory) + red-line load,
-        # amplified by the constitutional-clock multiplier when active.
-        red_load = sum(r['severity'] for r in breached) * 2 \
-                 + sum(r['severity'] for r in approaching)
-        composite_modifier = diplomatic['modifier'] + red_load
-        composite_modifier = int(round(
-            composite_modifier * (1.0 + election_clock['multiplier'])))
+        red_load = sum(r['severity'] for r in breached) * 2 + sum(r['severity'] for r in approaching)
+        composite_modifier = int(round((diplomatic['modifier'] + red_load)
+                                       * (1.0 + election_clock['multiplier'])))
 
         return {
             'so_what':             so_what,
+            'top_indicator':       top_indicator,
+            'thin_read':           health['thin'],
+            'corpus_health':       health,
             'top_signals':         top_signals,
             'red_lines': {
                 'triggered':         red_lines,
                 'breached_count':    len(breached),
                 'approaching_count': len(approaching),
+                'watching_count':    len(watching),
                 'highest_severity':  max((r['severity'] for r in red_lines
-                                          if r['status'] != 'QUIET'), default=0),
+                                          if r['status'] in ('BREACHED', 'APPROACHING')), default=0),
+                'rule':              'BREACHED = 2+ outlets; APPROACHING = 1 outlet of breach language or 2+ of approach language.',
             },
             'green_lines': {
                 'triggered':         green_lines,
                 'active_count':      len(active_gl),
-                'signaled_count':    len([g for g in green_lines
-                                          if g['status'] == 'SIGNALED']),
+                'signaled_count':    len([g for g in green_lines if g['status'] == 'SIGNALED']),
                 'diplomatic_score':  diplomatic['score'],
             },
             'diplomatic_track':           diplomatic,
@@ -1153,9 +1516,12 @@ def interpret_signals(scan_data):
             'mirror_friction':            mirror,
             'election_clock':             election_clock,
             'rumint':                     rumint,
+            'kurdish_track':              kurdish,
+            'deconfliction_track':        deconf,
             'cross_theater_fingerprints': fingerprints,
             'composite_modifier':         composite_modifier,
             'interpreter_version':        INTERPRETER_VERSION,
+            'evidence_version':           EVIDENCE_VERSION,
             'interpreted_at':             datetime.now(timezone.utc).isoformat(),
             'disclaimer':                 CONVERGENCE_DISCLAIMER,
         }
@@ -1163,14 +1529,12 @@ def interpret_signals(scan_data):
     except Exception as e:
         print(f'[Turkey Interpreter] Error: {str(e)[:120]}')
         return {
-            'so_what': {
-                'scenario':           'Interpreter error',
-                'priority':           'normal',
-                'assessment':         str(e)[:200],
-                'breached_count':     0,
-                'approaching_count':  0,
-                'active_green_count': 0,
-            },
+            'so_what': {'scenario': 'Interpreter error', 'priority': 'normal',
+                        'assessment': str(e)[:200], 'breached_count': 0,
+                        'approaching_count': 0, 'active_green_count': 0},
+            'top_indicator':              'The Turkey interpreter failed this cycle -- nothing on this page is a reading.',
+            'thin_read':                  True,
+            'corpus_health':              {'thin': True, 'reason': 'interpreter error'},
             'top_signals':                [],
             'red_lines':                  {'triggered': [], 'breached_count': 0,
                                            'approaching_count': 0, 'highest_severity': 0},
@@ -1179,7 +1543,7 @@ def interpret_signals(scan_data):
             'diplomatic_track':           {'score': 0, 'scenario': 'Unknown', 'modifier': 0},
             'alignment':                  {'nato_anchor_index': 0, 'strategic_autonomy_index': 0,
                                            'divergence': 0, 'band': 'anchored', 'posture': 'Unknown'},
-            'lebanon_vector':             {'stage': 0, 'stage_name': 'Dormant',
+            'lebanon_vector':             {'stage': 0, 'platform_level': 0, 'stage_name': 'Dormant',
                                            'band': 'dormant', 'stages': [], 'reading': ''},
             'mirror_friction':            {'band': 'normal', 'reading': '',
                                            'israel_claims_turkey': 0, 'turkey_claims_israel': 0,

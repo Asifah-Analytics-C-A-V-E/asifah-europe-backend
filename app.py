@@ -932,7 +932,11 @@ TARGET_KEYWORDS = {
             'vjosa-narta', 'zvernec', 'vlora', 'albania resort', 'luxury resort albania',
             'albania riot police', 'albania water cannon', 'albania rally',
             'albania demonstrations', 'albania eu accession', 'albania eu membership',
-            'rama resign', 'albania corruption'
+            'rama resign', 'albania corruption',
+            # v1.9.1 -- the autumn 2026 student wave and the Italy centres
+            'albania students', 'albania student protest', 'tirana students',
+            'albania tear gas', 'albania police clashes', 'gjader', 'shengjin',
+            'italy albania migrants', 'italy albania centres', 'albania accession chapter'
         ],
         'reddit_keywords': [
             'Albania', 'Tirana', 'Rama', 'Kushner', 'protest',
@@ -945,11 +949,15 @@ TARGET_KEYWORDS = {
             'belgium coalition', 'belgium election', 'belgium parliament',
             'belgium nato', 'belgium eu', 'brussels eu summit', 'belgium defense',
             'belgium strike', 'belgium protest', 'belgium security alert',
-            'belgium terror', 'antwerp diamond', 'belgium diamond', 'belgium energy'
+            'belgium terror', 'antwerp diamond', 'belgium diamond', 'belgium energy',
+            # v1.9.1 -- Russia's money runs through Belgium: the Euroclear file
+            'euroclear', 'frozen russian assets', 'russian frozen assets',
+            'reparations loan', 'de wever', 'russian central bank assets',
+            'russian diamonds', 'g7 diamond'
         ],
         'reddit_keywords': [
             'Belgium', 'Brussels', 'Antwerp', 'NATO', 'EU',
-            'strike', 'election', 'diamond', 'security'
+            'strike', 'election', 'diamond', 'security', 'Euroclear', 'frozen assets'
         ]
     },
     'greenland': {
@@ -1434,7 +1442,7 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-EUROPE_BACKEND_VERSION = '1.9.0'   # Nov 3 2026 (eve): Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
+EUROPE_BACKEND_VERSION = '1.9.1'   # Nov 3 2026 (late): Belgium Euroclear + Albania protest/migrant keywords; (1.9.0) Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
 
 # v1.4.1 (Oct 3 2026) -- ONE version, ONE User-Agent.
 # Europe was carrying both problems at once. The version: '/' said 1.1.0, the
