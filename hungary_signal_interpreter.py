@@ -1,182 +1,198 @@
 """
 hungary_signal_interpreter.py
 Asifah Analytics -- Europe Backend Module
-v1.0.0 -- May 17, 2026
+v1.1.0 -- Nov 3, 2026   (v1.0.0 May 17 2026)
 
 HUNGARY SIGNAL INTERPRETER
 
-Converts rhetoric_tracker_hungary scan output into analytical product:
-red lines + green lines + diplomatic track + so-what + historical matches.
+v1.1.0 -- PLAIN LANGUAGE, EVIDENCE, AND THE TWO NEW STORIES
+  * Good news is no longer filed as a red line. v1.0 printed "Hungary Returns
+    Seized Ukrainian Assets -- BREACHED" and "EU Loan Unlock -- BREACHED". The
+    reversal's milestones are now a dated REVERSAL LEDGER (background, sourced);
+    the scan asks the live question: is the reversal HOLDING, TESTED or ERODING?
+  * Red lines are RISKS only, scored per article on the whole corpus with
+    publisher counting (europe_evidence): BREACHED needs 2+ outlets.
+      orban_revival_signal, russia_counter_pressure, druzhba_pipeline_dispute,
+      ukraine_track_rupture
+  * Two stories v1.0 could not see:
+      ACCOUNTABILITY -- the arrests of Orban-era officials (two ex-ministers in
+        September, ex-central-bank governor Matolcsy on Oct 21). Read neutrally:
+        the government calls it accountability; Fidesz calls it political
+        retribution and points to the removal of the president by
+        constitutional amendment. Both frames are tracked.
+      ORBAN'S INTERNATIONAL TRACK -- the reported US-backed push (with Russian
+        and Chinese support reported) for Orban as UN Secretary-General. Read as
+        its own track, NOT as a domestic "comeback": the revival red line stays
+        about Fidesz at home.
+  * Spokes: russia (axis_reversal_watch), us (opposition_channel), china
+    (investment_partner, capped L2).
+  * top_indicator (one plain sentence), THIN READ, posture.
 
-PRIMARY ANALYTICAL FRAME: AXIS REVERSAL
-  Hungary is the first documented EU member country undergoing a democratic
-  axis reversal from Russia-dependent to EU-aligned posture, following the
-  April 2026 Tisza landslide defeat of Orban/Fidesz. This interpreter watches
-  for: (a) durability of the reversal, (b) Orban/Fidesz counter-signals,
-  (c) Russia counter-pressure on Hungary.
-
-RED LINES (5):
-  1. axis_reversal_in_progress      [diplomatic_signal]   severity 2
-  2. orban_revival_signal           [diplomatic_signal]   severity 3
-  3. eu_loan_unlock_active          [diplomatic_signal]   severity 1
-  4. druzhba_pipeline_dispute       [economic_signal]     severity 2
-  5. seized_assets_returned         [diplomatic_signal]   severity 1
-
-KEY DESIGN DECISION:
-  Red lines are tagged with pressure_type so GPI's classifier routes them
-  to the correct axis. axis-reversal-in-progress -> Diplomatic axis (the
-  primary intent). druzhba pipeline -> Economic axis (resource flow).
-
-EMITS pressure_type tags compatible with GPI axis classifier:
-  - 'diplomatic' for reversal/election/sovereignty signals
-  - 'economic'   for pipeline/contract/sanctions signals
+Contract kept for consumers (europe_regional_bluf, GPI, Russia tracker):
+  so_what / red_lines{triggered, breached_count, approaching_count,
+  highest_severity} / green_lines / diplomatic_track{score, active_count,
+  signaled_count, maximum_pressure} / historical_matches. Red lines keep
+  `pressure_type` ('diplomatic' | 'economic') for GPI axis routing.
 
 Author: RCGG / Asifah Analytics
 """
 from datetime import datetime, timezone
 
+from europe_evidence import build_corpus, score_line, score_green, find, corpus_health
+
+INTERPRETER_VERSION = '1.1.0'
+THIN_MIN_ARTICLES = 30
+
 
 # ============================================================
-# RED LINES (canonical structure mirrors Russia interpreter)
+# REVERSAL LEDGER -- dated background, NOT scored. Update as events land.
+# ============================================================
+REVERSAL_LEDGER = {
+    'as_of': '2026-10-28',
+    'events': [
+        {'date': '2026-04-12', 'what': 'Tisza wins 138 of 199 seats -- a two-thirds majority; Orban out after 16 years.'},
+        {'date': '2026-05-06', 'what': 'Hungary returns the seized Oschadbank cash and gold to Ukraine.'},
+        {'date': '2026-05-29', 'what': 'EU agrees to release EUR 16.4bn of frozen funds (EUR 10bn now, the rest with reforms).'},
+        {'date': '2026-06',    'what': 'Budapest lifts its veto on opening Ukraine\'s first two EU accession clusters (11-point plan with Kyiv).'},
+        {'date': '2026-09-29', 'what': 'Two Orban-era ministers (Seszták, Hankó) taken into custody after immunity is lifted.'},
+        {'date': '2026-10-12', 'what': 'Ukraine passes the minority-rights law Budapest required; two more clusters expected Oct 13.'},
+        {'date': '2026-10-21', 'what': 'Ex-central-bank governor Matolcsy taken into custody (central-bank foundation assets).'},
+        {'date': '2026-10-22', 'what': 'Paks II (Rosatom) under review; termination decision expected end-2026 / early 2027.'},
+        {'date': '2026-10-26', 'what': 'WSJ: Trump officials back Orban for UN Secretary-General; Russia and China reportedly supportive.'},
+    ],
+    'still_open': [
+        'Russian energy: Tisza\'s target to end dependence is 2035; the EU gas phase-out deadline is November 2027.',
+        'Paks II: review, not cancellation.',
+        'The constitutional supermajority cuts both ways -- reform capacity and overreach risk.',
+    ],
+    'sources': [
+        'https://www.euronews.com/my-europe/2026/05/29/hungary-unlocks-164bn-in-eu-funds-after-magyar-secures-deal-with-brussels',
+        'https://www.euronews.com/2026/10/12/ukraine-passes-minority-rights-law-paving-way-for-breakthrough-in-eu-accession-talks',
+        'https://euronews.com/2026/09/29/with-two-orban-era-ministers-detained-magyars-operation-purge-takes-shape',
+        'https://euobserver.com/244500/big-fish-hooked-in-hungary-as-orbans-ex-bank-chief-placed-in-custody-day-163-of-the-tisza-government/',
+        'https://brusselssignal.eu/2026/10/hungary-open-to-replacing-russias-rosatom-in-nuclear-plans/',
+        'https://www.euronews.com/2026/10/26/trump-officials-back-orban-bid-for-un-secretary-general-wsj-reports',
+    ],
+}
+
+
+# ============================================================
+# RED LINES -- risks to the reversal (evidence-scored)
 # ============================================================
 RED_LINES = [
-
-    # ── Category A: AXIS REVERSAL (Diplomatic axis) ─────────────
-    {
-        'id':       'axis_reversal_in_progress',
-        'label':    'Hungary Axis Reversal In Progress',
-        'detail':   'Multiple symptoms of Russia-axis dependency unwinding '
-                    'simultaneously: returned seized assets + EU loan veto '
-                    'lifted + Druzhba flow resumed + pro-EU statements from '
-                    'new government. The analytical heart of the Hungary case.',
-        'severity':       2,
-        'color':          '#3b82f6',
-        'icon':           '🪜',
-        'category':       'diplomatic_signal',
-        'pressure_type':  'diplomatic',
-        'source':         'AP/Spike May 6 2026 + April 2026 Tisza election + '
-                          'EU loan unlock reporting + Druzhba pipeline resumption. '
-                          'Hungary is the first documented Russia-axis-dependent '
-                          'EU member to undergo democratic axis reversal that '
-                          'Asifah can track in real-time.',
-    },
-
-    # ── Category B: OPPOSITION COUNTER-PRESSURE (Diplomatic axis) ──
     {
         'id':       'orban_revival_signal',
-        'label':    'Orban / Fidesz Revival Signal',
-        'detail':   'Orban and Fidesz pursuing political comeback through '
-                    'Putin/Trump direct lines, mass rallies, anti-Ukraine '
-                    'messaging revival, anti-EU rhetoric. If Orban regains '
-                    'momentum, axis reversal could halt or reverse.',
-        'severity':       3,
-        'color':          '#f97316',
-        'icon':           '⚠️',
-        'category':       'diplomatic_signal',
-        'pressure_type':  'diplomatic',
-        'source':         'Post-electoral defeat (April 2026), Fidesz retains '
-                          '~33% of parliament + significant rural/Christian-'
-                          'conservative base. Historical precedent: Orban returned '
-                          'from his 2002-2010 opposition wilderness to win '
-                          '2010 election decisively. Underestimate at peril.',
+        'label':    'Fidesz comeback at home',
+        'detail':   'Fidesz regaining ground domestically: poll leads, mass rallies, a comeback narrative. '
+                    'This is about Hungarian voters -- Orban\'s UN bid is tracked separately.',
+        'severity': 3, 'color': '#f97316', 'icon': '⚠️',
+        'category': 'diplomatic_signal', 'pressure_type': 'diplomatic',
+        'precedent': 'Orban lost in 2002, spent eight years in opposition and returned in 2010 with two-thirds.',
+        'breach':   ['fidesz leads poll', 'fidesz ahead in poll', 'fidesz overtakes tisza', 'orban comeback',
+                     'fidesz mass rally', 'tens of thousands rally for orban'],
+        'approach': ['fidesz rally', 'orban rally', 'fidesz gains', 'orban returns to', 'fidesz campaign',
+                     'orban plans return'],
     },
-
-    # ── Category C: EU NORMALIZATION (Diplomatic axis) ──────────
     {
-        'id':       'eu_loan_unlock_active',
-        'label':    'EU Loan / Funds Unlock Active',
-        'detail':   '90B EUR Ukraine loan veto lifted + cohesion funds '
-                    'released + Article 7 proceedings closing. Concrete '
-                    'EU-Hungary normalization markers.',
-        'severity':       1,
-        'color':          '#22c55e',
-        'icon':           '🇪🇺',
-        'category':       'diplomatic_signal',
-        'pressure_type':  'diplomatic',
-        'source':         'Post-Tisza election: EU has signaled willingness '
-                          'to release frozen funds + close Article 7 if Hungary '
-                          'continues reform path. Loan veto lift documented.',
+        'id':       'russia_counter_pressure',
+        'label':    'Moscow pushes back on Budapest',
+        'detail':   'Russian retaliation against the reversal: gas cut-offs, Rosatom legal action over Paks II, '
+                    'Kremlin warnings to the Magyar government.',
+        'severity': 3, 'color': '#dc2626', 'icon': '🇷🇺',
+        'category': 'economic_signal', 'pressure_type': 'economic',
+        'precedent': 'Moscow has used gas pricing and supply as leverage on Central European governments since 2006.',
+        'breach':   ['gazprom cuts gas to hungary', 'russia halts gas to hungary', 'rosatom sues hungary',
+                     'paks arbitration', 'russia retaliates against hungary', 'russia suspends gas to hungary'],
+        'approach': ['rosatom warns', 'kremlin warns hungary', 'russia warns hungary', 'paks ii termination',
+                     'paks contract dispute', 'no legal grounds', 'russia criticises magyar', 'russia criticizes magyar'],
     },
-
-    # ── Category D: ECONOMIC REVERSAL (Economic axis) ───────────
     {
         'id':       'druzhba_pipeline_dispute',
-        'label':    'Druzhba Pipeline Status Dispute',
-        'detail':   'Druzhba pipeline (Russia -> Ukraine -> Hungary -> '
-                    'Slovakia) flow disrupted, damaged, or under repair. '
-                    'Pre-election: Orban used Druzhba interruption as the '
-                    'lever for EU loan veto. Post-election: flow resumption '
-                    'allowed veto lift. Status is a structural pressure '
-                    'indicator.',
-        'severity':       2,
-        'color':          '#f59e0b',
-        'icon':           '🛢️',
-        'category':       'economic_signal',
-        'pressure_type':  'economic',
-        'source':         'Reuters + AP reporting on Druzhba damage from '
-                          'Russian drone strikes on Ukrainian territory, '
-                          'subsequent repair + flow resumption.',
+        'label':    'Druzhba oil supply disrupted',
+        'detail':   'Russian crude to Hungary via Druzhba halted, damaged or cut. Under Orban the outage became the '
+                    'lever for the EU-loan veto; now it tests whether Budapest still reaches for that lever.',
+        'severity': 2, 'color': '#f59e0b', 'icon': '🛢️',
+        'category': 'economic_signal', 'pressure_type': 'economic',
+        'precedent': 'Feb 2026: a strike in western Ukraine took Druzhba offline for months; Orban blocked the EU loan.',
+        'breach':   ['druzhba halted', 'druzhba suspended', 'druzhba pipeline damaged', 'druzhba shut',
+                     'oil flows to hungary halted', 'oil supplies to hungary halted'],
+        'approach': ['druzhba disruption', 'druzhba outage', 'druzhba flows reduced', 'druzhba repair',
+                     'strike on druzhba'],
     },
-
-    # ── Category E: GOODWILL EVENTS (Diplomatic axis) ───────────
     {
-        'id':       'seized_assets_returned',
-        'label':    'Hungary Returns Seized Ukrainian Assets',
-        'detail':   'May 6 2026: Hungary returned $82M cash + 9kg gold '
-                    'shipment seized March 5 2026 (between Oschadbank '
-                    'transfers). Concrete goodwill marker between Tisza '
-                    'government and Kyiv.',
-        'severity':       1,
-        'color':          '#22c55e',
-        'icon':           '🤝',
-        'category':       'diplomatic_signal',
-        'pressure_type':  'diplomatic',
-        'source':         'AP/Justin Spike May 6 2026 reporting. Asset return '
-                          'reverses Orban-era seizure used as political tool. '
-                          'Zelenskyy publicly thanked Hungary for "constructive '
-                          'approach and civilized step."',
+        'id':       'ukraine_track_rupture',
+        'label':    'Budapest-Kyiv track breaks down',
+        'detail':   'Hungary re-imposes or threatens a veto on Ukraine\'s EU path, or the Transcarpathian minority '
+                    'dispute flares again.',
+        'severity': 2, 'color': '#f97316', 'icon': '🇺🇦',
+        'category': 'diplomatic_signal', 'pressure_type': 'diplomatic',
+        'precedent': '2023-2026: Budapest blocked Ukraine\'s accession steps over minority rights.',
+        'breach':   ['hungary blocks ukraine', 'hungary reimposes veto', 'hungary vetoes ukraine',
+                     'hungary blocks cluster', 'hungary blocks accession'],
+        'approach': ['hungary threatens veto', 'minority rights dispute', 'hungary ukraine tensions',
+                     'hungary summons ukrainian ambassador', 'transcarpathia tensions'],
     },
 ]
 
 
 # ============================================================
-# GREEN LINES (positive diplomatic signals)
+# GREEN LINES -- the reversal moving forward (one outlet may activate)
 # ============================================================
 GREEN_LINES = [
-    {
-        'id':     'tisza_eu_normalization',
-        'label':  'Tisza-EU Normalization Track',
-        'detail': 'Tisza government public commitments to EU rule-of-law '
-                  'norms + cooperation. Article 7 proceedings progressing '
-                  'toward closure.',
-        'icon':   '✅',
-        'weight': 1.2,
-    },
-    {
-        'id':     'hungary_ukraine_warming',
-        'label':  'Hungary-Ukraine Bilateral Warming',
-        'detail': 'Returned assets + Zelensky-Magyar engagement + likely '
-                  'shift on Ukraine EU accession veto.',
-        'icon':   '🤝',
-        'weight': 1.1,
-    },
-    {
-        'id':     'paks_ii_review',
-        'label':  'Paks II Rosatom Contract Under Review',
-        'detail': 'New government reviewing the Rosatom-built nuclear plant '
-                  'expansion contract -- structural Russia decoupling signal.',
-        'icon':   '🔌',
-        'weight': 1.0,
-    },
-    {
-        'id':     'sanctions_compliance_increase',
-        'label':  'Hungary Sanctions Compliance Increasing',
-        'detail': 'Hungary now blocking fewer EU sanctions packages on Russia '
-                  '-- structural reversal of obstruction pattern.',
-        'icon':   '🛂',
-        'weight': 1.0,
-    },
+    {'id': 'tisza_eu_normalization', 'label': 'EU money and rule-of-law track moving', 'icon': '🇪🇺', 'weight': 1.2,
+     'detail': 'Frozen EU funds flowing, Article 7 winding down, reforms Brussels asked for.',
+     'active': ['eu releases funds to hungary', 'commission releases funds', 'hungary receives eu funds',
+                'article 7 closed', 'article 7 procedure ended', 'hungary joins eppo'],
+     'signaled': ['hungary eu funds', 'article 7', 'rule of law reform', 'magyar brussels', 'recovery funds hungary']},
+    {'id': 'hungary_ukraine_warming', 'label': 'Budapest-Kyiv warming', 'icon': '🤝', 'weight': 1.1,
+     'detail': 'Accession clusters opened with Hungary\'s consent; Magyar-Zelensky contact.',
+     'active': ['magyar zelensky meeting', 'magyar met zelensky', 'zelensky and magyar', 'hungary lifts veto',
+                'clusters opened', 'accession cluster opened'],
+     'signaled': ['hungary ukraine', 'minority rights law', 'transcarpathia', 'zelensky magyar']},
+    {'id': 'paks_ii_review', 'label': 'Paks II moving away from Rosatom', 'icon': '🔌', 'weight': 1.0,
+     'detail': 'The Rosatom-built nuclear expansion under review; replacement contractors considered.',
+     'active': ['paks ii terminated', 'rosatom contract cancelled', 'replace rosatom', 'hungary drops rosatom'],
+     'signaled': ['paks ii review', 'paks ii', 'rosatom hungary']},
+    {'id': 'russian_energy_exit', 'label': 'Russian energy exit underway', 'icon': '⚡', 'weight': 1.0,
+     'detail': 'Non-Russian crude via Adria, LNG via Krk, gas contracts unwound.',
+     'active': ['hungary ends russian gas', 'mol non-russian crude', 'adria pipeline hungary', 'krk lng hungary'],
+     'signaled': ['russian gas phase-out', 'energy diversification hungary', 'adria pipeline']},
+    {'id': 'sanctions_compliance_increase', 'label': 'Budapest stops blocking Russia sanctions', 'icon': '🛂',
+     'weight': 1.0, 'detail': 'Sanctions packages pass without a Hungarian hold-out.',
+     'active': ['hungary backs sanctions', 'hungary supports sanctions package', 'sanctions package adopted'],
+     'signaled': ['russia sanctions hungary', 'hungary sanctions vote']},
 ]
+
+
+# ============================================================
+# TRACKS (scored, not red lines)
+# ============================================================
+ACCOUNTABILITY_PROCEEDING = ['arrested', 'taken into custody', 'detained', 'charged', 'indicted', 'immunity lifted',
+                             'asset recovery office', 'matolcsy', 'seszták', 'sesztak', 'hankó', 'hanko',
+                             'operation purge']
+ACCOUNTABILITY_CONTESTED = ['political persecution', 'politically motivated', 'witch hunt', 'show trial',
+                            'arbitrariness', 'revenge', 'retribution', 'judicial independence',
+                            'venice commission', 'sulyok']
+ACCOUNTABILITY_SCOPE = ['orban', 'fidesz', 'former minister', 'ex-minister', 'central bank', 'matolcsy',
+                        'mnb', 'hungar']
+
+UN_FLOATED = ['secretary-general', 'secretary general', 'un chief', 'united nations chief', 'lead the un',
+              'head the un', 'guterres successor']
+UN_NOMINATED = ['nominates orban', 'nominated orban', 'formally nominated', 'nomination of orban',
+                'security council vote on orban', 'straw poll']
+UN_OPPOSED = ['will not support orban', 'oppose orban', 'opposes orban', 'veto orban', 'against orban\'s candidacy']
+
+UN_BASELINE = {
+    'as_of': '2026-10-26',
+    'what': ('WSJ reported Trump administration officials favour Orban for UN Secretary-General, possibly as a joint '
+             'US-Russia-China candidate; no decision announced.'),
+    'rules': ('Needs 9 of 15 Security Council votes and no veto from the five permanent members; a member state '
+              'must nominate. Russia\'s deputy foreign minister said permanent members do not nominate candidates. '
+              'Guterres\'s term ends Dec 31.'),
+    'reactions': ('Poland\'s foreign minister does not foresee supporting him; Ukraine\'s foreign minister pointed to '
+                  'his record of blocking EU decisions. Orban\'s spokesperson earlier called a related report fake news.'),
+    'sources': ['https://www.euronews.com/2026/10/26/trump-officials-back-orban-bid-for-un-secretary-general-wsj-reports'],
+}
 
 
 # ============================================================
@@ -184,455 +200,313 @@ GREEN_LINES = [
 # ============================================================
 HISTORICAL_PRECEDENTS = [
     {
-        'id':          'hungary_1989_transition',
-        'label':       '1989 Hungarian Democratic Transition',
-        'period':      'May-October 1989',
-        'context':     ('Hungary pioneered Eastern Bloc democratic transition: '
-                        'cut barbed wire on Austrian border (May 1989), opened '
-                        'borders to East German refugees (September 1989), '
-                        'declared republic (October 1989). First Warsaw Pact '
-                        'country to fully exit Soviet orbit by domestic political '
-                        'process rather than revolutionary rupture.'),
-        'analog_for':  ['axis_reversal_in_progress', 'tisza_eu_normalization'],
-        'icon':        '🕊️',
+        'id': 'hungary_1989_transition', 'label': '1989 Hungarian Democratic Transition',
+        'period': 'May-October 1989', 'icon': '🕊️',
+        'context': ('Hungary cut the border fence with Austria, let East Germans through and declared a republic -- '
+                    'the first Warsaw Pact country to leave the Soviet orbit by its own political process.'),
+        'analog_for': ['tisza_eu_normalization', 'hungary_ukraine_warming'],
     },
     {
-        'id':          'hungary_1956_revolution',
-        'label':       '1956 Hungarian Revolution',
-        'period':      'October-November 1956',
-        'context':     ('Hungarian anti-Soviet uprising crushed by Soviet military '
-                        'intervention; Imre Nagy executed. Cautionary precedent: '
-                        'when an axis-dependent country attempts rapid reversal '
-                        'AND has no security backstop, the patron power may '
-                        'apply kinetic counter-pressure. Modern Hungary in NATO/EU '
-                        'has structural backstop the 1956 government did not.'),
-        'analog_for':  ['orban_revival_signal', 'druzhba_pipeline_dispute'],
-        'icon':        '⚔️',
+        'id': 'hungary_1956_revolution', 'label': '1956 Hungarian Revolution',
+        'period': 'October-November 1956', 'icon': '⚔️',
+        'context': ('The uprising was crushed by Soviet troops. Caution for any rapid turn away from Moscow -- '
+                    'though today\'s Hungary sits inside NATO and the EU, the backstop 1956 lacked.'),
+        'analog_for': ['russia_counter_pressure', 'druzhba_pipeline_dispute'],
     },
     {
-        'id':          'orban_2002_opposition_decade',
-        'label':       'Orban 2002-2010 Opposition Wilderness',
-        'period':      'May 2002 - April 2010',
-        'context':     ('Orban lost the 2002 Hungarian election after his '
-                        'first prime ministerial term, spent 8 years in '
-                        'opposition, returned in 2010 with a two-thirds majority '
-                        'and stayed in power 14 years. Demonstrates that Fidesz '
-                        'is structurally durable as an opposition vehicle and '
-                        'capable of long-cycle comebacks.'),
-        'analog_for':  ['orban_revival_signal'],
-        'icon':        '♻️',
+        'id': 'orban_2002_opposition_decade', 'label': 'Orban 2002-2010 Opposition Years',
+        'period': 'May 2002 - April 2010', 'icon': '♻️',
+        'context': ('Orban lost in 2002, rebuilt Fidesz in opposition and returned in 2010 with a two-thirds '
+                    'majority. Fidesz is durable out of power.'),
+        'analog_for': ['orban_revival_signal'],
     },
 ]
 
 
 # ============================================================
-# SCORING FUNCTIONS
+# HELPERS
 # ============================================================
-def _scan_articles_text(scan_data):
-    """Build a single text blob from all articles + tripwires for keyword matching."""
-    text = ''
-    actors = scan_data.get('actors', {}) or {}
-    for actor_data in actors.values():
-        for art in (actor_data.get('top_articles', []) or []):
-            text += ' ' + (art.get('title') or '').lower()
-            text += ' ' + (art.get('description') or '').lower()
-        for tw in (actor_data.get('tripwire_hits', []) or []):
-            text += ' ' + str(tw).lower()
-    return text
+def _corpus(scan_data):
+    arts = scan_data.get('_corpus') or []
+    if not arts:   # cached / test payloads: actors' top articles
+        for a in (scan_data.get('actors') or {}).values():
+            arts = arts + list(a.get('top_articles') or [])
+    return build_corpus({'articles_en': arts, 'telegram_messages': []})
 
 
-def _score_red_lines(scan_data):
-    """
-    Score each red line. Returns list of dicts with status field added.
-    Status: BREACHED | APPROACHING | INACTIVE
-    """
-    cross_theater = scan_data.get('cross_theater', {}) or {}
-    actors = scan_data.get('actors', {}) or {}
-    text = _scan_articles_text(scan_data)
-
-    triggered = []
-
-    # 1. axis_reversal_in_progress -- BREACHED when 3+ reversal triggers fired
-    reversal_active = cross_theater.get('axis_reversal_active', False)
-    reversal_hits = cross_theater.get('axis_reversal_hits', []) or []
-    if reversal_active or len(reversal_hits) >= 2:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'axis_reversal_in_progress'),
-            'status':  'BREACHED' if reversal_active else 'APPROACHING',
-            'trigger': (f'{len(reversal_hits)} axis-reversal triggers active: '
-                        f'{", ".join(reversal_hits[:4])}'
-                        if reversal_hits else 'Axis reversal pattern emerging'),
-        })
-
-    # 2. orban_revival_signal -- BREACHED when 2+ revival signals + Fidesz actor L3+
-    revival_signal = cross_theater.get('orban_revival_signal', False)
-    revival_hits = cross_theater.get('orban_revival_hits', []) or []
-    opposition_level = (actors.get('hungary_opposition', {}) or {}).get('escalation_level', 0)
-    if revival_signal or opposition_level >= 3:
-        status = 'BREACHED' if (revival_signal and opposition_level >= 3) else 'APPROACHING'
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'orban_revival_signal'),
-            'status':  status,
-            'trigger': (f'{len(revival_hits)} Orban-revival triggers + Fidesz at '
-                        f'L{opposition_level}: {", ".join(revival_hits[:3])}'
-                        if revival_hits else
-                        f'Fidesz opposition at L{opposition_level} (TENSION-level)'),
-        })
-
-    # 3. eu_loan_unlock_active -- ACTIVE when loan/funds-related triggers fire
-    loan_keywords = [
-        'hungary lifts loan veto', 'hungary unlocks eu loan',
-        'hungary eu funds released', 'hungary article 7 closed',
-    ]
-    loan_hits = [k for k in loan_keywords if k in text]
-    if loan_hits:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'eu_loan_unlock_active'),
-            'status':  'BREACHED' if len(loan_hits) >= 2 else 'APPROACHING',
-            'trigger': f'EU loan/funds unlock signals active: {", ".join(loan_hits)}',
-        })
-
-    # 4. druzhba_pipeline_dispute -- ACTIVE when status disrupted/repairing
-    druzhba_status = cross_theater.get('druzhba_pipeline_status', 'unknown')
-    if druzhba_status in ('disrupted', 'repairing'):
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'druzhba_pipeline_dispute'),
-            'status':  'BREACHED' if druzhba_status == 'disrupted' else 'APPROACHING',
-            'trigger': f'Druzhba pipeline status: {druzhba_status}',
-        })
-
-    # 5. seized_assets_returned -- BREACHED when return event detected
-    asset_keywords = [
-        'hungary returns ukraine assets', 'hungary returns gold ukraine',
-        'hungary returns oschadbank', 'hungary returns 82 million',
-        'hungary returns cash gold',
-    ]
-    asset_hits = [k for k in asset_keywords if k in text]
-    if asset_hits:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'seized_assets_returned'),
-            'status':  'BREACHED',
-            'trigger': f'Seized-assets-return signal: {", ".join(asset_hits[:2])}',
-        })
-
-    return triggered
+def _lvl(actors, key):
+    return int(((actors or {}).get(key) or {}).get('escalation_level', 0) or 0)
 
 
-def _score_green_lines(scan_data):
-    """Score positive diplomatic signals."""
-    cross_theater = scan_data.get('cross_theater', {}) or {}
-    actors = scan_data.get('actors', {}) or {}
-    text = _scan_articles_text(scan_data)
-
-    triggered = []
-
-    # tisza_eu_normalization
-    gov_level = (actors.get('hungary_government', {}) or {}).get('escalation_level', 0)
-    eu_level  = (actors.get('hungary_eu_track', {}) or {}).get('escalation_level', 0)
-    if gov_level >= 2 and eu_level >= 1:
-        triggered.append({
-            **next(g for g in GREEN_LINES if g['id'] == 'tisza_eu_normalization'),
-            'status': 'ACTIVE',
-            'trigger': f'Tisza gov L{gov_level} + EU track L{eu_level}',
-        })
-
-    # hungary_ukraine_warming
-    ua_level = (actors.get('hungary_ukraine_track', {}) or {}).get('escalation_level', 0)
-    if cross_theater.get('axis_reversal_active') or ua_level >= 2:
-        triggered.append({
-            **next(g for g in GREEN_LINES if g['id'] == 'hungary_ukraine_warming'),
-            'status': 'ACTIVE',
-            'trigger': f'Hungary-Ukraine track L{ua_level}; axis reversal active',
-        })
-
-    # paks_ii_review
-    paks_keywords = ['paks ii review', 'paks ii rosatom review', 'paks ii contract review',
-                     'rosatom hungary review', 'hungary nuclear contract review']
-    if any(k in text for k in paks_keywords):
-        triggered.append({
-            **next(g for g in GREEN_LINES if g['id'] == 'paks_ii_review'),
-            'status': 'ACTIVE',
-            'trigger': 'Paks II Rosatom contract review signal detected',
-        })
-
-    # sanctions_compliance_increase
-    if 'hungary unblocks sanctions' in text or 'hungary blocks fewer sanctions' in text:
-        triggered.append({
-            **next(g for g in GREEN_LINES if g['id'] == 'sanctions_compliance_increase'),
-            'status': 'ACTIVE',
-            'trigger': 'Hungary sanctions compliance increasing',
-        })
-
-    return triggered
+def _scoped(corpus, terms):
+    """Items carrying a term AND an accountability-scope word (Hungary / Orban
+    era) -- 'arrested' alone is every crime story in Europe."""
+    sub = [c for c in corpus if any(w in c['text'] for w in ACCOUNTABILITY_SCOPE)]
+    return find(sub, terms)
 
 
-def _score_diplomatic_track(scan_data, green_lines_triggered):
-    """
-    Compute the Hungary diplomatic-track score.
+# ============================================================
+# SCORING
+# ============================================================
+def _score_red_lines(scan_data, corpus):
+    ct = scan_data.get('cross_theater') or {}
+    out = []
+    for rl in RED_LINES:
+        sc = score_line(corpus, rl['breach'], rl['approach'])
+        status, via = sc['status'], 'evidence'
+        # The tracker's revival trigger set (2+ distinct triggers) can lift the
+        # revival line to APPROACHING, never to BREACHED on its own.
+        if rl['id'] == 'orban_revival_signal' and ct.get('orban_revival_signal') and status in ('INACTIVE', 'WATCHING'):
+            status, via = 'APPROACHING', 'trigger_set'
+        if rl['id'] == 'druzhba_pipeline_dispute' and ct.get('druzhba_pipeline_status') == 'disrupted' \
+                and status in ('INACTIVE', 'WATCHING'):
+            status, via = 'APPROACHING', 'status_flag'
+        if status == 'INACTIVE':
+            continue
+        n = sc['breach_outlets'] if status == 'BREACHED' else max(sc['breach_outlets'], sc['approach_outlets'])
+        ev = sc['evidence'][0] if sc['evidence'] else None
+        trig = (f"{status.title()} on {n} outlet{'s' if n != 1 else ''}"
+                + (f' -- e.g. "{ev["title"][:90]}" ({ev["outlet"]})' if ev else '')) if via == 'evidence' \
+            else 'Lifted by the tracker\'s own trigger set -- not yet corroborated by outlets'
+        base = {k: v for k, v in rl.items() if k not in ('breach', 'approach')}
+        out.append({**base, **sc, 'status': status, 'via': via, 'trigger': trig, 'source': rl['precedent']})
+    rank = {'BREACHED': 3, 'APPROACHING': 2, 'WATCHING': 1}
+    out.sort(key=lambda r: (-rank.get(r['status'], 0), -r['severity']))
+    return out
 
-    Hungary's diplomatic track is the PRIMARY analytical axis for this country
-    (unlike Russia where it's secondary to kinetic posture). Score reflects:
-      - active green lines = positive diplomatic momentum
-      - axis_reversal_active = strong positive
-      - orban_revival_signal = negative drag
-      - article-volume in EU/Ukraine tracks = engagement intensity
-    """
-    cross_theater = scan_data.get('cross_theater', {}) or {}
-    actors = scan_data.get('actors', {}) or {}
 
-    score = 0
+def _score_green_lines(corpus):
+    out = []
+    for g in GREEN_LINES:
+        sc = score_green(corpus, g['active'], g['signaled'])
+        if sc['status'] == 'DORMANT':
+            continue
+        base = {k: v for k, v in g.items() if k not in ('active', 'signaled')}
+        n = sc['active_outlets'] or sc['signaled_outlets']
+        out.append({**base, **sc, 'trigger': f"{sc['status'].title()} on {n} outlet{'s' if n != 1 else ''}"})
+    out.sort(key=lambda g: (g['status'] != 'ACTIVE', -g['weight']))
+    return out
 
-    # Active green lines contribute positively
-    for g in green_lines_triggered:
-        if g.get('status') == 'ACTIVE':
-            score += int(g.get('weight', 1.0) * 15)
 
-    # Axis reversal active is a major positive
-    if cross_theater.get('axis_reversal_active'):
-        score += 25
+def _accountability_track(corpus):
+    pro = _scoped(corpus, ACCOUNTABILITY_PROCEEDING)
+    con = _scoped(corpus, ACCOUNTABILITY_CONTESTED)
+    npro, ncon = len(pro['outlets']), len(con['outlets'])
+    if npro >= 2 and ncon >= 2:
+        status = 'contested'
+        read = (f'Arrests and charges against Orban-era officials are in the news ({npro} outlets), and so is the '
+                f'pushback ({ncon} outlets): the government calls it accountability, Fidesz calls it political '
+                'retribution. Watch the courts, not the adjectives.')
+    elif npro >= 2:
+        status = 'proceeding'
+        read = (f'The accountability drive is moving ({npro} outlets): Orban-era officials face custody or charges. '
+                'Fidesz\'s line -- political retribution -- is not corroborated this cycle.')
+    elif ncon >= 2:
+        status = 'framing'
+        read = (f'The "political persecution" frame is out front ({ncon} outlets) without a new arrest in view.')
+    elif npro or ncon:
+        status = 'signalled'
+        read = 'One outlet carries the accountability story this cycle -- signalled, not corroborated.'
+    else:
+        status = 'quiet'
+        read = 'No accountability-drive reporting in this cycle\'s corpus; the ledger below is the background.'
+    return {'status': status, 'proceeding_outlets': npro, 'contested_outlets': ncon, 'read': read,
+            'evidence': (pro['evidence'][:2] + con['evidence'][:2])[:4]}
 
-    # Orban revival is a negative drag
-    if cross_theater.get('orban_revival_signal'):
-        score -= 20
 
-    # EU + Ukraine engagement (article volume) adds to score
-    eu_level  = (actors.get('hungary_eu_track', {}) or {}).get('escalation_level', 0)
-    ua_level  = (actors.get('hungary_ukraine_track', {}) or {}).get('escalation_level', 0)
-    score += (eu_level + ua_level) * 5
+def _international_track(corpus):
+    orban = [c for c in corpus if 'orban' in c['text'] or 'orbán' in c['text']]
+    fl = find(orban, UN_FLOATED)
+    nom = find(orban, UN_NOMINATED)
+    opp = find(orban, UN_OPPOSED)
+    nf, nn, no = len(fl['outlets']), len(nom['outlets']), len(opp['outlets'])
+    if nn >= 2:
+        status = 'nominated'
+        read = (f'Orban\'s UN Secretary-General candidacy is formally in play ({nn} outlets). '
+                'The nominating state and the Security Council arithmetic are the story now.')
+    elif nf >= 2:
+        status = 'floated'
+        read = (f'The Orban-for-UN-chief story is live ({nf} outlets). Three hubs, one node: Washington, with '
+                'Moscow and Beijing reportedly on side, converging on an ousted Hungarian leader while his former '
+                'ministers face arrest at home. Read it as an exit path as much as a comeback -- and note the '
+                'open question of which state would nominate him.')
+    elif nf == 1:
+        status = 'signalled'
+        read = 'One outlet carries the Orban UN story this cycle.'
+    else:
+        status = 'quiet'
+        read = 'The Orban UN bid is not in this cycle\'s corpus; the dated baseline below is the context.'
+    if no >= 2 and status in ('floated', 'nominated'):
+        read += f' Opposition to the bid is corroborated ({no} outlets).'
+    return {'status': status, 'floated_outlets': nf, 'nominated_outlets': nn, 'opposed_outlets': no,
+            'read': read, 'baseline': UN_BASELINE,
+            'evidence': (nom['evidence'][:2] + fl['evidence'][:2] + opp['evidence'][:1])[:4]}
 
-    # Cap 0-100
+
+def _posture(red_lines):
+    st = {r['id']: r['status'] for r in red_lines}
+    if st.get('orban_revival_signal') == 'BREACHED' or st.get('ukraine_track_rupture') == 'BREACHED':
+        return 'eroding'
+    if any(r['status'] in ('BREACHED', 'APPROACHING') for r in red_lines):
+        return 'tested'
+    return 'holding'
+
+
+POSTURE_WORDS = {
+    'holding': ('REVERSAL HOLDING', '🪜', '#22c55e'),
+    'tested':  ('REVERSAL BEING TESTED', '⚖️', '#f59e0b'),
+    'eroding': ('REVERSAL ERODING', '⚠️', '#f97316'),
+}
+
+
+def _score_diplomatic_track(green_lines, red_lines, posture):
+    active = [g for g in green_lines if g['status'] == 'ACTIVE']
+    signaled = [g for g in green_lines if g['status'] != 'ACTIVE']
+    score = sum(int(g['weight'] * 15) for g in active) + sum(int(g['weight'] * 6) for g in signaled)
+    score += {'holding': 20, 'tested': 5, 'eroding': -15}[posture]
     score = max(0, min(100, score))
-
-    # Map to scenario
     if score >= 75:
-        scenario = 'STRONG NORMALIZATION -- axis reversal durable, EU integration accelerating'
-        scenario_color = '#22c55e'
-        scenario_icon  = '🟢'
+        scenario, color, icon = 'STRONG NORMALIZATION -- reversal durable, EU integration accelerating', '#22c55e', '🟢'
     elif score >= 50:
-        scenario = 'ACTIVE NORMALIZATION -- axis reversal in progress with positive momentum'
-        scenario_color = '#3b82f6'
-        scenario_icon  = '🔵'
+        scenario, color, icon = 'ACTIVE NORMALIZATION -- reversal in progress with momentum', '#3b82f6', '🔵'
     elif score >= 30:
-        scenario = 'TENTATIVE NORMALIZATION -- reversal signals present but contested'
-        scenario_color = '#f59e0b'
-        scenario_icon  = '🟡'
+        scenario, color, icon = 'TENTATIVE NORMALIZATION -- reversal visible, momentum thin this cycle', '#f59e0b', '🟡'
+    elif posture == 'holding':
+        scenario, color, icon = 'QUIET -- reversal in place, little new movement this cycle', '#38bdf8', '🔵'
     elif score >= 15:
-        scenario = 'CONTESTED -- reversal signals offset by Orban-revival pressure'
-        scenario_color = '#f97316'
-        scenario_icon  = '🟠'
+        scenario, color, icon = 'CONTESTED -- reversal signals offset by pressure', '#f97316', '🟠'
     else:
-        scenario = 'STAGNANT or REVERSING -- axis reversal stalled or rolling back'
-        scenario_color = '#dc2626'
-        scenario_icon  = '🔴'
-
-    # Maximum pressure flag (Orban revival dominant)
-    max_pressure = (cross_theater.get('orban_revival_signal', False) and score < 30)
-
-    # active_count + signaled_count emitted for BLUF compatibility.
-    # _extract_diplomatic_signals (europe_regional_bluf v3.2) reads these
-    # to decide whether Hungary's diplomatic track should fire a
-    # pressure_type='diplomatic' signal to GPI. Without these counts, the
-    # signal never fires.
-    #
-    # Mapping:
-    #   active_count = green lines currently ACTIVE (concrete reversal signals)
-    #   signaled_count = green lines registered but not yet active (potential signals)
-    active_green = sum(1 for g in green_lines_triggered if g.get('status') == 'ACTIVE')
-    signaled_green = len(green_lines_triggered) - active_green
-
-    return {
-        'score':            score,
-        'scenario':         scenario,
-        'scenario_color':   scenario_color,
-        'scenario_icon':    scenario_icon,
-        'maximum_pressure': max_pressure,
-        'active_count':     active_green,    # for BLUF -> GPI diplomatic axis routing
-        'signaled_count':   signaled_green,  # for BLUF -> GPI diplomatic axis routing
-    }
+        scenario, color, icon = 'STALLED -- pressure without reversal momentum this cycle', '#6b7280', '⚪'
+    return {'score': score, 'scenario': scenario, 'scenario_color': color, 'scenario_icon': icon,
+            'maximum_pressure': posture == 'eroding' and score < 30,
+            'active_count': len(active), 'signaled_count': len(signaled)}
 
 
-def _match_historical(scan_data):
-    """Match scan against historical precedents."""
-    cross_theater = scan_data.get('cross_theater', {}) or {}
-    text = _scan_articles_text(scan_data)
-    triggered_ids = scan_data.get('_triggered_red_line_ids', []) or []
-
-    matches = []
-    for precedent in HISTORICAL_PRECEDENTS:
-        relevance_score = 0
-        for analog in precedent.get('analog_for', []):
-            if analog in triggered_ids:
-                relevance_score += 1
-        # Also check if precedent label keywords appear in text
-        label_kw = precedent['label'].lower().split()[:3]
-        if any(kw in text for kw in label_kw):
-            relevance_score += 1
-        if relevance_score > 0:
-            matches.append({
-                **precedent,
-                'relevance_score': relevance_score,
-            })
-
-    matches.sort(key=lambda m: -m['relevance_score'])
-    return matches[:3]
+def _match_historical(red_lines, green_lines):
+    ids = {r['id'] for r in red_lines} | {g['id'] for g in green_lines if g['status'] == 'ACTIVE'}
+    out = []
+    for p in HISTORICAL_PRECEDENTS:
+        rel = sum(1 for a in p['analog_for'] if a in ids)
+        if rel:
+            out.append({**p, 'relevance_score': rel})
+    out.sort(key=lambda m: -m['relevance_score'])
+    return out[:3]
 
 
-def _build_so_what(scan_data, red_lines_triggered, historical_matches,
-                   green_lines_triggered, diplomatic):
-    """
-    Build the so-what scenario summary.
-    """
-    cross_theater = scan_data.get('cross_theater', {}) or {}
-
-    breached    = [r for r in red_lines_triggered if r.get('status') == 'BREACHED']
-    approaching = [r for r in red_lines_triggered if r.get('status') == 'APPROACHING']
-    active_gl   = [g for g in green_lines_triggered if g.get('status') == 'ACTIVE']
-
-    reversal_active = cross_theater.get('axis_reversal_active', False)
-    revival_signal  = cross_theater.get('orban_revival_signal', False)
-
-    # Build scenario selection logic
-    if reversal_active and not revival_signal:
-        scenario = 'AXIS REVERSAL CONSOLIDATING'
-        scenario_color = '#22c55e'
-        scenario_icon  = '🪜'
-        situation = (
-            'Hungary axis reversal is consolidating: returned seized Ukrainian assets, '
-            'lifted EU loan veto, Druzhba flows resumed, Tisza government public '
-            'commitments to EU norms. Orban/Fidesz NOT yet showing visible revival '
-            'signals in this scan window.'
-        )
-        assessment = (
-            'Hungary appears to be settling into post-Orban diplomatic posture. '
-            'Window for EU funds release + Article 7 closure is open. Watch for: '
-            '(a) Russia counter-pressure (gas pricing, Paks II financing leverage), '
-            '(b) Fidesz organizational consolidation as opposition vehicle, '
-            '(c) sustained EU-Hungary normalization signals over next 3-6 months.'
-        )
-        watch_list = [
-            'Paks II Rosatom contract review outcome',
-            'EU cohesion funds release timing',
-            'Hungary lifting Ukraine EU accession veto',
-            'Russian gas contract (MVM-Gazprom) renegotiation',
-            'Orban international travel + summits',
-        ]
-    elif reversal_active and revival_signal:
-        scenario = 'CONTESTED REVERSAL'
-        scenario_color = '#f59e0b'
-        scenario_icon  = '⚖️'
-        situation = (
-            'Hungary axis reversal underway BUT Orban/Fidesz showing visible '
-            'revival signals (Moscow visits, mass rallies, Trump alignment, '
-            'Tucker Carlson interviews). Tisza government continuing reversal '
-            'measures while opposition organizes counter-pressure.'
-        )
-        assessment = (
-            'High-friction phase. Outcome NOT predetermined. Two-thirds Tisza '
-            'majority provides parliamentary insulation, but Fidesz can apply '
-            'pressure via street politics, international ties, and rural base. '
-            'Russia + Trump alignment with Orban is the asymmetric leverage.'
-        )
-        watch_list = [
-            'Orban-Putin meetings + statements',
-            'Orban-Trump direct channel signals',
-            'Fidesz rally attendance + frequency',
-            'Tisza government polling stability',
-            'Russia counter-pressure on Hungarian energy',
-        ]
-    elif revival_signal and not reversal_active:
-        scenario = 'ORBAN COMEBACK FORMING'
-        scenario_color = '#f97316'
-        scenario_icon  = '⚠️'
-        situation = (
-            'Limited axis-reversal signals observed AND Orban/Fidesz revival '
-            'signals present. Either Tisza government is moving too slowly on '
-            'reversal commitments OR scan window is missing key signals OR '
-            'opposition is dominating the rhetorical space.'
-        )
-        assessment = (
-            'Concerning trajectory. Historical precedent (Orban 2002-2010) shows '
-            'Fidesz can build comeback over multi-year cycles. If Tisza government '
-            'fails to deliver visible EU normalization + economic dividends, '
-            'Orban-Fidesz could win next election.'
-        )
-        watch_list = [
-            'Tisza government legislative outputs (visible reforms)',
-            'EU funds disbursement to Hungary (visible benefit)',
-            'Fidesz polling trajectory',
-            'Russia/Trump pressure operations on Hungarian economy',
-            'Tisza coalition stability',
-        ]
+def _top_indicator(posture, red_lines, accountability, intl, green_lines, health):
+    br = [r for r in red_lines if r['status'] == 'BREACHED']
+    if posture == 'eroding':
+        line = f"The reversal is eroding: {br[0]['label'].lower()} is corroborated this cycle." if br else \
+            'The reversal is eroding this cycle.'
+    elif br:
+        line = f"The reversal is being tested: {br[0]['label'].lower()} is corroborated by {br[0]['breach_outlets']} outlets."
+    elif intl['status'] in ('floated', 'nominated'):
+        line = ('Orban\'s next act is being written abroad: the UN Secretary-General push is in the news while his '
+                'former officials face arrest at home -- and Budapest\'s turn toward Brussels is holding.')
+    elif accountability['status'] in ('proceeding', 'contested'):
+        line = ('Budapest\'s accountability drive is the story: Orban-era officials in custody, Fidesz calling it '
+                'retribution -- the turn away from Moscow is holding.')
+    elif any(r['status'] == 'APPROACHING' for r in red_lines):
+        r = next(r for r in red_lines if r['status'] == 'APPROACHING')
+        line = f"Holding, with a watch item: {r['label'].lower()} -- reported, not corroborated."
+    elif any(g['status'] == 'ACTIVE' for g in green_lines):
+        g = next(g for g in green_lines if g['status'] == 'ACTIVE')
+        line = f"Hungary's turn from Moscow toward Brussels is holding -- this cycle's movement: {g['label'].lower()}."
     else:
-        scenario = 'BASELINE -- LIMITED SIGNAL'
-        scenario_color = '#6b7280'
-        scenario_icon  = '⚪'
-        situation = (
-            'Scan window shows limited Hungary diplomatic signal flow. May reflect '
-            'a slow news week, scan-source gaps, or genuine baseline (the months '
-            'after a landslide election often have a quieter signal period as '
-            'new government organizes).'
-        )
-        assessment = (
-            'No immediate red flags. Continue monitoring. Hungary tracker is '
-            'now active and will surface signals as they emerge.'
-        )
-        watch_list = [
-            'Tisza cabinet appointments + first policy announcements',
-            'EU response to Hungarian normalization',
-            'Russia statements on Hungary',
-            'Druzhba pipeline operational status',
-            'Hungarian opposition organizational moves',
-        ]
+        line = 'Hungary\'s turn from Moscow toward Brussels is holding; nothing this cycle tests it.'
+    return ('Thin read -- ' + line) if health['thin'] else line
 
+
+def _build_so_what(posture, red_lines, green_lines, accountability, intl, health):
+    label, icon, color = POSTURE_WORDS[posture]
+    situation = {
+        'holding': ('Six months into the Magyar government, the reversal from Orban-era alignment with Moscow is in '
+                    'place: EU money released, Ukraine\'s accession steps unblocked, Paks II under review. Nothing '
+                    'in this cycle\'s reporting is pulling it back.'),
+        'tested':  ('The reversal is in place but something in this cycle\'s reporting is pushing on it -- see the '
+                    'red lines below for which lever and how many outlets carry it.'),
+        'eroding': ('Corroborated reporting this cycle points against the reversal: a Fidesz comeback at home or a '
+                    'break in the Budapest-Kyiv track.'),
+    }[posture]
+    threads = [accountability['read'], intl['read']]
+    assessment = (
+        'The unasked question is no longer "will Hungary turn?" -- it turned in April -- but "what is the price '
+        'of staying turned?" Three things set that price: Moscow\'s energy levers (Druzhba, gas, Paks II), Fidesz\'s '
+        'ability to frame the accountability drive as retribution, and where Orban lands -- in Hungarian politics, '
+        'or in New York. ' + ' '.join(threads)
+    )
+    watch = [
+        'Paks II decision (expected end-2026 / early 2027) and any Rosatom legal response',
+        'Court rulings in the Seszták, Hankó and Matolcsy cases -- due process is the credibility test',
+        'Whether any state formally nominates Orban for UN Secretary-General before Guterres\'s term ends Dec 31',
+        'Druzhba flows and the Adria / Krk alternatives',
+        'Magyar-Zelensky meeting and the next accession clusters',
+    ]
+    if health['thin']:
+        label = 'THIN READ -- ' + label
+        situation = ('THIN READ -- under-read scan (' + health['reason'] + '); quiet lines may be unread. ') + situation
+    return {'scenario': label, 'scenario_icon': icon, 'scenario_color': color, 'situation': situation,
+            'assessment': assessment, 'watch_list': watch,
+            'breached_count': sum(1 for r in red_lines if r['status'] == 'BREACHED'),
+            'approaching_count': sum(1 for r in red_lines if r['status'] == 'APPROACHING'),
+            'green_lines_active': sum(1 for g in green_lines if g['status'] == 'ACTIVE')}
+
+
+def _spokes(actors, red_lines, intl):
+    st = {r['id']: r['status'] for r in red_lines}
+    ru = _lvl(actors, 'hungary_russia_axis')
+    if st.get('russia_counter_pressure') == 'BREACHED':
+        ru = max(ru, 3)
+    elif st.get('russia_counter_pressure') == 'APPROACHING':
+        ru = max(ru, 2)
+    us = _lvl(actors, 'orban_international')
+    if intl['status'] == 'nominated':
+        us = max(us, 3)
+    elif intl['status'] == 'floated':
+        us = max(us, 2)
     return {
-        'scenario':       scenario,
-        'scenario_color': scenario_color,
-        'scenario_icon':  scenario_icon,
-        'situation':      situation,
-        'assessment':     assessment,
-        'watch_list':     watch_list,
-        'breached_count':    len(breached),
-        'approaching_count': len(approaching),
-        'green_lines_active': len(active_gl),
+        'russia': {'level': min(4, ru), 'node_class': 'axis_reversal_watch',
+                   'note': 'Hungary turned away from Moscow in April; this wheel watches Moscow\'s levers on Budapest.'},
+        'us':     {'level': min(3, us), 'node_class': 'opposition_channel',
+                   'note': 'The visible US signal on Hungary runs through Orban: 2026 election backing, the UN push.'},
+        'china':  {'level': min(2, _lvl(actors, 'china_investment')), 'node_class': 'investment_partner',
+                   'note': 'Chinese battery/EV investment (CATL Debrecen, BYD Szeged) -- read low, capped at L2.'},
     }
-
-
-def _inject_triggered_ids(scan_data, red_lines_triggered):
-    """Inject triggered red line IDs so _match_historical can detect patterns."""
-    if not isinstance(scan_data, dict):
-        return scan_data
-    scan_data['_triggered_red_line_ids'] = [r.get('id') for r in red_lines_triggered]
-    return scan_data
 
 
 # ============================================================
-# MAIN INTERPRETER ENTRY POINT
+# MAIN ENTRY POINT
 # ============================================================
 def interpret_signals(scan_data):
-    """
-    Main entry point. Called from rhetoric_tracker_hungary.py.
-    Returns interpretation dict mirroring the Russia interpreter contract.
-    """
+    """Called from rhetoric_tracker_hungary.py with scan_data (+ `_corpus`)."""
     try:
-        red_lines   = _score_red_lines(scan_data)
-        green_lines = _score_green_lines(scan_data)
-        diplomatic  = _score_diplomatic_track(scan_data, green_lines)
-        scan_data   = _inject_triggered_ids(scan_data, red_lines)
-        historical  = _match_historical(scan_data)
-        so_what     = _build_so_what(scan_data, red_lines, historical,
-                                     green_lines, diplomatic)
-
-        breached    = [r for r in red_lines if r.get('status') == 'BREACHED']
-        approaching = [r for r in red_lines if r.get('status') == 'APPROACHING']
-        active_gl   = [g for g in green_lines if g.get('status') == 'ACTIVE']
-
+        corpus = _corpus(scan_data)
+        health = corpus_health(scan_data, corpus, THIN_MIN_ARTICLES)
+        actors = scan_data.get('actors') or {}
+        red_lines = _score_red_lines(scan_data, corpus)
+        green_lines = _score_green_lines(corpus)
+        posture = _posture(red_lines)
+        diplomatic = _score_diplomatic_track(green_lines, red_lines, posture)
+        accountability = _accountability_track(corpus)
+        intl = _international_track(corpus)
+        historical = _match_historical(red_lines, green_lines)
+        so_what = _build_so_what(posture, red_lines, green_lines, accountability, intl, health)
+        top_indicator = _top_indicator(posture, red_lines, accountability, intl, green_lines, health)
+        breached = [r for r in red_lines if r['status'] == 'BREACHED']
+        approaching = [r for r in red_lines if r['status'] == 'APPROACHING']
+        active_gl = [g for g in green_lines if g['status'] == 'ACTIVE']
         return {
-            'so_what':             so_what,
+            'so_what':          so_what,
+            'top_indicator':    top_indicator,
+            'posture':          posture,
+            'posture_label':    POSTURE_WORDS[posture][0],
+            'thin_read':        health['thin'],
+            'corpus_health':    health,
             'red_lines': {
                 'triggered':         red_lines,
                 'breached_count':    len(breached),
                 'approaching_count': len(approaching),
-                'highest_severity':  max((r.get('severity', 0) for r in red_lines), default=0),
+                'highest_severity':  max((r['severity'] for r in breached), default=0),
             },
             'green_lines': {
                 'triggered':         green_lines,
@@ -641,49 +515,69 @@ def interpret_signals(scan_data):
                 'diplomatic_score':  diplomatic['score'],
             },
             'diplomatic_track':    diplomatic,
+            'accountability_track': accountability,
+            'international_track': intl,
+            'reversal_ledger':     REVERSAL_LEDGER,
             'historical_matches':  historical,
-            'interpreter_version': '1.0.0',
+            'spokes':              _spokes(actors, red_lines, intl),
+            'interpreter_version': INTERPRETER_VERSION,
             'interpreted_at':      datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f'[Hungary Interpreter] Error: {str(e)[:120]}')
         return {
-            'so_what': {
-                'scenario': 'Interpreter error',
-                'assessment': str(e)[:200],
-                'situation': '',
-                'watch_list': [],
-                'scenario_color': '#6b7280',
-                'scenario_icon': '⚪',
-            },
-            'red_lines': {
-                'triggered': [],
-                'breached_count': 0,
-                'approaching_count': 0,
-                'highest_severity': 0,
-            },
-            'green_lines': {
-                'triggered': [],
-                'active_count': 0,
-                'signaled_count': 0,
-                'diplomatic_score': 0,
-            },
-            'diplomatic_track': {
-                'score': 0,
-                'scenario': 'Unknown',
-                'maximum_pressure': False,
-                'scenario_color': '#6b7280',
-                'scenario_icon': '⚪',
-            },
-            'historical_matches': [],
-            'interpreter_version': '1.0.0',
-            'error': str(e)[:200],
+            'so_what': {'scenario': 'Interpreter error -- unread, not calm', 'assessment': str(e)[:200],
+                        'situation': '', 'watch_list': [], 'scenario_color': '#6b7280', 'scenario_icon': '⚪'},
+            'top_indicator': 'Interpreter error this cycle -- unread, not calm.',
+            'thin_read': True, 'posture': 'unread', 'spokes': {},
+            'red_lines': {'triggered': [], 'breached_count': 0, 'approaching_count': 0, 'highest_severity': 0},
+            'green_lines': {'triggered': [], 'active_count': 0, 'signaled_count': 0, 'diplomatic_score': 0},
+            'diplomatic_track': {'score': 0, 'scenario': 'Unknown', 'maximum_pressure': False,
+                                 'scenario_color': '#6b7280', 'scenario_icon': '⚪',
+                                 'active_count': 0, 'signaled_count': 0},
+            'historical_matches': [], 'reversal_ledger': REVERSAL_LEDGER,
+            'interpreter_version': INTERPRETER_VERSION, 'error': str(e)[:200],
         }
 
 
-# ============================================================
-# MODULE METADATA
-# ============================================================
-__version__ = '1.0.0'
+def build_top_signals(scan_data):
+    """Canonical top_signals[] for the Europe BLUF / GPI (Hungary had none)."""
+    interp = scan_data.get('interpretation') or {}
+    FLAG = '\U0001f1ed\U0001f1fa'
+    sigs = []
+    for r in (interp.get('red_lines') or {}).get('triggered', [])[:3]:
+        if r.get('status') not in ('BREACHED', 'APPROACHING'):
+            continue
+        b = r['status'] == 'BREACHED'
+        sigs.append({'priority': 11 if b else 8, 'category': 'red_line', 'theatre': 'hungary',
+                     'level': 3 if b else 2, 'icon': r.get('icon', '⚠️'), 'color': r.get('color', '#f97316'),
+                     'pressure_type': r.get('pressure_type', 'diplomatic'),
+                     'short_text': f"{FLAG} HUNGARY: {'Corroborated' if b else 'Watching'} -- {r.get('label', '')}",
+                     'long_text': f"HUNGARY: {r.get('label', '')}. {r.get('trigger', '')}"})
+    intl = interp.get('international_track') or {}
+    if intl.get('status') in ('floated', 'nominated'):
+        sigs.append({'priority': 9, 'category': 'orban_international', 'theatre': 'hungary', 'level': 2,
+                     'icon': '🌐', 'color': '#3b82f6', 'pressure_type': 'diplomatic',
+                     'short_text': f'{FLAG} HUNGARY: Orban UN Secretary-General push in the news',
+                     'long_text': 'HUNGARY: ' + intl.get('read', '')})
+    acc = interp.get('accountability_track') or {}
+    if acc.get('status') in ('proceeding', 'contested'):
+        sigs.append({'priority': 7, 'category': 'accountability', 'theatre': 'hungary', 'level': 2,
+                     'icon': '⚖️', 'color': '#8b5cf6', 'pressure_type': 'diplomatic',
+                     'short_text': f'{FLAG} HUNGARY: Accountability drive {acc["status"]}',
+                     'long_text': 'HUNGARY: ' + acc.get('read', '')})
+    for g in (interp.get('green_lines') or {}).get('triggered', [])[:2]:
+        if g.get('status') == 'ACTIVE':
+            sigs.append({'priority': 6, 'category': 'green_line', 'theatre': 'hungary', 'level': 1,
+                         'icon': g.get('icon', '🕊️'), 'color': '#10b981', 'pressure_type': 'diplomatic',
+                         'short_text': f"{FLAG} HUNGARY: {g.get('label', '')}",
+                         'long_text': f"HUNGARY: {g.get('detail', '')} {g.get('trigger', '')}"})
+    sigs.sort(key=lambda s: -s['priority'])
+    return sigs[:6]
+
+
+__version__ = INTERPRETER_VERSION
 __module_id__ = 'hungary_signal_interpreter'
 print(f'[Hungary Interpreter] Module loaded -- v{__version__}')

@@ -1,7 +1,25 @@
 """
 russia_signal_interpreter.py
 Asifah Analytics -- Europe Backend Module
-v1.1.0 -- May 17, 2026
+v1.2.0 -- Nov 3, 2026 (v1.1.0 May 17 2026)
+
+v1.2.0 -- EVIDENCE, THE WAR FLOOR, AND A TOPLINE
+  * The ground_ops vector floors at L4 because the war is the baseline. v1.1
+    read that floor as "Russian major advance BREACHED" and, with Ukraine's
+    actor at L1, "Ukraine collapse APPROACHING" -- on EVERY scan. A standing
+    war is not an advance. Those two lines now need evidence (2+ outlets on a
+    breakthrough / city-capture / front-collapse phrase) or ground_ops L5.
+  * Every headline-triggered line ("putin warns", one Cuba headline, one
+    "trump putin" story) is now scored on the WHOLE corpus with publisher
+    counting (europe_evidence): BREACHED needs 2 outlets. Vector levels (which
+    obey the 2-outlet rule since tracker v1.5.0) can still set a line's status.
+  * The two de-escalation "red lines" (talks, ceasefire framework) left the
+    red-line list -- talks were being counted as "approaching red lines". They
+    live in the TALKS TRACK (dated baseline + live read) and green lines.
+  * Green lines read the whole corpus, not two actors' top-5 headlines.
+  * top_signals: a breached red line emits L4, never L5 (L5 assertion rule:
+    only the kinetic ladder may assert L5).
+  * top_indicator, THIN READ, talks_track.
 
 Signal interpretation engine for the Russia Rhetoric Tracker.
 
@@ -52,6 +70,95 @@ Author: RCGG / Asifah Analytics
 """
 
 from datetime import datetime, timezone
+
+from europe_evidence import build_corpus, score_line, find, corpus_health
+
+INTERPRETER_VERSION = '1.2.0'
+THIN_MIN_ARTICLES = 60
+
+# Evidence triggers: (breach phrases, approach phrases). Context: the phrase
+# lists below are about Russia by construction (they name Russia, Moscow, the
+# Kremlin, Russian forces or a Russian platform) -- generic words stay out.
+RED_LINE_TRIGGERS = {
+    'nuclear_rhetoric_escalation': (
+        ['putin threatens nuclear', 'medvedev threatens nuclear', 'russia threatens nuclear',
+         'kremlin threatens nuclear', 'russia nuclear ultimatum', 'russia changes nuclear doctrine',
+         'russia lowers nuclear threshold'],
+        ['medvedev nuclear', 'putin nuclear', 'russian nuclear doctrine', 'russia nuclear warning',
+         'kremlin nuclear warning', 'oreshnik']),
+    'tactical_nuclear_deployment': (
+        ['russia deploys tactical nuclear', 'nuclear warheads moved', 'nuclear weapons moved to belarus',
+         'russia nuclear drills with live warheads'],
+        ['tactical nuclear exercise', 'russia nuclear drills', 'nuclear-capable iskander', 'non-strategic nuclear']),
+    'kaliningrad_escalation': (
+        ['russia reinforces kaliningrad', 'kaliningrad blockade', 'iskander deployed to kaliningrad'],
+        ['kaliningrad', 'suwalki']),
+    'article5_trigger_language': (
+        ['article 5 invoked', 'invokes article 5', 'attack on nato territory', 'russian strike on nato territory'],
+        ['article 5', 'article 4', 'invokes article 4', 'nato airspace violation', 'russian drones over poland',
+         'russian drones over romania', 'russian jets violate']),
+    'suwalki_gap_threat': (
+        ['suwalki gap blockade', 'russian troops near suwalki'],
+        ['suwalki gap', 'suwalki corridor']),
+    'russian_major_advance': (
+        ['russia captures pokrovsk', 'russia captures kostiantynivka', 'russia captures zaporizhzhia',
+         'russia captures kramatorsk', 'russia captures sloviansk', 'russian breakthrough',
+         'front collapses', 'ukrainian lines collapse', 'russia takes control of the city'],
+        ['russia claims capture', 'russian forces captured', 'russia advances toward',
+         'encirclement', 'ukrainian troops withdraw from', 'ukraine withdraws from']),
+    'ukraine_collapse_signal': (
+        ['ukrainian front collapses', 'ukraine front collapse', 'mass surrender of ukrainian'],
+        ['ukraine manpower crisis', 'ukrainian desertions', 'ukraine retreats', 'ukrainian retreat']),
+    'us_aid_suspension': (
+        ['us suspends aid to ukraine', 'us halts weapons to ukraine', 'us halts intelligence sharing',
+         'pentagon pauses weapons', 'trump halts aid'],
+        ['aid pause', 'weapons delay', 'patriot delay', 'intelligence sharing problems',
+         'starlink access problems', 'us eases sanctions on russia']),
+    'ssbn_unusual_deployment': (
+        ['russian ballistic missile submarine surfaced', 'ssbn surge', 'russian submarine surge'],
+        ['russian submarine', 'northern fleet submarine', 'ballistic missile submarine']),
+    'arctic_territorial_escalation': (
+        ['russia claims svalbard', 'russian troops svalbard', 'svalbard incident'],
+        ['svalbard', 'arctic claim', 'arctic territorial']),
+    'giuk_gap_surge': (
+        ['giuk gap russian surge'],
+        ['giuk gap', 'giuk']),
+    'cross_theater_coordination': (
+        ['north korean troops in russia', 'iran supplies russia missiles', 'dprk troops fighting'],
+        ['north korea russia weapons', 'iran russia drones', 'dprk russia', 'russia iran military cooperation']),
+    'hybrid_infrastructure_attack': (
+        ['russia blamed for sabotage', 'russian sabotage', 'russia behind cyberattack',
+         'undersea cable cut russia', 'russian-linked arson'],
+        ['sabotage', 'undersea cable', 'gps jamming', 'cyberattack', 'hybrid attack', 'shadow fleet tanker']),
+    'russia_cuba_kinetic_weapons_transfer': (
+        ['russia drones to cuba', 'russian drones delivered to cuba', 'russia weapons shipment cuba'],
+        ['russia cuba drone', 'russia cuba weapons', 'russia cuba military']),
+    'russia_cuban_soldiers_procurement': (
+        ['cuban soldiers fighting for russia', 'cubans recruited by russia', 'cuban mercenaries russia'],
+        ['cuban soldiers ukraine', 'cuban fighters russia', 'cuban recruits russia']),
+    'russia_iran_cuba_coalition_active': (
+        ['russia and iran send drones to cuba'],
+        ['iran cuba drone', 'iranian advisers havana']),
+}
+
+# Talks track: date-stamped background (NOT scored). Review when the round lands.
+TALKS_BASELINE = {
+    'as_of': '2026-10-25',
+    'round': ('Trilateral US-Russia-Ukraine round planned for the first half of November in Abu Dhabi '
+              '(Kremlin: after Nov 4). A similar round expected in October never happened.'),
+    'positions': ('Moscow: large territorial concessions and no NATO for Ukraine; talks on long-term '
+                  'security arrangements, not a short truce. Kyiv: security guarantees, 10 years of army '
+                  'funding, Europe at the table.'),
+    'washington': ('The US has eased some sanctions on Moscow and agreed to buy Russian diesel; it brokered a '
+                   'localised ceasefire in Oleshky and has criticised Ukrainian strikes on Russian energy.'),
+    'sources': ['https://www.aljazeera.com/news/2026/10/23/russia-ukraine-talks-planned-for-november-in-uae-kremlin',
+                'https://www.euronews.com/2026/10/25/ukraines-zelenskyy-confirms-trilateral-talks-with-russia-and-us-to-take-place-in-november'],
+}
+TALKS_ACTIVE = ['abu dhabi talks', 'talks in abu dhabi', 'trilateral talks', 'trilateral meeting',
+                'delegations met', 'round of talks', 'peace talks resume', 'ceasefire agreed', 'truce agreed',
+                'prisoner exchange', 'witkoff', 'dmitriev', 'umerov', 'medinsky']
+TALKS_STRAIN = ['talks postponed', 'talks cancelled', 'talks collapse', 'walked out', 'no progress',
+                'ultimatum', 'rejects proposal', 'rejected the proposal', 'talks stall']
 
 
 # ============================================================
@@ -228,32 +335,7 @@ RED_LINES = [
                     'are below Article 5 threshold but escalatory.',
     },
 
-    # ── Category F: De-escalation signals ────────────────────
-    {
-        'id':       'trump_putin_diplomatic_engagement',
-        'label':    'Trump-Putin Direct Diplomatic Engagement',
-        'detail':   'Active US-Russia diplomatic engagement on Ukraine -- '
-                    'meetings, phone calls, or framework negotiations',
-        'severity': 1,
-        'color':    '#10b981',
-        'icon':     '🤝',
-        'category': 'deescalation',
-        'source':   'Trump administration diplomatic opening to Russia creates '
-                    'potential off-ramp. Watch for: Ukraine territorial concessions, '
-                    'sanctions relief, NATO expansion pause.',
-    },
-    {
-        'id':       'ukraine_ceasefire_framework',
-        'label':    'Ukraine Ceasefire Framework Emerging',
-        'detail':   'Credible ceasefire framework with named conditions and parties -- '
-                    'beyond general calls for peace',
-        'severity': 1,
-        'color':    '#10b981',
-        'icon':     '📋',
-        'category': 'deescalation',
-        'source':   'Any Ukraine ceasefire would reduce the primary Russian military '
-                    'pressure absorption point and shift focus to diplomatic settlement.',
-    },
+    # (v1.2.0: the two de-escalation entries moved to TALKS_BASELINE / green lines.)
 
     # ─── v1.1: CARIBBEAN FOOTHOLD / 1962 COALITION RECOGNITION ───
     # The Axios disclosure (May 17, 2026) of 300 drones from Russia + Iran
@@ -395,9 +477,11 @@ GREEN_LINES = [
         'id':       'hungary_eu_veto_vehicle_lost',
         'label':    'Hungary EU Veto Vehicle Lost (Axis Reversal)',
         'detail':   'April 2026 Tisza/Magyar election ended 16 years of Orban government -- '
-                    'Russia loses primary EU veto blocker. Hungary lifts Ukraine loan veto, '
-                    'returns Oschadbank assets, restores NATO weapons transit. '
-                    'Hybrid influence operations card lost in EU institutional decision-making.',
+                    'Russia loses its primary EU veto blocker. Since then Budapest has returned the '
+                    'seized Oschadbank cash and gold (May 6), unlocked EUR 16.4bn of EU funds (May 29) '
+                    'and lifted its veto on Ukraine\'s accession clusters (June 3; further clusters '
+                    'after Kyiv\'s minority-rights law, Oct 12-13). Paks II (Rosatom) is under review, '
+                    'decision due end-2026/early-2027.',
         'momentum': 3,
         'color':    '#10b981',
         'icon':     '🏛️',
@@ -528,298 +612,154 @@ HISTORICAL_PRECEDENTS = [
 # CORE SCORING FUNCTIONS
 # ============================================================
 
-def _score_red_lines(scan_data):
-    """Evaluate Russia signal state against red lines."""
-    actors = scan_data.get('actors', {})
+def _corpus(scan_data):
+    arts = scan_data.get('_corpus') or []
+    if not arts:   # cached / test payloads: fall back to actors' top articles
+        for a in (scan_data.get('actors') or {}).values():
+            arts = arts + list(a.get('top_articles') or [])
+    return build_corpus({'articles_en': arts, 'telegram_messages': []})
 
-    russia_mil_level = actors.get('russia_military',  {}).get('escalation_level', 0)
-    russia_gov_level = actors.get('russia_government',{}).get('escalation_level', 0)
-    ukraine_level    = actors.get('ukraine',          {}).get('escalation_level', 0)
-    nato_level       = actors.get('nato_alliance',    {}).get('escalation_level', 0)
-    us_level         = actors.get('united_states',    {}).get('escalation_level', 0)
-    baltic_level     = actors.get('baltic_flank',     {}).get('escalation_level', 0)
-    arctic_level_a   = actors.get('arctic_watch',     {}).get('escalation_level', 0)
-    belarus_level    = actors.get('belarus',          {}).get('escalation_level', 0)
 
-    nuclear_level    = scan_data.get('nuclear_level',    0)
-    gnd_level        = scan_data.get('ground_ops_level', 0)
-    nato_flank_level = scan_data.get('nato_flank_level', 0)
-    arctic_level     = scan_data.get('arctic_level',     max(arctic_level_a, 0))
-    hybrid_level     = scan_data.get('hybrid_level',     0)
+_RANK = {'INACTIVE': 0, 'WATCHING': 1, 'APPROACHING': 2, 'BREACHED': 3}
 
-    def _scan_articles(actor_ids, keywords):
-        for aid in actor_ids:
-            for art in actors.get(aid, {}).get('top_articles', []):
-                title = art.get('title', '').lower()
-                if any(kw.lower() in title for kw in keywords):
-                    return True
-        return False
 
-    # Signal detection
-    # v1.3 (May 24 2026) keyword expansion: original list was too analyst-tag
-    # and missed Oreshnik / hypersonic / news-language Putin-Medvedev
-    # warnings. Expanded for May 24 Oreshnik strike on Kyiv context.
-    nuclear_signal = _scan_articles(
-        ['russia_government', 'russia_military'],
-        [
-            # original v1.2 keywords
-            'nuclear', 'ядерн', 'medvedev nuclear', 'sarmat', 'poseidon',
-            'nuclear threat', 'nuclear warning', 'nuclear doctrine',
-            # ── v1.3 expansion: Oreshnik / hypersonic doctrinal signals ──
-            'oreshnik', 'hypersonic missile', 'hypersonic strike',
-            'hypersonic ballistic', 'kinzhal', 'avangard', 'zircon',
-            # ── v1.3 expansion: principal-level nuclear language ──
-            'putin warns', 'putin threatens', 'putin nuclear',
-            'medvedev warns', 'medvedev threatens', 'medvedev says',
-            'kremlin warns', 'kremlin threatens',
-            # ── v1.3 expansion: news-language nuclear framings ──
-            'nuclear option', 'nuclear response', 'nuclear retaliation',
-            'nuclear use', 'tactical nuclear', 'nuclear weapons',
-            'belarus nuclear', 'nuclear alert', 'nuclear posture',
-        ]
-    )
-    kaliningrad_signal = _scan_articles(
-        ['russia_military', 'baltic_flank'],
-        ['kaliningrad', 'iskander', 'suwalki', 'baltic escalation']
-    )
-    ssbn_signal = _scan_articles(
-        ['arctic_watch', 'russia_military'],
-        ['ssbn', 'submarine deployment', 'northern fleet surge',
-         'ballistic missile submarine', 'giuk gap']
-    )
-    svalbard_signal = _scan_articles(
-        ['arctic_watch'],
-        ['svalbard', 'svalbard military', 'spitsbergen military',
-         'arctic territorial', 'arctic claim force']
-    )
-    hybrid_signal = _scan_articles(
-        ['russia_military', 'russia_government'],
-        ['cyber attack', 'undersea cable', 'sabotage', 'infrastructure attack',
-         'pipeline attack', 'disinformation campaign']
-    )
-    ukraine_collapse = _scan_articles(
-        ['ukraine'],
-        ['ukraine collapse', 'ukraine retreats', 'ukraine falls',
-         'ukraine loses city', 'ukraine front broken']
-    )
-    us_aid_suspend = _scan_articles(
-        ['united_states'],
-        ['us suspends aid', 'aid pause', 'halt aid ukraine',
-         'trump stops ukraine', 'aid cut ukraine']
-    )
-    cross_theater = _scan_articles(
-        ['russia_military', 'russia_government'],
-        ['dprk russia', 'iran russia weapons', 'north korea russia',
-         'cuba russia military', 'cross theater', 'axis resistance russia']
-    )
-    trump_putin_talks = _scan_articles(
-        ['united_states', 'russia_government'],
-        ['trump putin', 'trump russia talks', 'trump ukraine deal',
-         'us russia negotiations', 'peace talks ukraine']
-    )
-    ceasefire_signal = _scan_articles(
-        ['ukraine', 'united_states', 'russia_government'],
-        ['ceasefire ukraine', 'ukraine peace deal', 'ukraine negotiations',
-         'ukraine peace talks', 'ukraine ceasefire framework']
-    )
+def _vector_status(rid, v):
+    """Status from the (corroborated) vector levels. The ground_ops L4 war floor
+    never counts as an advance; only ground_ops L5 does."""
+    nuc, gnd, nat, arc, hyb, bal, bel = (v['nuclear'], v['ground'], v['nato'], v['arctic'],
+                                         v['hybrid'], v['baltic'], v['belarus'])
+    if rid == 'nuclear_rhetoric_escalation':
+        return 'BREACHED' if nuc >= 4 else 'APPROACHING' if nuc >= 3 else None
+    if rid == 'tactical_nuclear_deployment':
+        return 'BREACHED' if nuc >= 5 else 'APPROACHING' if nuc >= 4 else None
+    if rid == 'kaliningrad_escalation':
+        return 'BREACHED' if nat >= 5 else 'APPROACHING' if (nat >= 3 and bel >= 2) else None
+    if rid == 'article5_trigger_language':
+        return 'BREACHED' if nat >= 5 else 'APPROACHING' if nat >= 4 else None
+    if rid == 'suwalki_gap_threat':
+        return 'APPROACHING' if (nat >= 4 and bel >= 3) else None
+    if rid == 'russian_major_advance':
+        return 'BREACHED' if gnd >= 5 else None
+    if rid == 'ssbn_unusual_deployment':
+        return 'BREACHED' if arc >= 5 else 'APPROACHING' if arc >= 4 else None
+    if rid == 'arctic_territorial_escalation':
+        return 'BREACHED' if arc >= 4 else 'APPROACHING' if arc >= 3 else None
+    if rid == 'cross_theater_coordination':
+        hot = sum(1 for x in (nuc, nat, arc, hyb) if x >= 3) + (1 if gnd >= 5 else 0)
+        return 'BREACHED' if hot >= 4 else 'APPROACHING' if hot >= 3 else None
+    if rid == 'hybrid_infrastructure_attack':
+        return 'BREACHED' if hyb >= 4 else 'APPROACHING' if hyb >= 3 else None
+    if rid == 'russia_cuba_kinetic_weapons_transfer':
+        return 'APPROACHING' if v['cuba'] >= 3 else None
+    return None
 
+
+def _score_red_lines(scan_data, corpus=None):
+    """v1.2.0: status = the higher of (a) the vector read and (b) per-article
+    evidence on the whole corpus (BREACHED = 2+ outlets). Each line carries its
+    evidence and a plain trigger sentence."""
+    corpus = corpus if corpus is not None else _corpus(scan_data)
+    actors = scan_data.get('actors', {}) or {}
+    v = {
+        'nuclear': scan_data.get('nuclear_level', 0) or 0,
+        'ground':  scan_data.get('ground_ops_level', 0) or 0,
+        'nato':    scan_data.get('nato_flank_level', 0) or 0,
+        'arctic':  scan_data.get('arctic_level', 0) or 0,
+        'hybrid':  scan_data.get('hybrid_level', 0) or 0,
+        'baltic':  (actors.get('baltic_flank', {}) or {}).get('escalation_level', 0) or 0,
+        'belarus': (actors.get('belarus', {}) or {}).get('escalation_level', 0) or 0,
+        'cuba':    scan_data.get('russia_cuba_weapons_level', 0) or 0,
+    }
     triggered = []
-
-    # ── Nuclear rhetoric escalation ──
-    if nuclear_level >= 3 or (nuclear_signal and russia_gov_level >= 2):
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'nuclear_rhetoric_escalation'),
-            'status':  'BREACHED' if nuclear_level >= 4 else 'APPROACHING',
-            'trigger': f'Nuclear rhetoric L{nuclear_level} -- Kremlin/Medvedev nuclear language above baseline',
-        })
-
-    # ── Tactical nuclear deployment ──
-    if nuclear_level >= 4 or ssbn_signal:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'tactical_nuclear_deployment'),
-            'status':  'BREACHED' if nuclear_level >= 5 else 'APPROACHING',
-            'trigger': f'SSBN/deployment signals detected + nuclear L{nuclear_level}',
-        })
-
-    # ── Kaliningrad escalation ──
-    if kaliningrad_signal or (nato_flank_level >= 3 and belarus_level >= 2):
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'kaliningrad_escalation'),
-            'status':  'BREACHED' if nato_flank_level >= 5 else 'APPROACHING',
-            'trigger': f'Kaliningrad/Suwalki language + NATO flank L{nato_flank_level}',
-        })
-
-    # ── Article 5 trigger language ──
-    if nato_flank_level >= 4 or baltic_level >= 4:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'article5_trigger_language'),
-            'status':  'BREACHED' if (nato_flank_level >= 5 or baltic_level >= 5) else 'APPROACHING',
-            'trigger': f'NATO flank L{nato_flank_level}, Baltic L{baltic_level} -- approaching Article 5 territory',
-        })
-
-    # ── Suwalki Gap threat ──
-    if nato_flank_level >= 4 and belarus_level >= 3:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'suwalki_gap_threat'),
-            'status':  'APPROACHING',
-            'trigger': f'NATO flank L{nato_flank_level} + Belarus L{belarus_level} -- Suwalki gap pressure pattern',
-        })
-
-    # ── Russian major advance ──
-    if gnd_level >= 3:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'russian_major_advance'),
-            'status':  'BREACHED' if gnd_level >= 4 else 'APPROACHING',
-            'trigger': f'Ground ops L{gnd_level} -- Russian advance signals in Ukraine',
-        })
-
-    # ── Ukraine collapse signal ──
-    if ukraine_collapse or (gnd_level >= 4 and ukraine_level <= 1):
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'ukraine_collapse_signal'),
-            'status':  'APPROACHING',
-            'trigger': 'Ukrainian military cohesion signals weakening -- front pressure',
-        })
-
-    # ── US aid suspension ──
-    if us_aid_suspend:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'us_aid_suspension'),
-            'status':  'APPROACHING',
-            'trigger': 'US aid suspension signals detected -- Russian opportunity window opening',
-        })
-
-    # ── SSBN unusual deployment ──
-    if ssbn_signal or arctic_level >= 4:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'ssbn_unusual_deployment'),
-            'status':  'BREACHED' if arctic_level >= 5 else 'APPROACHING',
-            'trigger': f'SSBN/Northern Fleet signals + Arctic L{arctic_level}',
-        })
-
-    # ── Arctic territorial escalation ──
-    if svalbard_signal or arctic_level >= 3:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'arctic_territorial_escalation'),
-            'status':  'BREACHED' if arctic_level >= 4 else 'APPROACHING',
-            'trigger': f'Arctic L{arctic_level} -- territorial/Svalbard signals',
-        })
-
-    # ── GIUK Gap surge ──
-    if ssbn_signal and arctic_level >= 3:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'giuk_gap_surge'),
-            'status':  'APPROACHING',
-            'trigger': 'SSBN + Arctic elevated -- GIUK Gap surge pattern',
-        })
-
-    # ── Cross-theater coordination ──
-    high_vectors = sum(1 for lvl in [
-        nuclear_level, nato_flank_level, arctic_level, hybrid_level, gnd_level
-    ] if lvl >= 3)
-    if cross_theater or high_vectors >= 3:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'cross_theater_coordination'),
-            'status':  'BREACHED' if high_vectors >= 4 else 'APPROACHING',
-            'trigger': f'{high_vectors} vectors at L3+ simultaneously -- maximum pressure pattern',
-        })
-
-    # ── Hybrid infrastructure attack ──
-    if hybrid_signal or hybrid_level >= 3:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'hybrid_infrastructure_attack'),
-            'status':  'BREACHED' if hybrid_level >= 4 else 'APPROACHING',
-            'trigger': f'Hybrid attack signals detected + hybrid L{hybrid_level}',
-        })
-
-    # ─── v1.1: CARIBBEAN FOOTHOLD / 1962 COALITION SCORING ───
-    # Detect Russia kinetic weapons transfer to Cuba (drones, advanced systems)
-    russia_cuba_weapons_signal = _scan_articles(
-        ['russia_military', 'russia_government'],
-        ['russia cuba drone', 'russia cuba weapons', 'russian drones to cuba',
-         'russia drone transfer cuba', 'geran cuba', 'russian shahed cuba',
-         'russia drone supply cuba', 'russia drone shipment cuba',
-         'russia exports drones cuba', 'russia military equipment cuba',
-         'cuba 300 drones', 'cuba drones russia', 'russia cuba weapons transfer',
-         'russia weapons cuba']
-    )
-    russia_cuba_weapons_level = scan_data.get('russia_cuba_weapons_level', 0)
-    if russia_cuba_weapons_signal or russia_cuba_weapons_level >= 3:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'russia_cuba_kinetic_weapons_transfer'),
-            'status':  'BREACHED' if russia_cuba_weapons_signal else 'APPROACHING',
-            'trigger': 'Russia kinetic weapons transfer to Cuba detected — 1962 Caribbean foothold pattern' if russia_cuba_weapons_signal else f'russia_cuba_weapons L{russia_cuba_weapons_level} — approaching threshold',
-        })
-
-    # Detect Cuban-soldiers-Ukraine procurement signal
-    cuban_soldiers_signal = _scan_articles(
-        ['russia_military', 'russia_government'],
-        ['cuban soldiers ukraine', 'cuban fighters russia',
-         'cubans fighting russia', '5000 cuban soldiers',
-         'cuban mercenaries russia', 'cuban recruits russia',
-         'russia pays cuban', '25000 cuban soldier', '$25000 cuban',
-         'putin meat grinder cuban', 'cuban troops russia ukraine']
-    )
-    if cuban_soldiers_signal:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'russia_cuban_soldiers_procurement'),
-            'status':  'BREACHED',
-            'trigger': 'Cuban soldier deployment to Russian Ukraine operations confirmed',
-        })
-
-    # Detect Russia+Iran coalition staging (BOTH active)
-    # This is the highest-tier coalition signal — requires russia_cuba_weapons AND iran-side signal
-    iran_cuba_signal = _scan_articles(
-        ['russia_military', 'russia_government'],
-        ['iran cuba drone', 'iran cuba weapons', 'iran shahed cuba',
-         'iran mohajer cuba', 'iranian advisers cuba', 'iranian advisers havana',
-         'iran drone transfer cuba', 'iran cuba drone shipment',
-         'iran cuba drone pipeline']
-    )
-    if russia_cuba_weapons_signal and iran_cuba_signal:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'russia_iran_cuba_coalition_active'),
-            'status':  'BREACHED',
-            'trigger': 'Russia AND Iran simultaneously staging weapons in Cuba — multilateralized 1962 coalition pattern active',
-        })
-
-    # ── De-escalation signals ──
-    if trump_putin_talks:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'trump_putin_diplomatic_engagement'),
-            'status':  'APPROACHING',
-            'trigger': 'Trump-Putin diplomatic engagement signals detected',
-        })
-
-    if ceasefire_signal:
-        triggered.append({
-            **next(r for r in RED_LINES if r['id'] == 'ukraine_ceasefire_framework'),
-            'status':  'APPROACHING',
-            'trigger': 'Ukraine ceasefire/negotiations language detected',
-        })
-
-    # Sort: BREACHED first, then by severity desc, deescalation last
-    triggered.sort(key=lambda x: (
-        0 if x['status'] == 'BREACHED' else 1,
-        -x['severity'],
-        0 if x['category'] != 'deescalation' else 1
-    ))
+    for base in RED_LINES:
+        rid = base['id']
+        if rid not in RED_LINE_TRIGGERS:
+            continue
+        br, ap = RED_LINE_TRIGGERS[rid]
+        sc = score_line(corpus, br, ap)
+        vs = _vector_status(rid, v)
+        status = sc['status']
+        via = 'evidence'
+        if vs and _RANK[vs] > _RANK[status]:
+            status, via = vs, 'vector'
+        if rid == 'russia_iran_cuba_coalition_active' and status == 'BREACHED':
+            # needs BOTH halves corroborated
+            ru = score_line(corpus, *RED_LINE_TRIGGERS['russia_cuba_kinetic_weapons_transfer'])
+            if ru['status'] != 'BREACHED':
+                status = 'APPROACHING'
+        if status == 'INACTIVE':
+            continue
+        if via == 'vector':
+            trig = f"Set by the corroborated vector read ({base.get('category', '')} levels this scan)"
+        else:
+            n = sc['breach_outlets'] if status == 'BREACHED' else max(sc['breach_outlets'], sc['approach_outlets'])
+            ev = sc['evidence'][0] if sc['evidence'] else None
+            trig = (f"{status.title()} on {n} outlet{'s' if n != 1 else ''}"
+                    + (f' -- e.g. "{ev["title"][:90]}" ({ev["outlet"]})' if ev else ''))
+        triggered.append({**base, **sc, 'status': status, 'via': via, 'trigger': trig})
+    triggered.sort(key=lambda x: (-_RANK[x['status']], -x.get('severity', 0)))
     return triggered
 
 
-def _score_green_lines(scan_data):
-    """Evaluate Russia diplomatic off-ramp signals."""
+def _talks_track(corpus):
+    act = find(corpus, TALKS_ACTIVE)
+    strain = find(corpus, TALKS_STRAIN)
+    na, ns = len(act['outlets']), len(strain['outlets'])
+    if na >= 2 and ns >= 2:
+        status = 'contested'
+        read = (f'The talks are in the news ({na} outlets) alongside stall/rejection language ({ns} outlets): '
+                'a round is being tested, not settled.')
+    elif na >= 2:
+        status = 'active'
+        read = f'The trilateral track is live in the reporting ({na} outlets) without corroborated breakdown language.'
+    elif ns >= 2:
+        status = 'strain'
+        read = f'Stall or rejection language ({ns} outlets) without the round itself in view.'
+    elif na == 1:
+        status = 'signalled'
+        read = 'One outlet carries the talks this cycle -- signalled, not corroborated.'
+    else:
+        status = 'quiet'
+        read = 'The talks are not in this cycle\'s corpus; the dated baseline below is the context.'
+    return {'status': status, 'talks_outlets': na, 'strain_outlets': ns, 'read': read,
+            'baseline': TALKS_BASELINE, 'evidence': (act['evidence'][:2] + strain['evidence'][:2])[:4]}
+
+
+def _top_indicator(scan_data, red_lines, talks, health):
+    br = [r for r in red_lines if r['status'] == 'BREACHED']
+    nuc = scan_data.get('nuclear_level', 0) or 0
+    gnd = scan_data.get('ground_ops_level', 0) or 0
+    nat = scan_data.get('nato_flank_level', 0) or 0
+    hyb = scan_data.get('hybrid_level', 0) or 0
+    beyond = [n for n, lv in (('the NATO flank', nat), ('hybrid operations', hyb), ('nuclear signalling', nuc),
+                              ('drone incursions', scan_data.get('drone_incursion_level', 0) or 0),
+                              ('the Black Sea', scan_data.get('black_sea_level', 0) or 0)) if lv >= 3]
+    if gnd >= 5:
+        line = 'Russia\'s war in Ukraine is above its grinding baseline this cycle -- a strategic-escalation signal is corroborated.'
+    elif br:
+        line = f"{br[0]['label']}: corroborated this cycle."
+    elif len(beyond) >= 2:
+        line = 'Beyond Ukraine, Moscow is pressing more than one front at once: ' + ' and '.join(beyond[:2]) + '.'
+    elif beyond:
+        line = f'Beyond the war in Ukraine, the live front this cycle is {beyond[0]}.'
+    elif talks['status'] in ('active', 'contested'):
+        line = 'War at its grinding baseline while the Abu Dhabi talks track is live -- watch whether talk changes tempo.'
+    else:
+        line = 'The war grinds at its baseline; no second front is corroborated this cycle.'
+    return ('Thin read -- ' + line) if health['thin'] else line
+
+
+def _score_green_lines(scan_data, corpus=None):
+    """Evaluate Russia diplomatic off-ramp signals.
+    v1.2.0: reads the whole corpus (any outlet) -- de-escalation never inflates
+    a risk read, so one outlet may activate a green line."""
     actors = scan_data.get('actors', {})
     nuclear_level = scan_data.get('nuclear_level', 0)
     arctic_level  = scan_data.get('arctic_level', 0)
+    corpus = corpus if corpus is not None else _corpus(scan_data)
 
     def _scan_articles(actor_ids, keywords):
-        for aid in actor_ids:
-            for art in actors.get(aid, {}).get('top_articles', []):
-                title = art.get('title', '').lower()
-                if any(kw.lower() in title for kw in keywords):
-                    return True
-        return False
+        return bool(find(corpus, keywords)['outlets'])
 
     # v1.2 (May 24 2026): All green-line scan keyword sets expanded
     # to catch EARLY-TREND signals. Pattern: catch the diplomatic warming
@@ -948,8 +888,11 @@ def _score_green_lines(scan_data):
     # Active when Hungary's axis-reversal pattern is firing AND the Russia-Hungary
     # axis level has dropped (Russia is on the losing end of the reversal).
     # Reversed if orban_revival_signal fires.
-    hu_axis_reversal = scan_data.get('hungary_axis_reversal_active', False)
-    hu_orban_revival = scan_data.get('hungary_orban_revival_signal', False)
+    # v1.2.0: the reversal is a standing fact since April; Hungary v1.1.0 publishes
+    # its posture (holding / tested / eroding). The 3-trigger flag stays as a fallback.
+    hu_posture = scan_data.get('hungary_reversal_posture', 'unread')
+    hu_axis_reversal = scan_data.get('hungary_axis_reversal_active', False) or hu_posture in ('holding', 'tested')
+    hu_orban_revival = scan_data.get('hungary_orban_revival_signal', False) or hu_posture == 'eroding'
     hu_russia_axis_level = scan_data.get('hungary_russia_axis_level', 0)
 
     if hu_axis_reversal and not hu_orban_revival:
@@ -957,7 +900,8 @@ def _score_green_lines(scan_data):
             hu_status = 'ACTIVE'
             hu_trigger = (
                 f'Hungary axis reversal confirmed; Russia-Hungary axis at L{hu_russia_axis_level} '
-                f'(reversed from pre-election baseline). EU veto vehicle lost.'
+                f'(reversed from pre-election baseline). EU veto vehicle lost: Budapest lifted its '
+                f'Ukraine-accession veto (June, October 2026) and unlocked EUR 16.4bn of EU funds (May).'
             )
         else:
             hu_status = 'SIGNALED'
@@ -1252,8 +1196,11 @@ def _build_so_what(scan_data, red_lines_triggered, historical_matches,
     # ── Hungary axis reversal narrative (added May 18 2026) ──
     # The April 2026 Tisza/Magyar election is one of the most consequential
     # structural shifts for Russia in 2026: loss of primary EU veto vehicle.
-    hu_axis_reversal = scan_data.get('hungary_axis_reversal_active', False)
-    hu_orban_revival = scan_data.get('hungary_orban_revival_signal', False)
+    # v1.2.0: the reversal is a standing fact since April; Hungary v1.1.0 publishes
+    # its posture (holding / tested / eroding). The 3-trigger flag stays as a fallback.
+    hu_posture = scan_data.get('hungary_reversal_posture', 'unread')
+    hu_axis_reversal = scan_data.get('hungary_axis_reversal_active', False) or hu_posture in ('holding', 'tested')
+    hu_orban_revival = scan_data.get('hungary_orban_revival_signal', False) or hu_posture == 'eroding'
     hu_russia_axis_level = scan_data.get('hungary_russia_axis_level', 0)
     hu_ukraine_track_level = scan_data.get('hungary_ukraine_track_level', 0)
     hu_druzhba_status = scan_data.get('druzhba_pipeline_status', 'unknown')
@@ -1265,17 +1212,15 @@ def _build_so_what(scan_data, red_lines_triggered, historical_matches,
         elif hu_druzhba_status == 'disrupted':
             druzhba_clause = ' Druzhba pipeline currently disrupted -- monitor for repair cadence.'
         situation_parts.append(
-            f'HUNGARY AXIS REVERSAL ACTIVE: Russia has lost its primary EU veto vehicle. '
-            f'Tisza/Magyar government (post-April 12 2026 election) drives EU re-integration, '
-            f'lifted Ukraine loan veto, restored NATO weapons transit, returned $82M Oschadbank '
-            f'shipment. Russia-Hungary axis at L{hu_russia_axis_level} (reversed from pre-election '
-            f'baseline). Hungary-Ukraine bilateral track at L{hu_ukraine_track_level} -- normalization '
-            f'pathway open (Transcarpathia minority dispute, Magyar pledged "strong NATO ally").'
+            f'HUNGARY: Russia has lost its primary EU veto vehicle (Hungary posture: {hu_posture}). '
+            f'Since the April 12 2026 election the Magyar government has unlocked EUR 16.4bn of EU funds, '
+            f'lifted its veto on Ukraine\'s accession clusters (June; more after Kyiv\'s Oct 12 minority-rights '
+            f'law) and put Rosatom\'s Paks II under review (decision end-2026 / early 2027). '
+            f'Russia-Hungary axis at L{hu_russia_axis_level}; Hungary-Ukraine track at L{hu_ukraine_track_level}.'
             f'{druzhba_clause} '
-            f'Strategic consequence: hybrid influence operations card lost in EU institutional '
-            f'decision-making. Russia\'s remaining EU-sympathetic vectors narrow to Slovakia and '
-            f'Serbia. Watch for compensatory escalation on Ukraine front or accelerated hybrid '
-            f'pressure on Slovakia (Fico) and SPS Serbia.'
+            f'Strategic consequence: the hybrid influence card inside EU decision-making is gone; Moscow\'s '
+            f'EU-sympathetic vectors narrow to Slovakia. The levers left are energy (Druzhba, gas, Paks II) -- '
+            f'and Orban himself, now reportedly floated for UN Secretary-General with Russian support.'
         )
     elif hu_orban_revival:
         situation_parts.append(
@@ -1443,8 +1388,19 @@ def interpret_signals(scan_data):
     Returns interpretation dict.
     """
     try:
-        red_lines   = _score_red_lines(scan_data)
-        green_lines = _score_green_lines(scan_data)
+        corpus      = _corpus(scan_data)
+        health      = corpus_health(scan_data, corpus, THIN_MIN_ARTICLES)
+        red_lines   = _score_red_lines(scan_data, corpus)
+        green_lines = _score_green_lines(scan_data, corpus)
+        talks       = _talks_track(corpus)
+        # v1.2.0: a corroborated talks round is a green line in its own right.
+        if talks['status'] in ('active', 'contested') and not any(
+                g['id'] == 'trump_putin_talks_active' for g in green_lines):
+            green_lines.insert(0, {
+                **next(g for g in GREEN_LINES if g['id'] == 'trump_putin_talks_active'),
+                'status': 'ACTIVE' if talks['status'] == 'active' else 'SIGNALED',
+                'trigger': talks['read'],
+            })
         diplomatic  = _score_diplomatic_track(scan_data, green_lines)
         # v1.1: inject triggered red-line IDs so _match_historical can detect
         # 1962-pattern signals (russia_cuba_weapons, etc)
@@ -1456,14 +1412,26 @@ def interpret_signals(scan_data):
         breached    = [r for r in red_lines if r['status'] == 'BREACHED']
         approaching = [r for r in red_lines if r['status'] == 'APPROACHING']
         active_gl   = [g for g in green_lines if g['status'] == 'ACTIVE']
+        top_indicator = _top_indicator(scan_data, red_lines, talks, health)
+
+        so_what['talks_track'] = talks['read']
+        so_what['top_indicator'] = top_indicator
+        if health['thin']:
+            so_what['scenario'] = 'THIN READ -- ' + str(so_what.get('scenario', ''))
+            so_what['situation'] = ('THIN READ -- under-read scan (' + health['reason'] + '); quiet lines '
+                                    'may be unread. ') + str(so_what.get('situation', ''))
 
         return {
             'so_what':             so_what,
+            'top_indicator':       top_indicator,
+            'thin_read':           health['thin'],
+            'corpus_health':       health,
+            'talks_track':         talks,
             'red_lines': {
                 'triggered':         red_lines,
                 'breached_count':    len(breached),
                 'approaching_count': len(approaching),
-                'highest_severity':  max((r['severity'] for r in red_lines), default=0),
+                'highest_severity':  max((r['severity'] for r in breached), default=0),
             },
             'green_lines': {
                 'triggered':         green_lines,
@@ -1473,19 +1441,21 @@ def interpret_signals(scan_data):
             },
             'diplomatic_track':    diplomatic,
             'historical_matches':  historical,
-            'interpreter_version': '1.0.0',
+            'interpreter_version': INTERPRETER_VERSION,
             'interpreted_at':      datetime.now(timezone.utc).isoformat(),
         }
 
     except Exception as e:
         print(f'[Russia Interpreter] Error: {str(e)[:120]}')
         return {
-            'so_what':            {'scenario': 'Interpreter error', 'assessment': str(e)[:200]},
+            'so_what':            {'scenario': 'Interpreter error -- unread, not calm', 'assessment': str(e)[:200]},
+            'top_indicator':      'Interpreter error this cycle -- unread, not calm.',
+            'thin_read':          True,
             'red_lines':          {'triggered': [], 'breached_count': 0, 'approaching_count': 0, 'highest_severity': 0},
             'green_lines':        {'triggered': [], 'active_count': 0, 'signaled_count': 0, 'diplomatic_score': 0},
             'diplomatic_track':   {'score': 0, 'scenario': 'Unknown', 'maximum_pressure': False},
             'historical_matches': [],
-            'interpreter_version': '1.0.0',
+            'interpreter_version': INTERPRETER_VERSION,
             'error':              str(e)[:200],
         }
 
@@ -1590,12 +1560,12 @@ def build_top_signals(scan_data):
             'priority':  14 if breached else 12,
             'category':  'red_line',
             'theatre':   'russia',
-            'level':     5 if breached else 4,
+            'level':     4 if breached else 3,     # v1.2.0: L5 only via the kinetic ladder
             'icon':      rl.get('icon', '\U0001F6A8'),
             'color':     rl.get('color', '#dc2626'),
             'short_text': '\U0001F1F7\U0001F1FA RUSSIA red line ' +
                           ('BREACHED' if breached else 'approaching') + ': ' + rl.get('label', ''),
-            'long_text': (rl.get('detail', '') + ' ' + rl.get('source', ''))[:480],
+            'long_text': (rl.get('trigger', '') + '. ' + rl.get('detail', ''))[:480],
         })
 
     # 2. Green lines -- de-escalatory, the peace signals (momentum-weighted)

@@ -1,7 +1,7 @@
 """
 Asifah Analytics — Russia Stability Index Backend
 Europe Backend Module
-v1.2.0 — June 1 2026 (Financial Pulse Card upgrade)
+v1.3.0 — Nov 3 2026 (v1.2.0 June 1 2026, Financial Pulse Card upgrade)
 
 ANALYTICAL FRAME:
 Russia's stability is measured on an INVERTED scale from its peer autocracies —
@@ -61,6 +61,20 @@ CHANGELOG:
                        - ADDED sparkline-derived 24h math for Yahoo fetches
                        - ADDED per-tile market_status (MOEX hours UTC+3)
                        - PRESERVED full v1.1.0 stability scoring logic untouched
+  v1.3.0 (2026-11-03): Evidence + freshness pass (step 14)
+                       - Article vectors obey the platform corroboration rule: one
+                         article could set leadership L3 ("putin health") and pull
+                         the score down 9 points. Now L3+ needs 2 outlets; one
+                         outlet tops out at L2 (europe_signal_matcher).
+                       - GDELT through gdelt_gateway (was direct, outside the
+                         circuit breaker); publisher = domain.
+                       - /history read a Redis LIST with GET (always empty) -> LRANGE.
+                       - Stale reference data re-dated: CBR key rate 14% (held Oct 23
+                         2026; it read "21%, 2024-10"), casualties ~1.5M killed and
+                         wounded (UK MoD, Sep 2026; it read "300,000+"), Belousov /
+                         Shoigu added to the leadership roster, peace-talks line.
+                       - top_indicator: one plain-language line for russia.html.
+                       - ?force=true rate-limited (10 min).
 
 COPYRIGHT 2025-2026 Asifah Analytics. All rights reserved.
 """
@@ -72,6 +86,19 @@ import time
 import requests
 from datetime import datetime, timezone, timedelta
 from flask import jsonify, request
+
+try:
+    from europe_signal_matcher import corroborated_vector as _corroborated
+except Exception:
+    _corroborated = None
+try:
+    from gdelt_gateway import gdelt_fetch as _gw_fetch
+except Exception:
+    _gw_fetch = None
+
+STABILITY_VERSION = '1.3.0'
+_last_force = {'ts': 0.0}
+FORCE_MIN_INTERVAL = 600
 
 # ============================================
 # CONFIG
@@ -135,6 +162,24 @@ RUSSIA_LEADERSHIP = [
         'data_as_of': '2026-04-11',
     },
     {
+        'name':      'Andrei Belousov',
+        'role':      'Defence Minister',
+        'flag':      '🇷🇺',
+        'since':     '2024',
+        'note':      'Economist installed in May 2024 to run the war economy behind the army -- procurement, cost, output.',
+        'risk_note': None,
+        'data_as_of': '2024-05',   # appointment date; roster re-checked Nov 2026 only for these additions
+    },
+    {
+        'name':      'Sergei Shoigu',
+        'role':      'Security Council Secretary',
+        'flag':      '🇷🇺',
+        'since':     '2024',
+        'note':      'Moved from Defence to the Security Council in May 2024 as deputies faced corruption arrests.',
+        'risk_note': None,
+        'data_as_of': '2024-05',
+    },
+    {
         'name':      'Valery Gerasimov',
         'role':      'Chief of General Staff',
         'flag':      '🇷🇺',
@@ -167,7 +212,7 @@ STATIC_ECONOMIC = {
     'defense_spending_gdp_pct': {'value': '6–8%', 'note': 'Highest since Cold War', 'source': 'SIPRI', 'source_url': 'https://www.sipri.org/', 'data_as_of': '2025'},
     'frozen_reserves_usd':      {'value': '~$300B', 'note': 'Frozen in Western jurisdictions', 'source': 'EU/G7/US Treasury', 'source_url': 'https://www.treasury.gov/resource-center/sanctions', 'data_as_of': '2024'},
     'g7_oil_price_cap':         {'value': '$60/bbl', 'note': 'Russia consistently selling above via shadow fleet', 'source': 'G7/IEA', 'source_url': 'https://www.iea.org/', 'data_as_of': '2024'},
-    'cbr_key_rate':             {'value': '21%', 'note': 'Emergency rate to defend ruble', 'source': 'Central Bank of Russia', 'source_url': 'https://www.cbr.ru/', 'data_as_of': '2024-10'},
+    'cbr_key_rate':             {'value': '14%', 'note': 'Held Oct 23 2026 (peak 21% in late 2024); inflation ~6.8% (Oct 19)', 'source': 'Central Bank of Russia', 'source_url': 'https://www.cbr.ru/eng/hd_base/keyrate/', 'data_as_of': '2026-10-23'},
     'swift_status':             {'value': 'EXCLUDED', 'note': 'Major banks disconnected Feb 2022', 'source': 'EU Council', 'source_url': 'https://www.consilium.europa.eu/', 'data_as_of': '2022-02'},
     'brain_drain_estimate':     {'value': '500K–1M', 'note': 'Emigrated since Feb 2022, disproportionately tech-skilled', 'source': 'Novaya Gazeta / academic est.', 'source_url': 'https://novayagazeta.ru/', 'data_as_of': '2024'},
     'china_trade_bilateral':    {'value': '$240B+/yr', 'note': 'Russia\'s primary trading partner, replacing Western goods', 'source': 'SIPRI / Chinese Customs', 'source_url': 'https://www.sipri.org/', 'data_as_of': '2024'},
@@ -175,7 +220,8 @@ STATIC_ECONOMIC = {
 
 STATIC_WAR_STATUS = {
     'territory_held_pct':       {'value': '~18%', 'note': 'of Ukraine incl. Crimea', 'source': 'ISW', 'source_url': 'https://www.understandingwar.org/', 'data_as_of': '2026-04'},
-    'estimated_casualties':     {'value': '300,000+', 'note': 'KIA + WIA since Feb 2022', 'source': 'UK MoD / USG estimates', 'source_url': 'https://www.gov.uk/government/organisations/ministry-of-defence', 'data_as_of': '2026-04'},
+    'estimated_casualties':     {'value': '~1.5 million', 'note': 'Killed + wounded since Feb 2022 (rounded)', 'source': 'UK Ministry of Defence', 'source_url': 'https://www.gov.uk/government/organisations/ministry-of-defence', 'data_as_of': '2026-09'},
+    'peace_talks':              {'value': 'Abu Dhabi round', 'note': 'Trilateral US-Russia-Ukraine round planned for the first half of November', 'source': 'Kremlin / Al Jazeera', 'source_url': 'https://www.aljazeera.com/news/2026/10/23/russia-ukraine-talks-planned-for-november-in-uae-kremlin', 'data_as_of': '2026-10-23'},
     'icc_warrant_status':       {'value': 'ACTIVE', 'note': 'Putin + Lvova-Belova, March 2023', 'source': 'ICC', 'source_url': 'https://www.icc-cpi.int/', 'data_as_of': '2023-03'},
     'active_front_km':          {'value': '~1,000 km', 'note': 'Contact line Zaporizhzhia to Kharkiv', 'source': 'ISW', 'source_url': 'https://www.understandingwar.org/', 'data_as_of': '2026-04'},
     'partial_mobilization_called': {'value': '~300,000', 'note': 'Sept 2022 partial mobilization', 'source': 'Russian govt / RUSI', 'source_url': 'https://www.rusi.org/', 'data_as_of': '2022-09'},
@@ -979,6 +1025,23 @@ def _fetch_newsapi_articles(query, days=3, max_results=30):
 
 
 def _fetch_gdelt_articles(query, language='eng', days=3, max_records=25):
+    if _gw_fetch:
+        try:
+            raw = _gw_fetch(query, language=language, timespan=f'{days}d', maxrecords=max_records,
+                            label=f'russia-stability/{language}') or []
+            out = []
+            for a in raw:
+                url = a.get('url', '') or ''
+                host = url.split('/')[2].replace('www.', '') if url.count('/') >= 2 and '//' in url else ''
+                src = a.get('source') if isinstance(a.get('source'), str) else ''
+                dom = a.get('domain') or src or host
+                out.append({'title': a.get('title', ''), 'url': url, 'domain': dom,
+                            'seendate': a.get('published', ''), 'source': {'name': dom}})
+            print(f"[Russia Stability] GDELT(gw) '{query[:40]}': {len(out)} articles")
+            return out
+        except Exception as e:
+            print(f"[Russia Stability] GDELT gateway error: {str(e)[:80]}")
+            return []
     try:
         params = {
             'query':      query,
@@ -1007,7 +1070,16 @@ def _fetch_gdelt_articles(query, language='eng', days=3, max_records=25):
 
 
 def _score_vector_from_articles(articles, keyword_dict):
-    """Score articles against a keyword vector. Returns level 0-5."""
+    """Score articles against a keyword vector. Returns level 0-5.
+    v1.3.0: corroboration rule -- L3+ needs two outlets; one outlet tops out
+    at L2. Falls back to the old single-article read only if the matcher is
+    missing."""
+    if _corroborated:
+        try:
+            lvl, _phrase, _n = _corroborated(articles, keyword_dict)
+            return lvl
+        except Exception as e:
+            print(f"[Russia Stability] matcher error, literal fallback: {str(e)[:80]}")
     max_level = 0
     for art in articles:
         title = (art.get('title') or art.get('name') or '').lower()
@@ -1024,6 +1096,37 @@ def _score_vector_from_articles(articles, keyword_dict):
 # ============================================
 # STABILITY SCORE COMPUTATION
 # ============================================
+
+_VECTOR_WORDS = {
+    'sanctions_economy': 'the war economy (ruble, oil, MOEX)',
+    'military_posture':  'military posture (read from the rhetoric tracker)',
+    'internal_cohesion': 'internal cohesion (protest, desertion, emigration)',
+    'leadership':        'the leadership (elite cohesion, succession)',
+    'global_alignment':  'global alignment (China/India buyers, sanctions)',
+}
+
+
+def _top_indicator(score, label, vector_levels, ruble, brent, n_articles):
+    """One plain-language line: the score's meaning and its weakest vector."""
+    worst = max(vector_levels.items(), key=lambda kv: (kv[1], kv[0] != 'military_posture'))
+    others = {k: v for k, v in vector_levels.items() if k != 'military_posture'}
+    worst_civil = max(others.items(), key=lambda kv: kv[1]) if others else worst
+    money = []
+    if ruble:
+        money.append(f'ruble {ruble:.0f}/$')
+    if brent:
+        money.append(f'Brent ${brent:.0f}')
+    money_txt = (' (' + ', '.join(money) + ')') if money else ''
+    if worst_civil[1] >= 3:
+        line = (f"Russia reads {label} ({score}/100): the war is priced in; the strain showing this cycle is "
+                f"{_VECTOR_WORDS[worst_civil[0]]} at L{worst_civil[1]}{money_txt}.")
+    else:
+        line = (f"Russia reads {label} ({score}/100): the war is priced in and no home-front vector is above "
+                f"L2{money_txt} -- the system is absorbing the cost, not cracking.")
+    if n_articles < 15:
+        line = 'Thin read -- ' + line
+    return line
+
 
 def _compute_stability_score(vector_levels):
     """
@@ -1196,6 +1299,9 @@ def run_russia_stability_scan():
     scan_time = round(time.time() - scan_start, 1)
     scanned_at = datetime.now(timezone.utc).isoformat()
 
+    top_indicator = _top_indicator(stability_score, label, vector_levels, ruble_rate, brent_price,
+                                   len(all_articles))
+
     print(f"[Russia Stability] Score: {stability_score} ({label}) in {scan_time}s, "
           f"{len(all_articles)} articles")
 
@@ -1249,7 +1355,9 @@ def run_russia_stability_scan():
         'scan_time_seconds':    scan_time,
         'scanned_at':           scanned_at,
         'from_cache':           False,
-        'version':              '1.2.0-russia-financial-pulse-upgrade',
+        'top_indicator':        top_indicator,
+        'thin_read':            len(all_articles) < 15,
+        'version':              STABILITY_VERSION,
     }
 
     # Cache to Redis
@@ -1305,6 +1413,10 @@ def register_russia_stability_endpoints(app):
         ?force=true bypasses cache and runs a fresh scan.
         """
         force = request.args.get('force', 'false').lower() in ('true', '1', 'yes')
+        if force and time.time() - _last_force['ts'] < FORCE_MIN_INTERVAL:
+            force = False          # v1.3.0: rate-limited -- serve the cache
+        if force:
+            _last_force['ts'] = time.time()
 
         if not force:
             cached = _redis_get(CACHE_KEY)
@@ -1375,19 +1487,38 @@ def register_russia_stability_endpoints(app):
             'commodity_pressure': commodity_pressure_data,
             # v1.2.0 Financial Pulse Card payload (4 tiles: IMOEX + USD/RUB + Brent+Urals + MOEX.ME)
             'financial_pulse':  cached.get('financial_pulse'),
-            'version':          '1.2.0-russia-financial-pulse-upgrade',
+            'top_indicator':    cached.get('top_indicator', ''),
+            'thin_read':        cached.get('thin_read', False),
+            'war_status':       cached.get('war_status', STATIC_WAR_STATUS),
+            'static_economic':  cached.get('static_economic', STATIC_ECONOMIC),
+            'version':          STABILITY_VERSION,
         })
 
     @app.route('/api/stability/russia/history', methods=['GET'])
     def russia_stability_history():
         """Return stability score history for trend chart."""
-        history = _redis_get(HISTORY_KEY)
-        if not isinstance(history, list):
-            history = []
+        # v1.3.0: history is a Redis LIST (LPUSH) -- GET on a list fails, which
+        # is why this endpoint always returned []. Read it with LRANGE.
+        history = []
+        try:
+            if UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN:
+                r = requests.get(f"{UPSTASH_REDIS_URL}/lrange/{HISTORY_KEY}/0/119",
+                                 headers={"Authorization": f"Bearer {UPSTASH_REDIS_TOKEN}"}, timeout=5)
+                for item in (r.json().get('result') or []):
+                    try:
+                        e = json.loads(item)
+                        if isinstance(e, dict):
+                            history.append(e)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[Russia Stability] history read error: {str(e)[:80]}")
+        history.reverse()
         return jsonify({
             'success': True,
             'count':   len(history),
-            'history': history[:120],
+            'history': history,
+            'entries': history,
         })
 
     # Start background refresh thread

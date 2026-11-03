@@ -1,5 +1,5 @@
 """
-europe_feeds.py -- v1.0.0 -- November 3, 2026
+europe_feeds.py -- v1.0.1 -- November 3, 2026   (v1.0.1: hu / pl / ro / uk Google News editions)
 Asifah Analytics -- Europe backend (shared fetch helper, no Flask)
 
 ONE place for the plumbing the Greenland / Cyprus / Azerbaijan trackers each
@@ -29,7 +29,7 @@ from urllib.parse import quote_plus, urlparse
 
 import requests
 
-FEEDS_VERSION = '1.0.0'
+FEEDS_VERSION = '1.0.1'
 
 try:
     from gdelt_gateway import gdelt_fetch_probed as _gw_fetch_probed
@@ -47,7 +47,9 @@ def user_agent(tracker):
 
 def gnews_url(query, lang='en'):
     region = {'en': ('en-US', 'US', 'US:en'), 'da': ('da', 'DK', 'DK:da'), 'tr': ('tr', 'TR', 'TR:tr'),
-              'el': ('el', 'GR', 'GR:el'), 'ru': ('ru', 'RU', 'RU:ru'), 'az': ('az', 'AZ', 'AZ:az')}
+              'el': ('el', 'GR', 'GR:el'), 'ru': ('ru', 'RU', 'RU:ru'), 'az': ('az', 'AZ', 'AZ:az'),
+              'hu': ('hu', 'HU', 'HU:hu'), 'pl': ('pl', 'PL', 'PL:pl'), 'ro': ('ro', 'RO', 'RO:ro'),
+              'uk': ('uk', 'UA', 'UA:uk')}
     hl, gl, ceid = region.get(lang, region['en'])
     return (f'https://news.google.com/rss/search?q={quote_plus(query + " when:7d")}'
             f'&hl={hl}&gl={gl}&ceid={ceid}')

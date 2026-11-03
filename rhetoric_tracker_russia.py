@@ -1,7 +1,22 @@
 """
 Asifah Analytics -- Russia Rhetoric & Pressure Tracker
 Europe Backend Module
-v1.5.0 -- Nov 3 2026 (v1.0.0 April 2026)
+v1.6.0 -- Nov 3 2026, evening (v1.0.0 April 2026)
+
+v1.6.0 (Nov 3 2026, evening -- step 14):
+  * Google News sweep (publisher-attributed via europe_feeds): Kremlin, nuclear,
+    NATO flank / drones, Black Sea, Arctic, the Abu Dhabi talks track. The two
+    old Google News RSS entries now credit the PUBLISHER, not the feed.
+  * `sensing` block (RSS / Google News / GDELT answered or not) -> the
+    interpreter's THIN READ test and the page banner.
+  * The interpreter now receives the whole corpus (popped before caching), so
+    red lines are scored per article across ALL outlets -- not the top-5
+    headlines of two actors.
+  * /history was always empty: history is a Redis LIST (LPUSH) but the endpoint
+    read it with GET. Now LRANGE, and it returns both `history` and `entries`.
+  * ?force=true is rate-limited to one live scan per 10 minutes (it runs the
+    full multi-source scan in the request).
+  * /summary carries top_indicator + thin_read. Honest User-Agent on RSS.
 
 v1.5.0 (Nov 3 2026):
   * Vector ladders obey the platform corroboration rule: L3+ needs two outlets
@@ -102,6 +117,30 @@ import urllib.parse
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from flask import jsonify, request
+
+from europe_feeds import gnews_url, fetch_rss_items, user_agent
+
+try:
+    from gdelt_gateway import gdelt_fetch_probed as _gw_fetch_probed
+except Exception:
+    _gw_fetch_probed = None
+
+TRACKER_VERSION = '1.6.0'
+LAST_SENSING = {}
+_last_force = {'ts': 0.0}
+FORCE_MIN_INTERVAL = 600
+
+# v1.6.0 Google News sweep -- publisher read per item (europe_feeds).
+GNEWS_QUERIES = [
+    ('Kremlin OR Putin OR Lavrov OR Peskov Ukraine', 'en'),
+    ('Russia nuclear OR Medvedev OR Oreshnik OR "nuclear doctrine"', 'en'),
+    ('Russia NATO Baltic OR Kaliningrad OR "Suwalki" OR "drone incursion"', 'en'),
+    ('"Black Sea" Russia OR Novorossiysk OR Sevastopol OR "shadow fleet"', 'en'),
+    ('"Northern Fleet" OR Arctic Russia OR Svalbard OR "undersea cable" Russia', 'en'),
+    ('Russia Ukraine talks "Abu Dhabi" OR trilateral OR ceasefire OR Witkoff OR Dmitriev', 'en'),
+    ('Russia sabotage OR cyberattack OR "hybrid attack" Europe', 'en'),
+    ('Кремль Путин Украина переговоры', 'ru'),
+]
 
 # Telegram signals (optional — graceful fallback if unavailable)
 try:
@@ -1772,7 +1811,7 @@ def _fetch_rss(url, source_name, weight=0.85, max_items=20):
     articles = []
     try:
         resp = requests.get(url, timeout=(5, 12),
-                            headers={'User-Agent': 'Mozilla/5.0 AsifahAnalytics/1.0'})
+                            headers={'User-Agent': user_agent('Russia')})
         if resp.status_code != 200:
             print(f"[Russia RSS] {source_name}: HTTP {resp.status_code}")
             return []
@@ -1824,8 +1863,16 @@ def _fetch_gdelt(query, language='eng', days=3, max_records=25):
     """
     if _GDELT_GATEWAY:
         _lang_map_gw = {'eng': 'en', 'rus': 'ru', 'ukr': 'uk'}
-        raw = _gw_fetch(query, language=language, timespan=f'{days}d',
-                        maxrecords=max_records, label=f'russia/{language}')
+        if _gw_fetch_probed:
+            raw, probe = _gw_fetch_probed(query, language=language, timespan=f'{days}d',
+                                          maxrecords=max_records, label=f'russia/{language}')
+            LAST_SENSING.setdefault('gdelt', {'attempted': 0, 'sensed': 0, 'items': 0})
+            LAST_SENSING['gdelt']['attempted'] += 1
+            LAST_SENSING['gdelt']['sensed'] += 1 if (probe or {}).get('sensed') else 0
+            LAST_SENSING['gdelt']['items'] += len(raw or [])
+        else:
+            raw = _gw_fetch(query, language=language, timespan=f'{days}d',
+                            maxrecords=max_records, label=f'russia/{language}')
         return [{
             'title':       a.get('title', ''),
             'description': a.get('title', ''),
@@ -1891,13 +1938,49 @@ def _fetch_all_articles():
         except Exception as e:
             print(f"[Russia Rhetoric] Telegram error: {str(e)[:80]}")
 
-    # RSS feeds
+    # RSS feeds (v1.6.0: Google News URLs go through europe_feeds so each item
+    # carries its PUBLISHER; everything is counted for the sensing block)
+    LAST_SENSING.clear()
+    LAST_SENSING.update({'rss': {'attempted': 0, 'ok': 0, 'items': 0},
+                         'gnews': {'attempted': 0, 'ok': 0, 'items': 0},
+                         'gdelt': {'attempted': 0, 'sensed': 0, 'items': 0}})
+
+    def _gnews_to_russia(items, weight=1.0):
+        return [{
+            'title': it['title'], 'description': it.get('description') or it['title'],
+            'url': it['url'], 'publishedAt': it.get('published', ''),
+            'source': {'name': it['source']}, 'content': it['title'],
+            'feed': 'gnews', 'source_weight_override': weight,
+        } for it in items]
+
     for key, src in RSS_SOURCES.items():
         try:
-            fetched = _fetch_rss(src['url'], src['name'], src.get('weight', 0.85))
+            if 'news.google.com' in src['url']:
+                LAST_SENSING['gnews']['attempted'] += 1
+                got, ok = fetch_rss_items(src['url'], 'Russia', max_items=20)
+                LAST_SENSING['gnews']['ok'] += 1 if ok else 0
+                fetched = _gnews_to_russia(got, src.get('weight', 1.0))
+                LAST_SENSING['gnews']['items'] += len(fetched)
+            else:
+                LAST_SENSING['rss']['attempted'] += 1
+                fetched = _fetch_rss(src['url'], src['name'], src.get('weight', 0.85))
+                LAST_SENSING['rss']['ok'] += 1 if fetched else 0
+                LAST_SENSING['rss']['items'] += len(fetched)
             articles.extend(fetched)
         except Exception as e:
             print(f"[Russia RSS] {key} error: {str(e)[:80]}")
+
+    for q, lang in GNEWS_QUERIES:
+        try:
+            LAST_SENSING['gnews']['attempted'] += 1
+            got, ok = fetch_rss_items(gnews_url(q, lang), 'Russia', max_items=20)
+            LAST_SENSING['gnews']['ok'] += 1 if ok else 0
+            fetched = _gnews_to_russia(got)
+            LAST_SENSING['gnews']['items'] += len(fetched)
+            articles.extend(fetched)
+            time.sleep(0.3)
+        except Exception as e:
+            print(f"[Russia GNews] {q[:30]} error: {str(e)[:80]}")
 
     # GDELT -- all language queues
     gdelt_count = 0
@@ -1924,6 +2007,10 @@ def _fetch_all_articles():
             unique.append(art)
 
     print(f"[Russia Rhetoric] After dedup: {len(unique)} articles")
+    g = LAST_SENSING.get('gdelt') or {}
+    LAST_SENSING['any_sensed'] = bool((LAST_SENSING.get('rss') or {}).get('ok') or
+                                      (LAST_SENSING.get('gnews') or {}).get('ok') or g.get('sensed'))
+    LAST_SENSING['degraded'] = (g.get('attempted', 0) > 0 and g.get('sensed', 0) == 0) or not LAST_SENSING['any_sensed']
     return unique
 
 
@@ -2290,6 +2377,7 @@ def _read_hungary_signals():
             'hungary_axis_reversal_active':  bool(blob.get('hungary_axis_reversal_active', False)),
             'hungary_orban_revival_signal':  bool(blob.get('hungary_orban_revival_signal', False)),
             'druzhba_pipeline_status':       str(blob.get('druzhba_pipeline_status', 'unknown')),
+            'hungary_reversal_posture':      str(blob.get('hungary_reversal_posture', 'unread')),
             'hungary_government_level':      int(blob.get('hungary_government_level',    0) or 0),
             'hungary_opposition_level':      int(blob.get('hungary_opposition_level',    0) or 0),
             'hungary_eu_track_level':        int(blob.get('hungary_eu_track_level',      0) or 0),
@@ -2668,7 +2756,10 @@ def run_russia_rhetoric_scan(force=False):
             'timestamp':            datetime.now(timezone.utc).isoformat(),
             'from_cache':           False,
             'refresh_triggered':    True,
-            'version':              '1.5.0',
+            'version':              TRACKER_VERSION,
+            'sensing':              dict(LAST_SENSING),
+            'source_outlets':       len({str(((a.get('source') or {}).get('name') if isinstance(a.get('source'), dict)
+                                              else a.get('source')) or '').lower() for a in articles} - {''}),
         }
 
         # ── Cross-theater READ: Hungary signals (added May 18 2026) ──
@@ -2697,10 +2788,16 @@ def run_russia_rhetoric_scan(force=False):
         # Wire signals interpreter
         try:
             from russia_signal_interpreter import interpret_signals as _interpret
+            result['_corpus'] = articles            # v1.6.0: whole corpus for evidence red lines
             result['interpretation'] = _interpret(result)
             print("[Russia Rhetoric] Signals interpreter complete")
         except Exception as ie:
             print(f"[Russia Rhetoric] Interpreter error: {str(ie)[:80]}")
+        finally:
+            result.pop('_corpus', None)
+        _interp = result.get('interpretation') or {}
+        result['top_indicator'] = _interp.get('top_indicator', '')
+        result['thin_read'] = bool(_interp.get('thin_read'))
 
         # v2.0: Build top_signals[] for BLUF/GPI consumption
         try:
@@ -2721,6 +2818,9 @@ def run_russia_rhetoric_scan(force=False):
             'nat_level':   nat_level,
             'arc_level':   arc_level,
             'hyb_level':   hyb_level,
+            'theatre_level': _theatre_level,
+            'thin_read':   result.get('thin_read', False),
+            'version':     TRACKER_VERSION,
         })
         _write_crosstheater_fingerprint(actor_results, vectors,
                                          regime_signals=regime_signals)
@@ -2771,6 +2871,10 @@ def register_russia_rhetoric_endpoints(app):
     @app.route('/api/rhetoric/russia', methods=['GET'])
     def russia_rhetoric():
         force = request.args.get('force', '').lower() in ('true', '1', 'yes')
+        if force and time.time() - _last_force['ts'] < FORCE_MIN_INTERVAL:
+            force = False          # v1.6.0: rate-limited -- serve the cache
+        if force:
+            _last_force['ts'] = time.time()
 
         if not force:
             cached = _redis_get(RHETORIC_CACHE_KEY)
@@ -2839,12 +2943,35 @@ def register_russia_rhetoric_endpoints(app):
             'diplomatic_color':       diplomatic_track.get('scenario_color', '#6b7280'),
             'maximum_pressure':       diplomatic_track.get('maximum_pressure', False),
             'scanned_at':      cached.get('scanned_at', ''),
+            'top_indicator':   (interp.get('top_indicator') or cached.get('top_indicator', '')),
+            'thin_read':       bool(interp.get('thin_read')),
+            'talks_track':     interp.get('talks_track'),
             'from_cache':      True,
         })
 
     @app.route('/api/rhetoric/russia/history', methods=['GET'])
     def russia_rhetoric_history():
-        history = _redis_get(HISTORY_KEY) or []
-        return jsonify({'success': True, 'history': history, 'count': len(history)})
+        """v1.6.0: history is a Redis LIST -- read it with LRANGE (GET on a list
+        returns WRONGTYPE, which is why this endpoint was always empty)."""
+        try:
+            limit = max(1, min(int(request.args.get('limit', 120)), 336))
+        except (TypeError, ValueError):
+            limit = 120
+        entries = []
+        try:
+            if UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN:
+                resp = requests.get(f"{UPSTASH_REDIS_URL}/lrange/{HISTORY_KEY}/0/{limit - 1}",
+                                    headers={"Authorization": f"Bearer {UPSTASH_REDIS_TOKEN}"}, timeout=5)
+                for item in (resp.json().get('result') or []):
+                    try:
+                        e = json.loads(item)
+                        if isinstance(e, dict):
+                            entries.append(e)
+                    except Exception:
+                        pass
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:200], 'history': [], 'entries': []}), 500
+        entries.reverse()            # oldest -> newest for charts
+        return jsonify({'success': True, 'history': entries, 'entries': entries, 'count': len(entries)})
 
     print("[Russia Rhetoric] Endpoints registered: /api/rhetoric/russia, /summary, /history")

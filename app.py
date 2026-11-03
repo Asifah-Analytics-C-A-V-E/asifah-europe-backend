@@ -314,6 +314,15 @@ except ImportError as e:
     GREECE_PULSE_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Greece financial pulse not available: {e}")
 
+# Hungary financial pulse (v1.9.0, Nov 3 2026 -- the stability page's first backend)
+try:
+    from hungary_financial_pulse import register_hungary_financial_endpoints
+    HUNGARY_PULSE_AVAILABLE = True
+    print("[Europe Backend] ✅ Hungary financial pulse module loaded")
+except ImportError as e:
+    HUNGARY_PULSE_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Hungary financial pulse not available: {e}")
+
 # v1.0: Europe Regional BLUF Engine
 # Synthesizes top_signals[] across Russia + Greenland (and future Ukraine/Hungary/Poland trackers).
 # Required for Global Pressure Index downstream consumption.
@@ -1425,7 +1434,7 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-EUROPE_BACKEND_VERSION = '1.8.0'   # Nov 3 2026: Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
+EUROPE_BACKEND_VERSION = '1.9.0'   # Nov 3 2026 (eve): Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
 
 # v1.4.1 (Oct 3 2026) -- ONE version, ONE User-Agent.
 # Europe was carrying both problems at once. The version: '/' said 1.1.0, the
@@ -4720,6 +4729,11 @@ if AZERBAIJAN_PULSE_AVAILABLE:
 if GREECE_PULSE_AVAILABLE:
     register_greece_financial_endpoints(app)
     print("[Europe Backend] ✅ Greece financial pulse routes registered")
+
+# Register Hungary financial pulse (v1.9.0)
+if HUNGARY_PULSE_AVAILABLE:
+    register_hungary_financial_endpoints(app)
+    print("[Europe Backend] ✅ Hungary financial pulse routes registered")
 
 # Register Europe Regional BLUF (synthesizes Russia + Greenland for GPI consumption)
 if EUROPE_BLUF_AVAILABLE:

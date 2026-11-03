@@ -1,7 +1,25 @@
 """
 rhetoric_tracker_hungary.py
 Asifah Analytics -- Europe Backend Module
-v1.0.0 -- May 17, 2026
+v1.1.0 -- Nov 3, 2026   (v1.0.0 May 17 2026)
+
+v1.1.0 (step 14):
+  * Google News sweep (EN + HU), publisher-attributed via europe_feeds; GDELT
+    sensing via the gateway's probe; `sensing` block for the THIN READ test.
+  * Three new DISPLAY actors (not in the theatre score):
+      hungary_accountability -- arrests / charges of Orban-era officials
+      orban_international    -- Orban abroad: the UN Secretary-General push,
+                                the Trump/CPAC channel (moved out of the
+                                domestic opposition actor, so a UN story no
+                                longer reads as a Fidesz comeback at home)
+      china_investment       -- CATL / BYD / Chinese finance (low weight)
+  * The interpreter receives the whole corpus (`_corpus`, popped before cache).
+  * Spokes: spoke:russia:hungary (axis_reversal_watch), spoke:us:hungary
+    (opposition_channel), spoke:china:hungary (investment_partner) -- 30h TTL,
+    alongside the hub-agnostic crosstheater:hungary:fingerprint.
+  * ?force=true rate-limited (one live scan per 10 min); honest User-Agent;
+    /summary carries top_indicator, posture, thin_read; /history adds `entries`.
+  * Descriptions brought to November 2026 (Magyar government in office since May).
 
 HUNGARY RHETORIC TRACKER
 
@@ -60,6 +78,31 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import feedparser
 
+from europe_feeds import gnews_url, fetch_rss_items, user_agent
+
+try:
+    from gdelt_gateway import gdelt_fetch_probed as _gw_fetch_probed
+except Exception:
+    _gw_fetch_probed = None
+
+LAST_SENSING = {}
+SPOKE_TTL = 30 * 3600
+_last_force = {'ts': 0.0}
+FORCE_MIN_INTERVAL = 600
+CORE_ACTORS = ['hungary_government', 'hungary_opposition', 'hungary_eu_track',
+               'hungary_russia_axis', 'hungary_ukraine_track']
+
+GNEWS_QUERIES = [
+    ('Hungary Magyar government OR Tisza', 'en'),
+    ('Fidesz rally OR poll OR comeback', 'en'),
+    ('Orban "secretary-general" OR "UN chief" OR "United Nations"', 'en'),
+    ('Hungary arrested OR custody OR charged "former minister" OR Matolcsy', 'en'),
+    ('Hungary Paks OR Rosatom OR Druzhba OR Gazprom OR "Russian gas"', 'en'),
+    ('Hungary Ukraine accession OR veto OR Transcarpathia OR Zelensky', 'en'),
+    ('Hungary EU funds OR "Article 7" OR Brussels Magyar', 'en'),
+    ('Magyar Péter kormány OR Orbán OR Fidesz', 'hu'),
+]
+
 # ============================================================
 # OPTIONAL IMPORTS (graceful fallback)
 # ============================================================
@@ -106,7 +149,7 @@ BRAVE_TIMEOUT       = 12
 
 BRAVE_FALLBACK_MIN_ARTICLES = 10
 
-VERSION = '1.0.0'
+VERSION = '1.1.0'
 
 # ============================================================
 # ESCALATION LEVELS
@@ -164,7 +207,7 @@ ACTORS = {
         'flag': '🇭🇺',
         'icon': '🏛️',
         'color': '#22c55e',
-        'role': 'Post-April-2026 government -- pro-EU realignment posture',
+        'role': 'Magyar government (in office since May 2026) -- pro-EU realignment',
         'description': (
             'Tisza-led Hungarian government following April 2026 landslide '
             'two-thirds parliamentary majority. PM Peter Magyar + cabinet '
@@ -224,7 +267,7 @@ ACTORS = {
             'viktor orban', 'orban', 'fidesz', 'fidesz party',
             'hungarian opposition', 'orban statement', 'fidesz statement',
             'orban speech', 'orban rally', 'fidesz rally',
-            'orban interview', 'orban presser', 'orban tucker',
+            'orban interview', 'orban presser',
             'hungarian far-right', 'hungarian nationalist',
             # Russia-axis-revival signals
             'orban moscow', 'orban putin', 'orban russia visit',
@@ -236,9 +279,7 @@ ACTORS = {
             'orban anti-eu', 'fidesz anti-brussels',
             'orban article 7', 'orban rule of law dispute',
             'orban migration crisis', 'orban gender',
-            # Trump alignment
-            'orban trump', 'orban mar-a-lago', 'orban cpac',
-            'orban heritage foundation', 'orban tucker carlson',
+            # (v1.1.0: Trump / CPAC / UN vocabulary moved to orban_international)
             # Hungarian (Magyar)
             'orbán viktor', 'fidesz párt', 'orbán beszéd',
             'orbán interjú', 'orbán moszkva', 'orbán putyin',
@@ -248,8 +289,57 @@ ACTORS = {
             'orban moscow visit',
             'orban putin meeting',
             'fidesz mass rally',
-            'orban tucker carlson interview',
+            'fidesz leads poll',
         ],
+    },
+
+    # ── v1.1.0 DISPLAY ACTORS (not in the theatre score) ───────────
+    'hungary_accountability': {
+        'name': 'Accountability Drive',
+        'flag': '🇭🇺', 'icon': '⚖️', 'color': '#8b5cf6',
+        'role': 'Arrests and charges against Orban-era officials -- accountability or retribution, both frames read',
+        'description': ('National Asset Recovery and Protection Office cases; former ministers Seszták and Hankó '
+                        '(custody Sep 29 2026); ex-central-bank governor Matolcsy (custody Oct 21 2026).'),
+        'keywords': [
+            'asset recovery office', 'operation purge', 'former minister arrested', 'former minister detained',
+            'ex-minister detained', 'matolcsy', 'seszták', 'sesztak', 'hankó', 'hanko', 'immunity lifted',
+            'mnb foundations', 'central bank foundations', 'orban-era officials', 'orban era officials',
+            'political persecution', 'politically motivated', 'mafia state', 'state capture',
+            'vagyonvisszaszerzési', 'őrizetbe vették', 'letartóztatták',
+        ],
+        'baseline_statements_per_week': 6,
+        'tripwires': ['matolcsy arrested', 'orban questioned', 'orban charged'],
+        'display_only': True,
+    },
+    'orban_international': {
+        'name': 'Orban Abroad',
+        'flag': '🌐', 'icon': '🌐', 'color': '#3b82f6',
+        'role': 'Orban outside Hungarian politics: the UN Secretary-General push, the Trump / Moscow channels',
+        'description': ('WSJ (Oct 26 2026): Trump officials back Orban for UN Secretary-General, possibly with '
+                        'Russian and Chinese support. Tracked apart from the domestic comeback line.'),
+        'keywords': [
+            'orban secretary-general', 'orban secretary general', 'orban un chief', 'orban united nations',
+            'orban for un', 'orban candidacy', 'orban trump', 'orban mar-a-lago', 'orban cpac',
+            'orban heritage foundation', 'orban tucker carlson', 'patriots for europe orban',
+            'orban washington', 'orban moscow', 'orban beijing',
+        ],
+        'baseline_statements_per_week': 4,
+        'tripwires': ['orban nominated', 'security council orban'],
+        'display_only': True,
+    },
+    'china_investment': {
+        'name': 'China Investment Channel',
+        'flag': '🇨🇳', 'icon': '🏭', 'color': '#7c3aed',
+        'role': 'Chinese battery / EV / rail investment -- read low (capped L2 on the China wheel)',
+        'description': 'CATL Debrecen, BYD Szeged, Budapest-Belgrade railway, Chinese state finance.',
+        'keywords': [
+            'catl debrecen', 'catl hungary', 'byd szeged', 'byd hungary', 'china hungary investment',
+            'budapest-belgrade railway', 'chinese investment hungary', 'huawei hungary', 'xi hungary',
+            'hungary china', 'china hungary',
+        ],
+        'baseline_statements_per_week': 3,
+        'tripwires': [],
+        'display_only': True,
     },
 
     # ── 3. HUNGARY <-> EU TRACK ────────────────────────────────────
@@ -606,13 +696,35 @@ def _write_canonical_spoke_fingerprint(result):
             'orban_revival_signal': ct.get('orban_revival_signal', False),
             'reversal_hits':        len(ct.get('axis_reversal_hits', []) or []),
             'revival_hits':         len(ct.get('orban_revival_hits', []) or []),
+            'posture':              (result.get('interpretation') or {}).get('posture'),
         },
+        'top_indicator': result.get('top_indicator', ''),
+        'thin_read':     bool(result.get('thin_read')),
     }
     try:
         _redis_set('crosstheater:hungary:fingerprint', fingerprint)
         print('[Hungary Rhetoric] Canonical spoke fingerprint written (crosstheater:hungary:fingerprint)')
     except Exception as e:
         print(f'[Hungary Rhetoric] Canonical fingerprint write failed: {e}')
+
+
+def _write_hub_spokes(result):
+    """v1.1.0: convention-1 spokes (spoke:{hub}:hungary), 30h TTL."""
+    interp = result.get('interpretation') or {}
+    now = datetime.now(timezone.utc).isoformat()
+    rel = {'russia': 'Moscow\'s levers on a Budapest that turned away in April 2026 (energy, Paks II)',
+           'us': 'Washington\'s visible Hungary channel runs through Orban (2026 backing, UN Secretary-General push)',
+           'china': 'Chinese battery / EV investment (CATL Debrecen, BYD Szeged)'}
+    for hub, row in (interp.get('spokes') or {}).items():
+        payload = {
+            'ts': now, 'spoke': 'hungary', 'hub': hub,
+            'node_class': row.get('node_class'), 'level': row.get('level', 0),
+            'relationship': rel.get(hub, ''), 'top_signal': row.get('note', ''),
+            'posture': interp.get('posture'), 'thin_read': bool(interp.get('thin_read')),
+            'source': 'rhetoric_tracker_hungary', 'version': VERSION,
+        }
+        if _redis_set(f'spoke:{hub}:hungary', payload, ttl=SPOKE_TTL):
+            print(f'[Hungary Rhetoric] spoke:{hub}:hungary L{payload["level"]}')
 
 
 def _crossteater_update(key, value):
@@ -634,7 +746,7 @@ def _crossteater_update(key, value):
 def _fetch_rss(url, name, weight=1.0):
     try:
         resp = requests.get(url, timeout=RSS_TIMEOUT,
-                            headers={'User-Agent': 'AsifahAnalytics/1.0'})
+                            headers={'User-Agent': user_agent('Hungary')})
         if resp.status_code != 200:
             return []
         feed = feedparser.parse(resp.content)
@@ -692,9 +804,17 @@ def _fetch_gdelt(query, language='en', timespan='7d'):
     """
     lang_param = {'en': 'eng', 'hu': 'hun', 'ru': 'rus'}.get(language, 'eng')
     if _GDELT_GATEWAY:
-        raw = _gw_fetch(f'{query} sourcelang:{lang_param}', language='eng',
-                        timespan=timespan, maxrecords=30,
-                        label=f'hungary/{lang_param}')
+        if _gw_fetch_probed:
+            raw, probe = _gw_fetch_probed(f'{query} sourcelang:{lang_param}', language='eng',
+                                          timespan=timespan, maxrecords=30, label=f'hungary/{lang_param}')
+            g = LAST_SENSING.setdefault('gdelt', {'attempted': 0, 'sensed': 0, 'items': 0})
+            g['attempted'] += 1
+            g['sensed'] += 1 if (probe or {}).get('sensed') else 0
+            g['items'] += len(raw or [])
+        else:
+            raw = _gw_fetch(f'{query} sourcelang:{lang_param}', language='eng',
+                            timespan=timespan, maxrecords=30,
+                            label=f'hungary/{lang_param}')
         out = []
         for a in raw:
             t = (a.get('title') or '').strip()
@@ -705,7 +825,7 @@ def _fetch_gdelt(query, language='en', timespan='7d'):
                 'description': t[:400],
                 'url':         a.get('url', ''),
                 'publishedAt': a.get('published', ''),
-                'source':      {'name': a.get('source') or 'GDELT'},
+                'source':      {'name': a.get('domain') or a.get('source') or 'GDELT'},
                 'content':     t,
                 'language':    language,
                 'feed_type':   'gdelt',
@@ -859,6 +979,10 @@ def _gather_articles():
     """Pull articles from all sources. Returns deduplicated list."""
     all_articles = []
     seen_urls = set()
+    LAST_SENSING.clear()
+    LAST_SENSING.update({'rss': {'attempted': 0, 'ok': 0, 'items': 0},
+                         'gnews': {'attempted': 0, 'ok': 0, 'items': 0},
+                         'gdelt': {'attempted': 0, 'sensed': 0, 'items': 0}})
 
     def _add(arts):
         for a in (arts or []):
@@ -901,9 +1025,30 @@ def _gather_articles():
     # ── RSS feeds ──
     for key, src in RSS_SOURCES.items():
         try:
-            _add(_fetch_rss(src['url'], src['name'], src.get('weight', 0.95)))
+            LAST_SENSING['rss']['attempted'] += 1
+            got = _fetch_rss(src['url'], src['name'], src.get('weight', 0.95))
+            LAST_SENSING['rss']['ok'] += 1 if got else 0
+            LAST_SENSING['rss']['items'] += len(got)
+            _add(got)
         except Exception as e:
             print(f'[Hungary RSS] {key} error: {str(e)[:80]}')
+
+    # ── Google News (v1.1.0): publisher read per item ──
+    for q, lang in GNEWS_QUERIES:
+        try:
+            LAST_SENSING['gnews']['attempted'] += 1
+            got, ok = fetch_rss_items(gnews_url(q, lang), 'Hungary', max_items=20)
+            LAST_SENSING['gnews']['ok'] += 1 if ok else 0
+            LAST_SENSING['gnews']['items'] += len(got)
+            _add([{
+                'title': it['title'][:300], 'description': it.get('description') or it['title'],
+                'url': it['url'], 'publishedAt': it.get('published', ''),
+                'source': {'name': it['source']}, 'content': it['title'],
+                'language': lang, 'feed_type': 'gnews',
+            } for it in got])
+            time.sleep(0.3)
+        except Exception as e:
+            print(f'[Hungary GNews] {q[:30]} error: {str(e)[:80]}')
 
     # ── GDELT (multi-language) ──
     gdelt_count = 0
@@ -935,7 +1080,16 @@ def _gather_articles():
             print(f'[Hungary Brave] error: {str(e)[:80]}')
 
     print(f'[Hungary] Total deduplicated articles: {len(all_articles)}')
+    g = LAST_SENSING.get('gdelt') or {}
+    LAST_SENSING['any_sensed'] = bool(LAST_SENSING['rss']['ok'] or LAST_SENSING['gnews']['ok'] or g.get('sensed'))
+    LAST_SENSING['degraded'] = (g.get('attempted', 0) > 0 and g.get('sensed', 0) == 0) or not LAST_SENSING['any_sensed']
     return all_articles
+
+
+def _fold(t):
+    import unicodedata
+    t = unicodedata.normalize('NFKD', str(t or '').lower())
+    return ''.join(c for c in t if not unicodedata.combining(c))
 
 
 def _score_actor(actor_key, actor_cfg, articles):
@@ -951,18 +1105,20 @@ def _score_actor(actor_key, actor_cfg, articles):
     matched_keywords_seen = set()
     tripwire_hits = []
 
+    nkeywords = [(kw, _fold(kw)) for kw in keywords]
     for art in articles:
         title = (art.get('title') or '').lower()
         desc  = (art.get('description') or '').lower()
         text  = title + ' ' + desc
         if not text.strip():
             continue
+        ftext = _fold(text)   # v1.1.0: 'Orbán' and 'Orban' are the same word
 
-        kw_hits = [kw for kw in keywords if kw.lower() in text]
+        kw_hits = [kw for kw, fk in nkeywords if fk in ftext]
         if not kw_hits:
             continue
 
-        tw_hits = [tw for tw in tripwires if tw.lower() in text]
+        tw_hits = [tw for tw in tripwires if _fold(tw) in ftext]
         if tw_hits:
             tripwire_hits.extend(tw_hits)
 
@@ -1125,8 +1281,9 @@ def _compute_theatre_score(actor_results, cross_theater):
       - Penalized by axis_reversal_active (lower theatre tension when reversal active)
       - Boosted by orban_revival_signal (rising opposition pressure)
     """
-    level_sum = sum(a.get('escalation_level', 0) for a in actor_results.values())
-    avg_level = level_sum / max(len(actor_results), 1)
+    core = [actor_results[k] for k in CORE_ACTORS if k in actor_results]   # v1.1.0: display actors excluded
+    level_sum = sum(a.get('escalation_level', 0) for a in core)
+    avg_level = level_sum / max(len(core), 1)
 
     score = int(avg_level * 20)  # 0-100 scale
 
@@ -1181,6 +1338,8 @@ def run_hungary_scan():
             'theatre_score': theatre['theatre_score'],
             'theatre_level': theatre['theatre_level'],
             'cross_theater':  cross_theater,
+            'sensing':        dict(LAST_SENSING),
+            '_corpus':        articles,            # v1.1.0: whole corpus for evidence scoring
         }
         interpretation = interpret_signals(scan_data) or {}
     except ImportError:
@@ -1190,10 +1349,21 @@ def run_hungary_scan():
 
     elapsed = round(time.time() - start, 2)
 
+    top_signals = []
+    try:
+        from hungary_signal_interpreter import build_top_signals
+        top_signals = build_top_signals({'interpretation': interpretation})
+    except Exception as e:
+        print(f'[Hungary] top_signals error: {str(e)[:80]}')
+
     result = {
         'success':         True,
         'target':          'hungary',
         'version':         VERSION,
+        'sensing':         dict(LAST_SENSING),
+        'top_indicator':   (interpretation or {}).get('top_indicator', ''),
+        'thin_read':       bool((interpretation or {}).get('thin_read')),
+        'top_signals':     top_signals,
         'actors':          actor_results,
         'total_articles':  total_articles,
         'cross_theater':   cross_theater,
@@ -1207,6 +1377,10 @@ def run_hungary_scan():
     # Cache + history
     _redis_set(RHETORIC_CACHE_KEY, result, ttl=RHETORIC_CACHE_TTL)
     _write_canonical_spoke_fingerprint(result)   # Rim Emission Pass -- feed the Russia wheel
+    _write_hub_spokes(result)                    # v1.1.0: spoke:russia / us / china :hungary
+    # v1.1.0: the reversal is a standing fact now, not a 3-trigger event -- publish
+    # the posture so the Russia wheel's "EU veto vehicle lost" line can read it.
+    _crossteater_update('hungary_reversal_posture', (interpretation or {}).get('posture', 'unread'))
 
     # Update history
     try:
@@ -1220,6 +1394,9 @@ def run_hungary_scan():
             'total_articles': result['total_articles'],
             'axis_reversal_active': cross_theater.get('axis_reversal_active', False),
             'orban_revival_signal': cross_theater.get('orban_revival_signal', False),
+            'posture':        (interpretation or {}).get('posture'),
+            'thin_read':      result['thin_read'],
+            'version':        VERSION,
         })
         history = history[-HISTORY_RETENTION:]
         _redis_set(HISTORY_KEY, history, ttl=86400 * 90)
@@ -1245,6 +1422,10 @@ def register_hungary_rhetoric_endpoints(app):
     @app.route('/api/rhetoric/hungary', methods=['GET'])
     def hungary_rhetoric():
         force = request.args.get('force', '').lower() in ('true', '1', 'yes')
+        if force and time.time() - _last_force['ts'] < FORCE_MIN_INTERVAL:
+            force = False          # v1.1.0: rate-limited -- serve the cache
+        if force:
+            _last_force['ts'] = time.time()
 
         if not force:
             cached = _redis_get(RHETORIC_CACHE_KEY)
@@ -1322,13 +1503,20 @@ def register_hungary_rhetoric_endpoints(app):
             'red_lines_approaching':     red_lines.get('approaching_count', 0),
             'top_red_lines':             top_red_lines,
             'scanned_at':                cached.get('scanned_at', ''),
+            # v1.1.0
+            'top_indicator':             interp.get('top_indicator', cached.get('top_indicator', '')),
+            'posture':                   interp.get('posture'),
+            'posture_label':             interp.get('posture_label'),
+            'thin_read':                 bool(interp.get('thin_read')),
+            'international_status':      (interp.get('international_track') or {}).get('status'),
+            'accountability_status':     (interp.get('accountability_track') or {}).get('status'),
             'from_cache':                True,
         })
 
     @app.route('/api/rhetoric/hungary/history', methods=['GET'])
     def hungary_rhetoric_history():
         history = _redis_get(HISTORY_KEY) or []
-        return jsonify({'success': True, 'history': history, 'count': len(history)})
+        return jsonify({'success': True, 'history': history, 'entries': history, 'count': len(history)})
 
     print('[Hungary Rhetoric] Endpoints registered: /api/rhetoric/hungary, /summary, /history')
 
