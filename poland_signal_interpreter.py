@@ -1,6 +1,20 @@
 """
-Poland Signal Interpreter v1.0.0 (Jul 12 2026)
+Poland Signal Interpreter v1.1.0 (Nov 3 2026)  ·  v1.0.0 (Jul 12 2026)
 ===============================================
+v1.1.0 (Nov 3 2026) -- the sensor could not see its own thesis.
+  Live read Nov 2: the corpus carried "Poland launches operation along Russian
+  border in response to reports of planned sabotage", a Russia-tasked arson
+  arrest, and a week of the constitutional-court crisis (the president in a
+  physical confrontation with judges, three envoys resigning) -- and the
+  interpreter printed hybrid tape QUIET and cohabitation QUIET, because its
+  triggers are exact phrases ('sabotage poland', 'nawrocki tusk').
+  * europe_signal_matcher co-occurrence counts now feed kinetic / cyber /
+    cognitive / attribution / migration / cohabitation: max(literal, co-occurrence).
+    One outlet counts at most 2 -- simmering, never elevated, on its own.
+  * THIN READ: when sensing is degraded (GDELT unread, few feeds answering) the
+    So What says so up front, and "all vectors quiet" is no longer printed as
+    a finding on a blind scan.
+
 Analytical layer for rhetoric_tracker_poland.py.
 
 THE FRAME — and it is the whole build:
@@ -72,7 +86,26 @@ Doctrine: convergence, not prediction. Sensors below, analyst above.
 
 from datetime import datetime, timezone
 
-INTERPRETER_VERSION = '1.0.0'
+INTERPRETER_VERSION = '1.1.0'
+
+try:
+    from europe_signal_matcher import (count_cooccurrence as _cooc_count,
+                                       cooccurrence_report as _cooc_report,
+                                       matching_items as _cooc_items, norm as _norm)
+except Exception as _e:      # never let a missing helper break the scan
+    print(f'[Poland Interpreter] europe_signal_matcher unavailable: {_e}')
+    _cooc_count = _cooc_report = _cooc_items = _norm = None
+
+
+def _cooc(scan_data, key):
+    """Corroboration-aware co-occurrence count for one domain (0 if unavailable)."""
+    if not _cooc_count:
+        return 0
+    try:
+        return int(_cooc_count('poland', scan_data, key).get('count') or 0)
+    except Exception as e:
+        print(f'[Poland Interpreter] co-occurrence {key} error: {str(e)[:80]}')
+        return 0
 
 CONVERGENCE_DISCLAIMER = (
     'This composite is a CONVERGENCE indicator, NOT a probability of action. '
@@ -161,25 +194,54 @@ _KINETIC_SEVERITY = {
 }
 
 
+def _kinetic_items(scan_data):
+    """(outlet, lowercased text) for every item carrying a kinetic signal --
+    literal KINETIC_KEYWORDS or the co-occurrence kinetic ladder."""
+    items = []
+    for key in ('articles_en', 'articles_pl', 'articles_ru'):
+        for art in (scan_data.get(key) or []):
+            text = ' '.join(str(art.get(k) or '') for k in ('title', 'description', 'summary')).lower()
+            if any(kw.lower() in text for kw in KINETIC_KEYWORDS):
+                src = art.get('source')
+                src = src.get('name') if isinstance(src, dict) else src
+                items.append((str(src or art.get('url') or '').lower(), _norm(text) if _norm else text))
+    if _cooc_items:
+        try:
+            items.extend(_cooc_items('poland', scan_data, 'kinetic'))
+        except Exception as e:
+            print(f'[Poland Interpreter] kinetic items error: {str(e)[:80]}')
+    return items
+
+
 def _score_hybrid_tempo(scan_data, tempo_baseline=None):
-    kinetic   = _check_keywords(scan_data, KINETIC_KEYWORDS)
-    cyber     = _check_keywords(scan_data, CYBER_KEYWORDS)
-    cognitive = _check_keywords(scan_data, COGNITIVE_KEYWORDS)
-    attribution = _check_keywords(scan_data, ATTRIBUTION_KEYWORDS)
+    # v1.1.0: max(literal phrase count, corroboration-aware co-occurrence count)
+    kinetic   = max(_check_keywords(scan_data, KINETIC_KEYWORDS), _cooc(scan_data, 'kinetic'))
+    cyber     = max(_check_keywords(scan_data, CYBER_KEYWORDS), _cooc(scan_data, 'cyber'))
+    cognitive = max(_check_keywords(scan_data, COGNITIVE_KEYWORDS), _cooc(scan_data, 'cognitive'))
+    attribution = max(_check_keywords(scan_data, ATTRIBUTION_KEYWORDS), _cooc(scan_data, 'attribution'))
     total = kinetic + cyber + cognitive
 
     def _band(n):
         return ('high' if n >= 6 else 'elevated' if n >= 3
                 else 'simmering' if n >= 1 else 'quiet')
 
-    # Kinetic ladder rung — WHAT KIND of kinetic, not just how much
+    # Kinetic ladder rung — WHAT KIND of kinetic, not just how much.
+    # v1.1.0: measured INSIDE the stories that carried a kinetic signal, never
+    # across the whole corpus. The old corpus-wide check would have read any
+    # 'killed' anywhere (a soldier on the Korean DMZ, a drone strike in Kharkiv)
+    # as a casualty from Polish sabotage -- it only stayed silent because the
+    # kinetic count it guarded was always 0. CASUALTY additionally needs two
+    # outlets: the Black Swan is the one call this tracker must never make on a
+    # single report.
     rung, rung_name = 0, 'None'
     if kinetic:
+        kin_items = _kinetic_items(scan_data)
         for level, (name, kws) in enumerate(
                 [('Nuisance', _KINETIC_SEVERITY['nuisance']),
                  ('Infrastructure', _KINETIC_SEVERITY['infrastructure']),
                  ('Casualty', _KINETIC_SEVERITY['casualty'])], start=1):
-            if _check_keywords(scan_data, kws):
+            outlets = {o for o, t in kin_items if any(k in t for k in kws)}
+            if outlets and (name != 'Casualty' or len(outlets) >= 2):
                 rung, rung_name = level, name
 
     domains = {
@@ -516,7 +578,7 @@ MIGRATION_ESCALATION = [
 
 
 def _score_instrumentalized_migration(scan_data):
-    activity = _check_keywords(scan_data, MIGRATION_KEYWORDS)
+    activity = max(_check_keywords(scan_data, MIGRATION_KEYWORDS), _cooc(scan_data, 'migration'))
     escalation = _check_keywords(scan_data, MIGRATION_ESCALATION)
 
     band = ('high' if activity >= 6 else 'elevated' if activity >= 3
@@ -572,7 +634,7 @@ CONSENSUS_EROSION = [
 
 
 def _score_cohabitation(scan_data):
-    fracture = _check_keywords(scan_data, COHABITATION_KEYWORDS)
+    fracture = max(_check_keywords(scan_data, COHABITATION_KEYWORDS), _cooc(scan_data, 'cohabitation'))
     erosion  = _check_keywords(scan_data, CONSENSUS_EROSION)
 
     band = ('high' if fracture >= 6 else 'elevated' if fracture >= 3
@@ -745,8 +807,31 @@ def _volhynia_window(wedge):
 # SO WHAT
 # ============================================================
 
+def _thin_read(scan_data):
+    """'' when the scan was read properly; otherwise one plain sentence saying how
+    blind it was. Unread is not quiet (v1.1.0)."""
+    sensing = (scan_data or {}).get('sensing') or {}
+    if not sensing or not sensing.get('degraded'):
+        return ''
+    rss = sensing.get('rss') or {}
+    gd = sensing.get('gdelt') or {}
+    bits = []
+    if gd.get('attempted') and not gd.get('sensed'):
+        bits.append('GDELT unread')
+    if rss.get('attempted'):
+        bits.append(f"{rss.get('ok', 0)} of {rss.get('attempted')} news feeds answered")
+    rd = sensing.get('reddit') or {}
+    if rd.get('attempted') and not rd.get('ok'):
+        bits.append('Reddit blocked')
+    n = (scan_data or {}).get('total_articles')
+    lead = f'THIN READ this cycle ({n} articles' if n is not None else 'THIN READ this cycle ('
+    lead = lead + ('; ' if n is not None and bits else '') + '; '.join(bits) + ').'
+    return (lead + ' Quiet readings below mean under-read, not calm -- a vector that shows nothing '
+            'may simply not have been seen.')
+
+
 def _build_so_what(consensus, hybrid, casualty, wedge, spine, migration, cohab,
-                   attrition, elec, volhynia):
+                   attrition, elec, volhynia, thin=''):
     if casualty['black_swan']:
         priority, scenario = 'critical', 'CASUALTY TRIPWIRE BREACHED — hybrid attack with human harm'
     elif consensus['state'] in ('fracturing', 'contested'):
@@ -760,7 +845,7 @@ def _build_so_what(consensus, hybrid, casualty, wedge, spine, migration, cohab,
     else:
         priority, scenario = 'normal', 'Baseline — consensus holding'
 
-    parts = [
+    parts = ([thin] if thin else []) + [
         'Poland has been in NATO since 1999 and is not drifting: nobody is flipping Poland, and '
         'Moscow knows it. So the campaign is not aimed at alignment -- it is aimed at COST. '
         'Russia is working to make Poland\'s support for Ukraine too expensive to sustain, '
@@ -791,12 +876,19 @@ def _build_so_what(consensus, hybrid, casualty, wedge, spine, migration, cohab,
         parts.append(elec['reading'])
     if (hybrid['band'] == 'quiet' and wedge['band'] == 'quiet'
             and cohab['band'] == 'quiet' and spine['threat_band'] == 'quiet'):
-        parts.append('All pressure vectors quiet this cycle. Silence is a valid analytical '
-                     'output; manufactured signal is not.')
+        if thin:
+            parts.append('Every pressure vector reads quiet, but on a thin read that is a '
+                         'statement about the sensor, not about Poland.')
+        else:
+            parts.append('All pressure vectors quiet this cycle. Silence is a valid analytical '
+                         'output; manufactured signal is not.')
 
+    if thin and priority == 'normal':
+        scenario = 'Baseline on a thin read -- under-read, not confirmed calm'
     return {
         'scenario': scenario, 'priority': priority, 'assessment': ' '.join(parts),
         'situation': scenario, 'consensus_integrity': consensus['integrity'],
+        'thin_read': bool(thin),
         'disclaimer': CONVERGENCE_DISCLAIMER,
     }
 
@@ -926,7 +1018,7 @@ def interpret_signals(scan_data):
         volhynia = _volhynia_window(wedge)
 
         so_what = _build_so_what(consensus, hybrid, casualty, wedge, spine, migration,
-                                 cohab, attrition, elec, volhynia)
+                                 cohab, attrition, elec, volhynia, thin=_thin_read(scan_data))
         top_signals = _build_top_signals(consensus, hybrid, casualty, wedge, spine,
                                          migration, cohab, attrition)
 
@@ -984,6 +1076,7 @@ def interpret_signals(scan_data):
             'volhynia_window':            volhynia,
             'cross_theater_fingerprints': fingerprints,
             'composite_modifier':         composite,
+            'cooccurrence':               (_cooc_report('poland', scan_data) if _cooc_report else None),
             'interpreter_version':        INTERPRETER_VERSION,
             'interpreted_at':             datetime.now(timezone.utc).isoformat(),
             'disclaimer':                 CONVERGENCE_DISCLAIMER,

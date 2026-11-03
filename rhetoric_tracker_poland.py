@@ -1,7 +1,9 @@
 """
 ═══════════════════════════════════════════════════════════════════════
   ASIFAH ANALYTICS — POLAND CONSENSUS TRACKER
-  rhetoric_tracker_poland.py  ·  v1.1.0 (Oct 4 2026)  ·  Europe backend
+  rhetoric_tracker_poland.py  ·  v1.2.0 (Nov 3 2026; v1.1.0 Oct 4 2026)  ·  Europe backend
+  v1.2.0: hands the interpreter its sensing record + article count (thin-read
+  honesty) and carries the co-occurrence report on the payload.
 ═══════════════════════════════════════════════════════════════════════
 
 Poland has been in NATO since MARCH 1999. It is not a recent accession, it is
@@ -74,7 +76,7 @@ import feedparser
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-TRACKER_VERSION = '1.1.0'
+TRACKER_VERSION = '1.2.0'   # Nov 3 2026: co-occurrence matcher + thin-read honesty (interpreter v1.1.0)
 
 TRACKER_USER_AGENT = (f'AsifahAnalytics-Europe-Poland/{TRACKER_VERSION} '
                       f'(OSINT monitoring tool; +https://asifahanalytics.com)')
@@ -783,6 +785,8 @@ def run_poland_rhetoric_scan(force=False):
         'bluesky_signals': bluesky, 'actor_summaries': actor_summaries,
         'refugee_data': refugee_data, 'financial_data': financial_data,
         'commodity_data': commodity_data, 'tempo_baseline': tempo_baseline,
+        # v1.2.0: the interpreter needs to know how blind this scan was
+        'sensing': sensing, 'total_articles': len(articles),
     }
 
     interp = {}
@@ -858,6 +862,7 @@ def run_poland_rhetoric_scan(force=False):
         'so_what':           interp.get('so_what'),
         'top_signals':       interp.get('top_signals') or [],
         'cross_theater_fingerprints': interp.get('cross_theater_fingerprints'),
+        'cooccurrence':      interp.get('cooccurrence'),
         'composite_modifier': score,
         'interpreter_version': interp.get('interpreter_version'),
         'disclaimer': ('This composite is a CONVERGENCE indicator, NOT a probability of '

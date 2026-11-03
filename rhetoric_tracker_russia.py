@@ -1,7 +1,17 @@
 """
 Asifah Analytics -- Russia Rhetoric & Pressure Tracker
 Europe Backend Module
-v1.0.0 -- April 2026
+v1.5.0 -- Nov 3 2026 (v1.0.0 April 2026)
+
+v1.5.0 (Nov 3 2026):
+  * Vector ladders obey the platform corroboration rule: L3+ needs two outlets
+    (one outlet tops out at L2). Nuclear phrases and the L5 ground-ops phrases
+    must be about Russia (a story about a US strike on Iran cannot put Russia at
+    Strategic Escalation). The phrase and outlet count behind every vector are
+    published as `vector_evidence`.
+  * europe_signal_matcher co-occurrence raises nato_flank / hybrid when real
+    headlines miss the phrase list, and adds two vectors for the Europe Actor
+    Matrix: drone_incursion (into a NON-belligerent's airspace) and black_sea.
 
 ANALYTICAL FRAME:
 This tracker answers five questions simultaneously:
@@ -72,6 +82,15 @@ CHANGELOG:
 
 COPYRIGHT 2025-2026 Asifah Analytics. All rights reserved.
 """
+
+# ── Europe co-occurrence matcher (Nov 3 2026) -- corroboration + the vectors
+#    Rachel named for the Europe Actor Matrix (drone incursions, Black Sea). ──
+try:
+    from europe_signal_matcher import (vector_cooccurrence as _eu_vectors,
+                                       corroborated_vector as _eu_corroborated)
+except Exception as _e:   # never let a missing helper break the scan
+    print(f"[europe_signal_matcher] unavailable: {_e}")
+    _eu_vectors = _eu_corroborated = None
 
 import os
 import json
@@ -1946,6 +1965,24 @@ def _score_vector(articles, trigger_dict):
     return max_level, trigger
 
 
+VECTOR_EVIDENCE = {}        # {vector: {'level', 'phrase', 'outlets', 'source'}} -- last scan
+COOCCURRENCE_REPORT = {}    # europe_signal_matcher report -- last scan
+
+
+def _score_vector_c(articles, trigger_dict, name, context=None):
+    """_score_vector under the corroboration rule (Nov 3 2026). Falls back to the
+    old single-article read only if the matcher is missing."""
+    if not _eu_corroborated:
+        lvl, trig = _score_vector(articles, trigger_dict)
+        VECTOR_EVIDENCE[name] = {'level': lvl, 'phrase': trig, 'outlets': None, 'source': 'literal_uncorroborated'}
+        return lvl, trig
+    lvl, phrase, n = _eu_corroborated(articles, trigger_dict, context)
+    raw, _ = _score_vector(articles, trigger_dict)
+    VECTOR_EVIDENCE[name] = {'level': lvl, 'phrase': phrase, 'outlets': n, 'source': 'literal',
+                             'held_back_from': raw if raw > lvl else None}
+    return lvl, phrase
+
+
 def _classify_articles(articles):
     """
     Classify all articles against actors and vectors.
@@ -1990,13 +2027,54 @@ def _classify_articles(articles):
         }
 
     # Vector scoring
+    # Nov 3 2026: the platform corroboration rule now applies here too -- L3+
+    # needs two outlets carrying a phrase at that level (one outlet tops out at
+    # L2), and Russia's L5 / nuclear phrases must actually be about Russia:
+    # "A US nuclear strike on Iran? The greatest threat could be to Ukraine"
+    # carries 'nuclear strike on' and 'Ukraine' but is not Russian escalation.
+    # The phrase and the number of outlets that set each level are recorded
+    # (VECTOR_EVIDENCE) so an L5 can always be checked.
+    VECTOR_EVIDENCE.clear()
+    _RU_CTX = ['russia', 'russian', "russia's", 'moscow', 'kremlin', 'putin', 'medvedev', 'peskov',
+               'lavrov', 'zakharova', 'shoigu', 'gerasimov', 'belousov',
+               '\u0440\u043e\u0441\u0441\u0438', '\u043a\u0440\u0435\u043c\u043b',
+               '\u043f\u0443\u0442\u0438\u043d']
     vectors = {
-        'nuclear':    _score_vector(articles, NUCLEAR_TRIGGERS),
-        'ground_ops': _score_vector(articles, GROUND_OPS_TRIGGERS),
-        'nato_flank': _score_vector(articles, NATO_FLANK_TRIGGERS),
-        'arctic':     _score_vector(articles, ARCTIC_TRIGGERS),
-        'hybrid':     _score_vector(articles, HYBRID_TRIGGERS),
+        'nuclear':    _score_vector_c(articles, NUCLEAR_TRIGGERS, 'nuclear',
+                                      {5: _RU_CTX, 4: _RU_CTX, 3: _RU_CTX}),
+        'ground_ops': _score_vector_c(articles, GROUND_OPS_TRIGGERS, 'ground_ops', {5: _RU_CTX}),
+        'nato_flank': _score_vector_c(articles, NATO_FLANK_TRIGGERS, 'nato_flank'),
+        'arctic':     _score_vector_c(articles, ARCTIC_TRIGGERS, 'arctic'),
+        'hybrid':     _score_vector_c(articles, HYBRID_TRIGGERS, 'hybrid'),
     }
+
+    # Co-occurrence (Nov 3 2026): the stories the phrase ladders miss. Live read
+    # Nov 2: nato_flank L0 and hybrid L0 on 1,369 articles while Poland ran a
+    # counter-sabotage operation on its Russian border, a Russia-tasked arson
+    # suspect was arrested and Estonia deported a Russian intelligence asset.
+    # Only ever RAISES nato_flank / hybrid. Adds drone_incursion (drones INTO a
+    # non-belligerent -- never battlefield strikes inside Ukraine) and black_sea.
+    if _eu_vectors:
+        try:
+            _cv, _crep = _eu_vectors('russia', articles)
+            COOCCURRENCE_REPORT.clear()
+            COOCCURRENCE_REPORT.update(_crep)
+            for _k in ('nato_flank', 'hybrid'):
+                _lit = vectors[_k][0]
+                _co = int(_cv.get(_k) or 0)
+                if _co > _lit:
+                    _rule = ((_crep.get('vectors') or {}).get(_k) or {}).get('rule', '')
+                    vectors[_k] = (_co, f'cooc:{_rule}')
+                    VECTOR_EVIDENCE[_k] = {'level': _co, 'phrase': f'cooc:{_rule}',
+                                           'outlets': ((_crep.get('vectors') or {}).get(_k) or {}).get('outlets', 0),
+                                           'source': 'cooccurrence'}
+            for _k in ('drone_incursion', 'black_sea'):
+                _r = (_crep.get('vectors') or {}).get(_k) or {}
+                vectors[_k] = (int(_cv.get(_k) or 0), _r.get('rule') or None)
+                VECTOR_EVIDENCE[_k] = {'level': int(_cv.get(_k) or 0), 'phrase': _r.get('rule') or None,
+                                       'outlets': _r.get('outlets', 0), 'source': 'cooccurrence'}
+        except Exception as _e:
+            print(f"[Russia Rhetoric] co-occurrence error: {str(_e)[:100]}")
 
     # ── Option B war-baseline floor (Jul 2026) ──
     # Russia-Ukraine is an active interstate war, so ground-ops floors at
@@ -2567,6 +2645,15 @@ def run_russia_rhetoric_scan(force=False):
             'arctic_label':         _lvl(arc_level),
             'hybrid_level':         hyb_level,
             'hybrid_label':         _lvl(hyb_level),
+            # ── Nov 3 2026: Europe Actor Matrix vectors (Rachel's priorities) ──
+            'drone_incursion_level': vectors.get('drone_incursion', (0, None))[0],
+            'drone_incursion_label': _lvl(vectors.get('drone_incursion', (0, None))[0]),
+            'black_sea_level':       vectors.get('black_sea', (0, None))[0],
+            'black_sea_label':       _lvl(vectors.get('black_sea', (0, None))[0]),
+            # Which phrase / rule and how many outlets set every vector -- so an
+            # L5 can always be checked (the Nov 2 L5 could not be).
+            'vector_evidence':       dict(VECTOR_EVIDENCE),
+            'cooccurrence':          dict(COOCCURRENCE_REPORT),
             # ── Regime Signals (May 7 2026) ──
             # Per-dimension max levels for cross-theater fingerprint + GPI consumption.
             'regime_signals':              regime_signals,
@@ -2581,7 +2668,7 @@ def run_russia_rhetoric_scan(force=False):
             'timestamp':            datetime.now(timezone.utc).isoformat(),
             'from_cache':           False,
             'refresh_triggered':    True,
-            'version':              '1.0.0',
+            'version':              '1.5.0',
         }
 
         # ── Cross-theater READ: Hungary signals (added May 18 2026) ──
