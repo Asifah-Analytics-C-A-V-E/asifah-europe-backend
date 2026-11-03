@@ -329,6 +329,15 @@ except Exception as e:
     traceback.print_exc()
     print("[Europe Backend] === END EUROPE BLUF IMPORT TRACEBACK ===")
 
+# Europe Actor Matrix v1.0.0 (Nov 3 2026) -- reader only: who is pressing whom, Moscow's fronts side by side
+try:
+    from europe_actor_matrix import register_europe_actor_matrix
+    EUROPE_MATRIX_AVAILABLE = True
+    print("[Europe Backend] ✅ Europe actor matrix loaded")
+except Exception as e:
+    EUROPE_MATRIX_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ Europe actor matrix not available — {type(e).__name__}: {e}")
+
 # Weather bundle (replaces 9 frontend open-meteo calls with 1 cached backend call)
 try:
     from europe_weather_bundle import (
@@ -1416,7 +1425,7 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-EUROPE_BACKEND_VERSION = '1.7.0'   # Nov 2 2026: every live tracker boosts its card; military posture actually read
+EUROPE_BACKEND_VERSION = '1.8.0'   # Nov 3 2026: Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
 
 # v1.4.1 (Oct 3 2026) -- ONE version, ONE User-Agent.
 # Europe was carrying both problems at once. The version: '/' said 1.1.0, the
@@ -4716,6 +4725,12 @@ if GREECE_PULSE_AVAILABLE:
 if EUROPE_BLUF_AVAILABLE:
     register_europe_bluf_routes(app)
     print("[Europe Backend] ✅ Europe regional BLUF routes registered")
+
+if EUROPE_MATRIX_AVAILABLE:
+    try:
+        register_europe_actor_matrix(app)
+    except Exception as e:
+        print(f"[Europe Backend] ⚠️ Europe actor matrix routes failed — {type(e).__name__}: {e}")
 
 # Register Weather bundle endpoint + start background refresh
 if WEATHER_BUNDLE_AVAILABLE:
