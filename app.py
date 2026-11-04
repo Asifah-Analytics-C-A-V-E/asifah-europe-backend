@@ -323,6 +323,15 @@ except ImportError as e:
     HUNGARY_PULSE_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Hungary financial pulse not available: {e}")
 
+# UK City of London & financial pulse (v1.9.3, Nov 4 2026 -- uk-stability.html's backend)
+try:
+    from uk_city_pulse import register_uk_city_endpoints
+    UK_CITY_AVAILABLE = True
+    print("[Europe Backend] ✅ UK City pulse module loaded")
+except ImportError as e:
+    UK_CITY_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ UK City pulse not available: {e}")
+
 # v1.0: Europe Regional BLUF Engine
 # Synthesizes top_signals[] across Russia + Greenland (and future Ukraine/Hungary/Poland trackers).
 # Required for Global Pressure Index downstream consumption.
@@ -1501,7 +1510,7 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-EUROPE_BACKEND_VERSION = '1.9.2'   # Nov 4 2026: United Kingdom target (City of London, gilts, territories, AUKUS); (1.9.1) Nov 3 2026 (late): Belgium Euroclear + Albania protest/migrant keywords; (1.9.0) Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
+EUROPE_BACKEND_VERSION = '1.9.3'   # Nov 4 2026 (late): uk_city_pulse (City of London, gilts, Lloyd's, LME); (1.9.2) United Kingdom target (City of London, gilts, territories, AUKUS); (1.9.1) Nov 3 2026 (late): Belgium Euroclear + Albania protest/migrant keywords; (1.9.0) Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
 
 # v1.4.1 (Oct 3 2026) -- ONE version, ONE User-Agent.
 # Europe was carrying both problems at once. The version: '/' said 1.1.0, the
@@ -4822,6 +4831,11 @@ if GREECE_PULSE_AVAILABLE:
 if HUNGARY_PULSE_AVAILABLE:
     register_hungary_financial_endpoints(app)
     print("[Europe Backend] ✅ Hungary financial pulse routes registered")
+
+# Register UK City pulse (v1.9.3)
+if UK_CITY_AVAILABLE:
+    register_uk_city_endpoints(app)
+    print("[Europe Backend] ✅ UK City pulse routes registered")
 
 # Register Europe Regional BLUF (synthesizes Russia + Greenland for GPI consumption)
 if EUROPE_BLUF_AVAILABLE:

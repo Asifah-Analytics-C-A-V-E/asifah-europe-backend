@@ -1,6 +1,7 @@
 """
 europe_regional_bluf.py
 Asifah Analytics -- Europe Backend Module
+v3.8.0 -- Nov 4 2026 (UK City pulse: a market-credibility or City signal reaches the BLUF/GPI)
 v3.7.0 -- Nov 2 2026 (Moldova read at last; 3h cache; get_theatre_level() for app.py)
 v3.6.1 -- July 25, 2026 (two-axis rule: pressure != stability)
 
@@ -118,6 +119,7 @@ THEATRE_FLAGS = {
     'kazakhstan':'\U0001f1f0\U0001f1ff',  # KZ
     'poland':    '\U0001f1f5\U0001f1f1',  # 🇵🇱
     'moldova':   '\U0001f1f2\U0001f1e9',  # MD
+    'uk':        '\U0001f1ec\U0001f1e7',  # GB (v3.8.0 -- City pulse signals; rhetoric tracker to follow)
     'baltics':   '\U0001f1ea\U0001f1fa',  # 🇪🇺 fallback
 }
 
@@ -135,6 +137,7 @@ THEATRE_DISPLAY = {
     'kazakhstan':'KAZAKHSTAN',
     'poland':    'POLAND',
     'moldova':   'MOLDOVA',
+    'uk':        'UNITED KINGDOM',
     'baltics':   'BALTICS',
 }
 
@@ -1596,6 +1599,44 @@ def _stamp_cross_regional_europe(signals):
     return rows
 
 
+UK_CITY_KEY = 'stability:uk:city_pulse'
+UK_CITY_STALE_HOURS = 30
+
+
+def _uk_city_signals():
+    """0-2 signals from uk_city_pulse.py. Never raises; stale or missing = none."""
+    try:
+        d = _redis_get(UK_CITY_KEY)
+        if not d:
+            return []
+        ts = d.get('scanned_at')
+        if ts:
+            age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(ts.replace('Z', '+00:00'))).total_seconds() / 3600
+            if age_h > UK_CITY_STALE_HOURS:
+                return []
+        out = []
+        cred = d.get('credibility_check') or {}
+        if cred.get('state') == 'credibility_stress':
+            out.append({
+                'priority': 11, 'category': 'uk_credibility', 'theatre': 'uk', 'level': 3,
+                'countries': ['united_kingdom'], 'icon': '\U0001f4c9', 'color': '#f97316',
+                'short_text': 'UK: gilts up and the pound down together -- the 2022 credibility signature',
+                'long_text': 'UNITED KINGDOM -- ' + str(cred.get('text', '')),
+            })
+        for lid, lens in (d.get('lenses') or {}).items():
+            if (lens or {}).get('level', 0) >= 3:
+                out.append({
+                    'priority': 9, 'category': 'uk_city_' + lid, 'theatre': 'uk', 'level': 3,
+                    'countries': ['united_kingdom'], 'icon': '\U0001f3e6', 'color': '#f59e0b',
+                    'short_text': 'UK / City of London: ' + str(lens.get('title', lid)),
+                    'long_text': 'UNITED KINGDOM -- ' + str(lens.get('sentence', '')),
+                })
+        return out[:3]
+    except Exception as e:
+        print(f"[Europe BLUF] UK City read failed (non-fatal): {str(e)[:100]}")
+        return []
+
+
 def _build_signals(posture, trackers):
     """Collect, dedupe, and rank top_signals across Europe trackers."""
     all_signals = []
@@ -1629,6 +1670,11 @@ def _build_signals(posture, trackers):
                               f'simultaneous with Greenland sovereignty crisis L{greenland_threat}. '
                               f'Russia exploiting US-Denmark friction; classic GIUK pressure window.',
             })
+
+    # v3.8.0 (Nov 4 2026) -- UK City pulse. No UK rhetoric tracker yet, so the
+    # UK reaches the BLUF only through money: the gilt/pound credibility check,
+    # or a CORROBORATED (2+ outlet) City lane. Volume alone never surfaces here.
+    all_signals.extend(_uk_city_signals())
 
     # v3.5.1 (Oct 6 2026) -- LAYER 2 MOVED OUT OF THIS FUNCTION.
     # It ran HERE, before the sort/dedupe/quota below. The Oct 6 05:51 build
