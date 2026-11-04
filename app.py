@@ -635,6 +635,7 @@ TRAVEL_ADVISORY_CODES = {
     'moldova': ['MD'],          # FIPS 'MD' (matches ISO here, unlike UP/RS/BO).
                                 # Advisory is L2 nationally with an L4 do-not-travel
                                 # carve-out for Transnistria -- the split IS the story.
+    'uk': ['UK'],               # FIPS 'UK' = United Kingdom (ISO is GB). v1.9.2
 }
 
 TRAVEL_ADVISORY_LEVELS = {
@@ -916,6 +917,17 @@ TARGET_BASELINES = {
     'moldova': {
         'base_adjustment': +8,
         'description': 'Highest-activity Russian interference target in Europe -- election meddling + vote-buying networks (Shor), Transnistria garrison (OGRF ~1,500 + Cobasna depot), Gagauzia separatist pressure, recurring energy blackmail (Gazprom/Cuciurgan), EU-accession counterpressure'
+    },
+    # v1.9.2 (Nov 4 2026) -- United Kingdom. Not a conflict state; a pressure
+    # state. The baseline reads four standing loads: the City of London as the
+    # laundromat other people's influence runs through (Russian + Gulf money),
+    # a gilt market that has punished fiscal wobbles before (2022) and twitched
+    # again in Sep 2026, the overseas-territory edge (Falklands, Gibraltar,
+    # Chagos/Diego Garcia, Akrotiri), and a seventh PM in ten years (Burnham,
+    # Jul 2026). Low base on purpose: the UK should only climb on evidence.
+    'uk': {
+        'base_adjustment': +3,
+        'description': 'Pressure state, not conflict state -- City of London dirty-money exposure (Russian/Gulf capital, OFSI sanctions enforcement), gilt-market fiscal sensitivity (Burnham government, Chancellor Healey, first budget Oct 28 2026), overseas-territory flashpoints (Falklands, Gibraltar, Chagos/Diego Garcia, Akrotiri), Scotland/Northern Ireland union questions, AUKUS and Ukraine commitments'
     }
 }
 
@@ -1436,13 +1448,60 @@ TARGET_KEYWORDS = {
             'moldova election', 'moldova russia', 'moldovan',
             'tiraspol', 'moldova energy',
         ]
+    },
+    'uk': {
+        # v1.9.2 (Nov 4 2026). NEVER add bare 'UK' or 'uk' here: the v1.5
+        # relevance gate is a substring match and 'uk' sits inside 'Ukraine'.
+        # Same reason the Telegram branch below skips the UK.
+        # ── QUERY TIER (first 8 = the only keywords APIs ever see) ──
+        'keywords': [
+            'United Kingdom', 'Britain', 'Downing Street', 'Andy Burnham',
+            'City of London', 'gilts', 'Falklands', 'British government',
+            # ── RELEVANCE NET (v1.5 gate reads the FULL list) ──
+            # Government / politics
+            'Westminster', 'Whitehall', 'Burnham government', 'John Healey',
+            'Chancellor of the Exchequer', 'Treasury UK', 'Ed Miliband',
+            'Reform UK', 'Nigel Farage', 'Kemi Badenoch', 'British prime minister',
+            'Starmer', 'British',
+            # City of London / dirty money (lens 1: other people's influence)
+            'Londongrad', 'London laundromat', 'OFSI', 'Office of Financial Sanctions',
+            'Companies House', 'unexplained wealth order', 'National Crime Agency',
+            'oligarch London', 'Russian money London', 'Gulf investment London',
+            'Qatar Investment Authority', 'sovereign wealth London', 'London property sanctions',
+            'Lloyds of London', 'London Metal Exchange', 'shadow fleet insurance',
+            # City of London / UK economy (lens 2: why the City matters at home)
+            'FTSE 100', 'Bank of England', 'sterling', 'pound sterling', 'gilt yields',
+            'UK borrowing', 'Office for Budget Responsibility', 'fiscal rules',
+            'Autumn Budget', 'UK inflation', 'UK recession', 'London Stock Exchange',
+            'wealth tax', 'non-dom', 'UK tax rise',
+            # Overseas territories / bases
+            'Falkland Islands', 'Malvinas', 'Gibraltar', 'Chagos', 'Diego Garcia',
+            'Akrotiri', 'Dhekelia', 'British Indian Ocean Territory',
+            'British overseas territory', 'South Georgia', 'British Antarctic Territory',
+            # Union / devolution
+            'Scotland independence', 'SNP', 'Holyrood', 'Northern Ireland',
+            'Stormont', 'Windsor Framework', 'Irish Sea border',
+            # Security / alliances
+            'AUKUS', 'Royal Navy', 'British Army', 'Royal Air Force', 'Ministry of Defence',
+            'Trident', 'Faslane', 'GCHQ', 'MI5', 'MI6', 'Five Eyes',
+            'British troops Ukraine', 'coalition of the willing', 'Storm Shadow',
+            # Hybrid / sabotage (the Russia-in-Britain lane)
+            'undersea cable UK', 'Russian sabotage Britain', 'Salisbury',
+            'arson London Russia', 'UK espionage',
+        ],
+        'reddit_keywords': [
+            'United Kingdom', 'Britain', 'British', 'Burnham', 'Downing Street',
+            'City of London', 'gilts', 'Bank of England', 'Falklands',
+            'Gibraltar', 'Chagos', 'AUKUS', 'Scotland independence',
+            'Northern Ireland', 'Healey budget',
+        ]
     }
 }
 
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-EUROPE_BACKEND_VERSION = '1.9.1'   # Nov 3 2026 (late): Belgium Euroclear + Albania protest/migrant keywords; (1.9.0) Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
+EUROPE_BACKEND_VERSION = '1.9.2'   # Nov 4 2026: United Kingdom target (City of London, gilts, territories, AUKUS); (1.9.1) Nov 3 2026 (late): Belgium Euroclear + Albania protest/migrant keywords; (1.9.0) Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
 
 # v1.4.1 (Oct 3 2026) -- ONE version, ONE User-Agent.
 # Europe was carrying both problems at once. The version: '/' said 1.1.0, the
@@ -1590,6 +1649,7 @@ REDDIT_SUBREDDITS = {
     'albania': ['albania', 'europe', 'geopolitics', 'worldnews'],
     'belgium': ['belgium', 'europe', 'geopolitics', 'worldnews'],
     'moldova': ['moldova', 'romania', 'europe', 'geopolitics', 'worldnews'],
+    'uk': ['unitedkingdom', 'ukpolitics', 'UKPersonalFinance', 'Scotland', 'northernireland', 'europe', 'geopolitics', 'worldnews'],   # v1.9.2
 }
 
 # ========================================
@@ -1924,7 +1984,8 @@ _MIL_LEVELS = ('normal', 'elevated', 'high', 'surge')
 # on purpose: its rhetoric read already folds in russia_military_level, so a
 # second military boost would count the same evidence twice.
 MILITARY_BOOST_TARGETS = {'ukraine', 'poland', 'turkey', 'greece', 'cyprus',
-                          'armenia', 'hungary', 'kazakhstan'}
+                          'armenia', 'hungary', 'kazakhstan',
+                          'uk'}   # v1.9.2: Royal Navy / Akrotiri / South Atlantic posture
 
 
 def _read_military_cache():
@@ -3427,7 +3488,8 @@ def scan_european_flight_disruptions(all_articles):
                 'nato', 'arctic',
                 'turkey', 'istanbul', 'ankara', 'incirlik',
                 'cyprus', 'nicosia', 'larnaca', 'akrotiri', 'paphos',
-                'greece', 'athens', 'thessaloniki', 'aegean', 'crete', 'souda'
+                'greece', 'athens', 'thessaloniki', 'aegean', 'crete', 'souda',
+                'heathrow', 'gatwick', 'london', 'britain', 'united kingdom'
             ])
 
             if has_flight_context and has_disruption and has_europe_context:
@@ -3824,6 +3886,20 @@ def _run_threat_scan(target, days=7):
             except Exception as e:
                 print(f"Hungary GDELT ({lang}) error: {e}")
 
+    if target == 'uk':
+        # v1.9.2 -- two Google News passes, one per City lens, plus one for the
+        # territories edge. Google News is the free, keyless lane.
+        uk_queries = [
+            ('City of London sanctions OR oligarch OR "dirty money" OR OFSI', 'UK City Watch'),
+            ('gilts OR "Bank of England" OR sterling OR Healey budget', 'UK Fiscal Watch'),
+            ('Falklands OR Gibraltar OR Chagos OR "Diego Garcia" OR Akrotiri', 'UK Territories Watch'),
+        ]
+        for _q, _label in uk_queries:
+            try:
+                rss_articles.extend(fetch_google_news_rss(_q, _label))
+            except Exception as e:
+                print(f"UK Google News ({_label}) error: {e}")
+
     if target == 'belarus':
         try:
             rss_articles.extend(fetch_google_news_rss(
@@ -4003,6 +4079,10 @@ def _run_threat_scan(target, days=7):
             elif target == 'moldova':
                 from telegram_signals_europe import fetch_moldova_telegram_signals
                 telegram_msgs = fetch_moldova_telegram_signals(hours_back=days*24)
+            elif target == 'uk':
+                # v1.9.2: no UK Telegram channel set yet, and the generic
+                # fallback matches 'uk' inside 'ukraine' -- skip, don't leak.
+                telegram_msgs = []
             else:
                 telegram_msgs = fetch_europe_telegram_signals(hours_back=days*24, include_extended=True)
             if telegram_msgs:
