@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 
 from europe_rhetoric_engine import CountryRhetoricTracker
 
-VERSION = '1.0.0'
+VERSION = '1.0.1'   # Nov 4 night: vector wheel nodes report their vector, not the country headline
 
 ACTORS = {
     'government': {
@@ -606,6 +606,13 @@ def _wheel_read(redis_get):
                 text = d.get('top_indicator') or d.get('bluf') or d.get('signal_text_short') or ''
                 if isinstance(text, dict):
                     text = text.get('text') or text.get('headline') or ''
+                if n.get('vector'):
+                    # v1.0.1: a vector node reports THAT vector, not the country's headline
+                    # (Argentina's top line can be about AMIA while the node shows the Falklands).
+                    vname = {0: 'quiet', 1: 'routine', 2: 'busier than usual', 3: 'confirmed events', 4: 'surge'}.get(lvl, '')
+                    rl = [r for r in (d.get('red_lines') or []) if r.get('id') == n['vector']]
+                    text = ('%s reading: L%d (%s).' % (n['vector'].replace('_', ' ').title(), lvl, vname)
+                            + (' Red line "%s": %s.' % (rl[0].get('label', ''), rl[0].get('status', '')) if rl else ''))
                 node.update({'state': 'lit' if lvl >= 2 else 'dark', 'level': lvl,
                              'text': str(text)[:260], 'age_hours': round(age, 1)})
         else:
