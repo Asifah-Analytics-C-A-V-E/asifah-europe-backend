@@ -2,6 +2,13 @@
 Asifah Analytics -- United Kingdom: City of London & Financial Pulse
 ====================================================================
 v1.0.0 -- Nov 4, 2026  (Europe backend)
+v1.0.1 -- Nov 4, 2026 (eve): the first live read put three lenses at L3 on
+          routine copy -- an LME daily price wrap ("plunged"), a jailed claims
+          handler plus an annual premiums total (Lloyd's), and investor
+          commentary (tax). Event terms are now STRUCTURAL (a JWC listing, a
+          trading halt, a ban, an official figure), price words are gone, and
+          each lane can demand a second subject term ('requires_also') so a
+          Saudi tourism minister in London is not "Gulf money".
 
 The UK is a pressure state, not a conflict state. Its stability story runs
 through money, so this module reads money three ways:
@@ -75,7 +82,7 @@ from urllib.parse import quote_plus
 import requests
 from flask import jsonify, request
 
-VERSION             = '1.0.0'
+VERSION             = '1.0.1'   # Nov 4 eve: tighter event terms + a money/subject test per lane (first live read over-fired)
 CACHE_KEY           = 'stability:uk:city_pulse'
 SCAN_INTERVAL_HOURS = 6
 FORCE_MIN_INTERVAL  = 600
@@ -423,19 +430,25 @@ LANES = [
     # ── Lens A: other people's money in London ──
     {'id': 'russia_money', 'lens': 'foreign_money', 'label': 'Russian money & sanctions',
      'q': '(oligarch OR "Russian money" OR "sanctions evasion" OR Londongrad OR OFSI) (London OR UK OR Britain)',
-     'requires_any': ['russia', 'russian', 'oligarch', 'ofsi', 'sanction', 'londongrad', 'kremlin'],
+     'requires_any': ['russia', 'russian', 'oligarch', 'ofsi', 'londongrad', 'kremlin'],
+     'requires_also': ['money', 'sanction', 'asset', 'freeze', 'frozen', 'launder', 'property', 'mansion', 'wealth',
+                       'evasion', 'ofsi', 'seized', 'yacht', 'bank'],
      'context': UK_CTX,
      'events': ['sanctioned', 'sanctions on', 'frozen', 'freeze', 'seized', 'charged', 'fined', 'raid', 'arrested',
                 'convicted', 'breach', 'designated', 'asset freeze']},
     {'id': 'gulf_money', 'lens': 'foreign_money', 'label': 'Gulf money',
      'q': '("Qatar Investment Authority" OR "Abu Dhabi" OR "Saudi" OR Mubadala OR ADIA OR "Gulf investors" OR "sovereign wealth fund") (London OR UK OR Britain)',
      'requires_any': ['qatar', 'abu dhabi', 'saudi', 'mubadala', 'adia', 'gulf', 'emirati', 'uae', 'kuwait', 'pif'],
+     'requires_also': ['invest', 'fund', 'stake', 'takeover', 'buys', 'bought', 'acquir', 'billion', 'property',
+                       'sovereign', 'bid ', 'owner', 'deal'],
      'context': UK_CTX,
-     'events': ['takeover', 'buys', 'bought', 'stake in', 'acquires', 'acquisition', 'bid for', 'blocked', 'national security',
-                'billion deal', 'invests', 'investment of']},
+     'events': ['takeover', 'stake in', 'acquires', 'acquisition', 'bid for', 'blocked', 'national security',
+                'billion deal', 'investment of', 'buys stake', 'agrees to buy']},
     {'id': 'china_money', 'lens': 'foreign_money', 'label': 'Chinese money & presence',
      'q': '("Chinese embassy" OR "Chinese investment" OR "China spy" OR "Chinese ownership") (London OR UK OR Britain)',
      'requires_any': ['china', 'chinese', 'beijing'],
+     'requires_also': ['invest', 'embassy', 'spy', 'espionage', 'takeover', 'stake', 'security', 'ownership', 'acquir',
+                       'sanction', 'steel', 'nuclear', 'port', 'interference'],
      'context': UK_CTX,
      'events': ['approved', 'blocked', 'charged', 'arrested', 'expelled', 'takeover', 'national security', 'banned']},
     {'id': 'enforcement', 'lens': 'foreign_money', 'label': 'Enforcement & dirty money',
@@ -449,13 +462,18 @@ LANES = [
      'q': '("Lloyd\'s of London" OR "Joint War Committee" OR "war risk" OR "war-risk premium" OR "marine insurance") shipping',
      'requires_any': ["lloyd's", 'lloyds', 'joint war committee', 'war risk', 'war-risk', 'marine insur', 'insurer', 'insurance'],
      'context': None,
-     'events': ['listed area', 'added to', 'premium', 'premiums', 'surge', 'soar', 'jump', 'cancel', 'withdraw', 'suspend',
-                'record', 'claims']},
+     'requires_also': ['war', 'risk', 'shipping', 'marine', 'vessel', 'tanker', 'sea', 'strait', 'conflict'],
+     'events': ['listed area', 'listed areas', 'joint war committee', 'war risk premium', 'war-risk premium',
+                'additional premium', 'cancel cover', 'cancels cover', 'withdraw cover', 'withdraws cover',
+                'suspend cover', 'notice of cancellation', 'war risk cover', 'war-risk cover', 'insurers pull',
+                'uninsurable', 'refuse to insure', 'no longer insure']},
     {'id': 'lme', 'lens': 'world_desk', 'label': 'London Metal Exchange',
      'q': '"London Metal Exchange" OR (LME nickel OR LME aluminium OR LME copper OR "LME warehouse" OR "Russian metal")',
      'requires_any': ['london metal exchange', 'lme'],
      'context': None,
-     'events': ['suspend', 'halt', 'ban', 'banned', 'record', 'squeeze', 'surge', 'plunge', 'cancel', 'sanction']},
+     'events': ['suspends', 'suspended trading', 'halts', 'halted', 'trading halt', 'bans', 'banned', 'ban on',
+                'cancelled trades', 'cancels trades', 'short squeeze', 'squeeze', 'sanction', 'delist', 'position limit',
+                'rule change', 'russian metal']},
     {'id': 'shadow_fleet', 'lens': 'world_desk', 'label': 'Shadow fleet & who insures it',
      'q': '"shadow fleet" (insurance OR "P&I" OR sanctions OR tanker) (UK OR Britain OR Channel OR Baltic)',
      'requires_any': ['shadow fleet', 'dark fleet'],
@@ -473,7 +491,8 @@ LANES = [
      'requires_any': ['non-dom', 'wealth tax', 'millionaire', 'exodus', 'leaving the uk', 'leave the uk', 'capital gains',
                       'exit tax', 'tax rise', 'tax raid', 'emigrat'],
      'context': UK_CTX,
-     'events': ['exodus', 'record', 'leave', 'leaving', 'quit', 'flee', 'u-turn', 'confirmed', 'announced']},
+     'events': ['record number', 'official figures', 'hmrc figures', 'hmrc data', 'figures show', 'data shows',
+                'u-turn', 'abolish', 'scrapped', 'confirmed in the budget', 'will introduce', 'to introduce']},
     {'id': 'listings', 'lens': 'home_economy', 'label': 'Listings & the City\'s pull',
      'q': '"London Stock Exchange" (delisting OR "moves listing" OR "New York listing" OR "primary listing") OR "London listing"',
      'requires_any': ['london stock exchange', 'lse', 'listing', 'delist', 'ftse'],
@@ -551,6 +570,8 @@ def _fetch_lane(lane):
             continue
         text = (title + ' ' + desc).lower()
         if not _has_any(text, lane['requires_any']):
+            continue
+        if lane.get('requires_also') and not _has_any(text, lane['requires_also']):
             continue
         if lane.get('context') and not _has_any(text, lane['context']):
             continue
