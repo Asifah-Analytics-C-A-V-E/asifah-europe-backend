@@ -323,6 +323,15 @@ except ImportError as e:
     HUNGARY_PULSE_AVAILABLE = False
     print(f"[Europe Backend] ⚠️ Hungary financial pulse not available: {e}")
 
+# UK rhetoric tracker (v1.10.0, Nov 4 2026 night -- first tracker on europe_rhetoric_engine)
+try:
+    from rhetoric_tracker_uk import register_uk_rhetoric_endpoints
+    UK_RHETORIC_AVAILABLE = True
+    print("[Europe Backend] ✅ UK rhetoric tracker loaded")
+except ImportError as e:
+    UK_RHETORIC_AVAILABLE = False
+    print(f"[Europe Backend] ⚠️ UK rhetoric tracker not available: {e}")
+
 # UK City of London & financial pulse (v1.9.3, Nov 4 2026 -- uk-stability.html's backend)
 try:
     from uk_city_pulse import register_uk_city_endpoints
@@ -1510,7 +1519,7 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-EUROPE_BACKEND_VERSION = '1.9.3'   # Nov 4 2026 (late): uk_city_pulse (City of London, gilts, Lloyd's, LME); (1.9.2) United Kingdom target (City of London, gilts, territories, AUKUS); (1.9.1) Nov 3 2026 (late): Belgium Euroclear + Albania protest/migrant keywords; (1.9.0) Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
+EUROPE_BACKEND_VERSION = '1.10.0'  # Nov 4 2026 (night): UK rhetoric tracker on europe_rhetoric_engine; (1.9.3) Nov 4 2026 (late): uk_city_pulse (City of London, gilts, Lloyd's, LME); (1.9.2) United Kingdom target (City of London, gilts, territories, AUKUS); (1.9.1) Nov 3 2026 (late): Belgium Euroclear + Albania protest/migrant keywords; (1.9.0) Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
 
 # v1.4.1 (Oct 3 2026) -- ONE version, ONE User-Agent.
 # Europe was carrying both problems at once. The version: '/' said 1.1.0, the
@@ -4831,6 +4840,12 @@ if GREECE_PULSE_AVAILABLE:
 if HUNGARY_PULSE_AVAILABLE:
     register_hungary_financial_endpoints(app)
     print("[Europe Backend] ✅ Hungary financial pulse routes registered")
+
+# Register UK rhetoric tracker (v1.10.0). The engine runs its own background
+# loop (first scan ~5 min after boot, then every 12h); ?refresh is force-gated.
+if UK_RHETORIC_AVAILABLE:
+    register_uk_rhetoric_endpoints(app, force_gate=_public_force_allowed)
+    print("[Europe Backend] ✅ UK rhetoric routes registered")
 
 # Register UK City pulse (v1.9.3)
 if UK_CITY_AVAILABLE:

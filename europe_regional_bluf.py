@@ -1,6 +1,7 @@
 """
 europe_regional_bluf.py
 Asifah Analytics -- Europe Backend Module
+v3.8.1 -- Nov 4 2026 (night): UK rhetoric tracker read (rhetoric:uk:latest)
 v3.8.0 -- Nov 4 2026 (UK City pulse: a market-credibility or City signal reaches the BLUF/GPI)
 v3.7.0 -- Nov 2 2026 (Moldova read at last; 3h cache; get_theatre_level() for app.py)
 v3.6.1 -- July 25, 2026 (two-axis rule: pressure != stability)
@@ -101,6 +102,7 @@ TRACKER_KEYS = {
     'kazakhstan':'rhetoric:kazakhstan:latest', # v1.0 Jul 12 2026 -- multi-vector hedging-integrity tracker
     'poland':    'rhetoric:poland:latest',  # v1.0 Jul 12 2026 -- consensus-integrity tracker (inbound_target, NOT a drift spoke)
     'moldova':   'rhetoric:moldova:latest', # v3.7.0 Nov 2 2026 -- tracker has run for months; the BLUF never read it
+    'uk':        'rhetoric:uk:latest',      # v3.8.1 Nov 4 2026 -- UK tracker (europe_rhetoric_engine)
     # Future Europe trackers slot in here:
     # 'baltics':  'rhetoric:baltics:latest',
 }
@@ -516,7 +518,16 @@ def _extract_vector_levels(raw):
         return {}
     vl = raw.get('vector_levels')
     if isinstance(vl, dict) and vl:
-        return vl
+        # v3.8.1: engine trackers (europe_rhetoric_engine, UK first) publish
+        # level NAMES ('low'..'surge'). Coerce to ints so peak arithmetic works.
+        _names = {'low': 0, 'normal': 1, 'elevated': 2, 'high': 3, 'surge': 4}
+        out = {}
+        for k, v in vl.items():
+            if isinstance(v, str):
+                out[k] = _names.get(v.lower(), _BAND_TO_LEVEL.get(v.lower(), 0) if isinstance(_BAND_TO_LEVEL.get(v.lower(), 0), int) else 0)
+            else:
+                out[k] = _safe_int(v)
+        return out
     derived = {}
     for k, v in raw.items():
         if k in _NON_VECTOR_KEYS or not isinstance(v, dict):
