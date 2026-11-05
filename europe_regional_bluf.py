@@ -1,6 +1,7 @@
 """
 europe_regional_bluf.py
 Asifah Analytics -- Europe Backend Module
+v3.9.0 -- Nov 5 2026: a click NEVER rebuilds. Serve the last BLUF, refresh behind it.
 v3.8.1 -- Nov 4 2026 (night): UK rhetoric tracker read (rhetoric:uk:latest)
 v3.8.0 -- Nov 4 2026 (UK City pulse: a market-credibility or City signal reaches the BLUF/GPI)
 v3.7.0 -- Nov 2 2026 (Moldova read at last; 3h cache; get_theatre_level() for app.py)
@@ -17,6 +18,18 @@ v3.7.0 (Nov 2 2026):
     card boost -- same platform translation (Greece rung 5 -> platform 4,
     alert words -> ints, peak-vector lift) the BLUF itself uses, so the card
     and the BLUF can never read the same tracker two different ways.
+
+v3.9.0 (Nov 5 2026) -- SERVE OLD, REFRESH BEHIND
+  * Before: once the cache passed 3h (30 min if any tracker was stale -- which
+    is most of the time), the NEXT VISITOR paid for the rebuild: the page sat on
+    "LOADING" and the GPI's 20s fetch could give up and mark Europe
+    UNAVAILABLE (L0).
+  * Now: the last BLUF is kept 48h in Redis. A visitor always gets it at once;
+    if it is past its refresh time, a rebuild starts in the background (one at
+    a time) and the next visitor gets the new one. 'refreshing': true says so.
+  * A timer rebuilds every 2h whether anyone visits or not.
+  * ?force=true still rebuilds while you wait (it never calls Claude).
+  * Only an empty cache (first boot) makes a visitor wait.
 
 Europe Regional BLUF (Bottom Line Up Front) Engine.
 
@@ -64,6 +77,8 @@ Author: RCGG / Asifah Analytics
 
 import os
 import json
+import threading
+import time
 import traceback
 from datetime import datetime, timezone
 import requests
@@ -1766,20 +1781,63 @@ def _build_convergence_panel():
         return None
 
 
-def build_regional_bluf(force=False):
-    """Build the Europe regional BLUF."""
-    if not force:
-        cached = _redis_get(BLUF_CACHE_KEY)
-        if cached and cached.get('generated_at'):
-            try:
-                age = (datetime.now(timezone.utc) -
-                       datetime.fromisoformat(cached['generated_at'])).total_seconds()
-                if age < BLUF_CACHE_TTL:
-                    cached['from_cache'] = True
-                    return cached
-            except Exception:
-                pass
+BLUF_KEEP_TTL = 48 * 3600          # v3.9.0: how long Redis KEEPS the last BLUF
+BLUF_TIMER_SEC = 2 * 3600          # v3.9.0: background rebuild cadence
+_rebuild_lock = threading.Lock()
+_timer_started = {'v': False}
 
+
+def _rebuild_in_background():
+    if not _rebuild_lock.acquire(blocking=False):
+        return                      # one already running
+    def run():
+        try:
+            _build_fresh()
+        except Exception as e:
+            print(f"[Europe BLUF] background rebuild failed: {str(e)[:120]}")
+        finally:
+            _rebuild_lock.release()
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _start_timer():
+    if _timer_started['v']:
+        return
+    _timer_started['v'] = True
+    def loop():
+        time.sleep(90)              # let the trackers' first scans land
+        while True:
+            _rebuild_in_background()
+            time.sleep(BLUF_TIMER_SEC)
+    threading.Thread(target=loop, daemon=True).start()
+    print('[Europe BLUF] background rebuild every %dh' % (BLUF_TIMER_SEC // 3600))
+
+
+def build_regional_bluf(force=False):
+    """The Europe regional BLUF. A visitor never waits for a rebuild (v3.9.0)."""
+    if force:
+        with _rebuild_lock:
+            return _build_fresh()
+    cached = _redis_get(BLUF_CACHE_KEY)
+    if cached and cached.get('generated_at') and cached.get('success', True) is not False:
+        try:
+            age = (datetime.now(timezone.utc) -
+                   datetime.fromisoformat(cached['generated_at'])).total_seconds()
+        except Exception:
+            age = None
+        due = cached.get('refresh_after_sec') or BLUF_CACHE_TTL
+        cached['from_cache'] = True
+        cached['age_minutes'] = round(age / 60) if age is not None else None
+        if age is None or age >= due:
+            _rebuild_in_background()
+            cached['refreshing'] = True
+        return cached
+    with _rebuild_lock:             # first boot only: nothing to serve yet
+        return _build_fresh()
+
+
+def _build_fresh():
+    """Build the Europe regional BLUF from the tracker caches (the old body)."""
     print('[Europe BLUF v3.5.1] Building regional BLUF from all Europe tracker caches...')
 
     try:
@@ -1878,7 +1936,7 @@ def build_regional_bluf(force=False):
             'layer2':             _l2,
             'theatre_summary':    theatre_summary,
             'generated_at':       datetime.now(timezone.utc).isoformat(),
-            'version':            '3.5.3',
+            'version':            '3.9.0',
             'methodology_note':   (
                 'How to read this: country scores are rhetoric-signal '
                 'composites -- weighted volume and severity of classified '
@@ -1891,7 +1949,8 @@ def build_regional_bluf(force=False):
         }
 
         _bluf_ttl = BLUF_INCOMPLETE_TTL if (trackers_missing or trackers_stale) else BLUF_CACHE_TTL
-        _redis_set(BLUF_CACHE_KEY, result, ttl=_bluf_ttl)
+        result['refresh_after_sec'] = _bluf_ttl
+        _redis_set(BLUF_CACHE_KEY, result, ttl=BLUF_KEEP_TTL)
         print(f"[Europe BLUF v3.5.3] Built: posture={posture['label']}, "
               f"max_level=L{posture['peak_level']}, "
               f"breached={posture['breached_count']}, "
@@ -1922,6 +1981,7 @@ def build_regional_bluf(force=False):
 def register_europe_bluf_routes(app):
     """Register Europe BLUF endpoints on the given Flask app."""
     from flask import jsonify, request as flask_request
+    _start_timer()
 
     @app.route('/api/rhetoric/europe/bluf', methods=['GET'])
     def get_europe_bluf():
