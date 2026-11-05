@@ -1,7 +1,17 @@
 """
 russia_signal_interpreter.py
 Asifah Analytics -- Europe Backend Module
-v1.2.0 -- Nov 3, 2026 (v1.1.0 May 17 2026)
+v1.3.0 -- Nov 5, 2026 (v1.2.0 Nov 3; v1.1.0 May 17 2026)
+
+v1.3.0 -- HYBRID IS NOT KINETIC, AND "95% CERTAIN" IS NOT "CONFIRMED"
+  * The hybrid red line now says WHAT KIND of attack it saw: 'cyber',
+    'sabotage' (cables, pipelines, arson, explosions) or 'jamming' (GPS),
+    read from the matched headlines. The signal carries 'mode' and its text
+    says "CYBER, not kinetic" so no reader takes a hack for a strike.
+  * Renamed "Confirmed Hybrid Attack..." -> "Russian-Attributed Hybrid Attack
+    on NATO Infrastructure". The text says "officially attributed" only when a
+    matched headline has a government / NATO / intelligence voice blaming
+    Russia; otherwise "attributed in press reporting, not officially confirmed".
 
 v1.2.0 -- EVIDENCE, THE WAR FLOOR, AND A TOPLINE
   * The ground_ops vector floors at L4 because the war is the baseline. v1.1
@@ -73,7 +83,7 @@ from datetime import datetime, timezone
 
 from europe_evidence import build_corpus, score_line, find, corpus_health
 
-INTERPRETER_VERSION = '1.2.0'
+INTERPRETER_VERSION = '1.3.0'
 THIN_MIN_ARTICLES = 60
 
 # Evidence triggers: (breach phrases, approach phrases). Context: the phrase
@@ -323,9 +333,10 @@ RED_LINES = [
     },
     {
         'id':       'hybrid_infrastructure_attack',
-        'label':    'Confirmed Hybrid Attack on NATO Infrastructure',
-        'detail':   'Confirmed Russian-attributed cyberattack, undersea cable cutting, '
-                    'or sabotage of NATO/European critical infrastructure',
+        'label':    'Russian-Attributed Hybrid Attack on NATO Infrastructure',
+        'detail':   'A cyberattack, undersea cable cut, GPS jamming or sabotage of NATO/European '
+                    'critical infrastructure, attributed to Russia. Hybrid means below the '
+                    'threshold of armed attack: not kinetic, not Article 5 on its own',
         'severity': 2,
         'color':    '#f97316',
         'icon':     '💻',
@@ -1372,6 +1383,63 @@ def _build_so_what(scan_data, red_lines_triggered, historical_matches,
 # PUBLIC ENTRY POINT
 # ============================================================
 
+# ── v1.3.0: hybrid mode + attribution ─────────────────────────
+_MODE_WORDS = (
+    ('cyber',    ('cyber', 'hack', 'ransomware', 'malware', 'ddos', 'phishing')),
+    ('jamming',  ('jamming', 'jammed', 'gps interference', 'spoofing')),
+    ('sabotage', ('cable', 'pipeline', 'arson', 'explosion', 'sabotage', 'derail', 'anchor drag')),
+)
+_MODE_LABEL = {'cyber': 'CYBER', 'jamming': 'GPS / SIGNAL JAMMING', 'sabotage': 'PHYSICAL SABOTAGE',
+               'unknown': 'HYBRID (type unclear)'}
+_MODE_ICON = {'cyber': '\U0001F4BB', 'jamming': '\U0001F4E1', 'sabotage': '\u2693', 'unknown': '\U0001F4BB'}
+_OFFICIAL = ('government', 'minister', 'ministry', 'nato ', 'nato:', 'intelligence', 'officials',
+             'prime minister', 'president', 'police', 'prosecutor', 'security service')
+_HEDGE = ('% certain', 'suspected', 'suspect', 'likely', 'possible', 'may have', 'probe', 'investigat')
+
+
+def hybrid_mode(texts):
+    t = ' '.join(texts).lower()
+    for mode, words in _MODE_WORDS:          # order matters: a hack described as "sabotage" is cyber
+        if any(w in t for w in words):
+            return mode
+    return 'unknown'
+
+
+def hybrid_attribution(texts):
+    t = ' '.join(texts).lower()
+    if any(h in t for h in _HEDGE):
+        return 'hedged'
+    if any(o in t for o in _OFFICIAL):
+        return 'official'
+    return 'press'
+
+
+def _hybrid_signal(rl, breached):
+    titles = [e.get('title', '') for e in (rl.get('evidence') or [])]
+    mode = hybrid_mode(titles or [rl.get('trigger', '')])
+    attr = hybrid_attribution(titles or [rl.get('trigger', '')])
+    attr_txt = {'official': 'officially attributed to Russia',
+                'hedged': 'attributed to Russia with a hedge in the reporting (suspected / "95% certain"), '
+                          'not officially confirmed',
+                'press': 'attributed to Russia in press reporting, not officially confirmed'}[attr]
+    return {
+        'priority':  13 if breached else 11,
+        'category':  'hybrid_red_line',
+        'theatre':   'russia',
+        'level':     4 if (breached and attr == 'official') else 3,
+        'mode':      mode,
+        'mode_label': _MODE_LABEL[mode],
+        'attribution': attr,
+        'icon':      _MODE_ICON[mode],
+        'color':     '#f97316',
+        'short_text': '\U0001F1F7\U0001F1FA RUSSIA hybrid red line %s: %s, not kinetic'
+                      % ('breached' if breached else 'approaching', _MODE_LABEL[mode]),
+        'long_text': ('%s. %s, %s. Hybrid means below the threshold of armed attack: it raises '
+                      'the temperature without anyone firing a shot.'
+                      % (rl.get('trigger', ''), _MODE_LABEL[mode].capitalize(), attr_txt))[:480],
+    }
+
+
 def _inject_triggered_ids(scan_data, red_lines_triggered):
     """v1.1 helper: inject triggered red-line IDs into scan_data so downstream
     functions (like _match_historical) can check which red lines are active."""
@@ -1556,6 +1624,9 @@ def build_top_signals(scan_data):
     # 1. Red lines (breached outrank approaching)
     for rl in (interp.get('red_lines', {}) or {}).get('triggered', [])[:3]:
         breached = rl.get('status') == 'BREACHED'
+        if rl.get('category') == 'hybrid':
+            sigs.append(_hybrid_signal(rl, breached))
+            continue
         sigs.append({
             'priority':  14 if breached else 12,
             'category':  'red_line',
