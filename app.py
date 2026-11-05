@@ -37,6 +37,24 @@ import threading
 import json
 import gc
 
+# ── v1.10.1 (Nov 5 2026, source census): lenient feed parsing ──
+# Nasha Niva and Zviazda failed on a stray control character / bare '&';
+# these tolerate a BOM or blank line before <?xml, control characters and
+# bare ampersands. An HTML block page still fails, as it should.
+_BAD_XML_CHARS = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
+_BARE_AMP = re.compile(r'&(?!#?[A-Za-z0-9]+;)')
+
+
+def _lenient_root(content):
+    try:
+        return ET.fromstring(content)
+    except ET.ParseError:
+        text = content.decode('utf-8', 'replace') if isinstance(content, bytes) else content
+        text = _BAD_XML_CHARS.sub('', text.lstrip('\ufeff \r\n\t'))
+        text = _BARE_AMP.sub('&amp;', text)
+        return ET.fromstring(text.encode('utf-8'))
+
+
 try:
     from telegram_signals_europe import fetch_europe_telegram_signals
     TELEGRAM_AVAILABLE = True
@@ -1519,7 +1537,7 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-EUROPE_BACKEND_VERSION = '1.10.0'  # Nov 4 2026 (night): UK rhetoric tracker on europe_rhetoric_engine; (1.9.3) Nov 4 2026 (late): uk_city_pulse (City of London, gilts, Lloyd's, LME); (1.9.2) United Kingdom target (City of London, gilts, territories, AUKUS); (1.9.1) Nov 3 2026 (late): Belgium Euroclear + Albania protest/migrant keywords; (1.9.0) Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
+EUROPE_BACKEND_VERSION = '1.10.1'  # Nov 5 2026: source census -- 10 blocked/dead feeds via Google News site: queries, lenient XML parsing; (1.10.0) Nov 4 2026 (night): UK rhetoric tracker on europe_rhetoric_engine; (1.9.3) Nov 4 2026 (late): uk_city_pulse (City of London, gilts, Lloyd's, LME); (1.9.2) United Kingdom target (City of London, gilts, territories, AUKUS); (1.9.1) Nov 3 2026 (late): Belgium Euroclear + Albania protest/migrant keywords; (1.9.0) Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
 
 # v1.4.1 (Oct 3 2026) -- ONE version, ONE User-Agent.
 # Europe was carrying both problems at once. The version: '/' said 1.1.0, the
@@ -2716,7 +2734,7 @@ def fetch_reddit_posts(target, keywords, days=7):
                 continue
 
             try:
-                root = ET.fromstring(response.content)
+                root = _lenient_root(response.content)
             except ET.ParseError:
                 counts['parse_error'] += 1
                 print(f"[Europe v1.2] Reddit r/{subreddit}: unparseable feed "
@@ -2772,7 +2790,7 @@ def fetch_reddit_posts(target, keywords, days=7):
 def fetch_kyiv_independent_rss():
     """Fetch articles from Kyiv Independent RSS"""
     articles = []
-    feed_url = 'https://kyivindependent.com/feed/'
+    feed_url = 'https://news.google.com/rss/search?q=site:kyivindependent.com&hl=en&gl=US&ceid=US:en'   # census Nov 5: own feed 404
 
     try:
         print("[Europe v1.1] Kyiv Independent: Fetching RSS...")
@@ -2787,7 +2805,7 @@ def fetch_kyiv_independent_rss():
             _rss_record(feed_url, 'Kyiv Independent', http_status=response.status_code, t0=_t0)
             return []
 
-        root = ET.fromstring(response.content)
+        root = _lenient_root(response.content)
         items = root.findall('.//item')
 
         for item in items[:20]:
@@ -2841,7 +2859,7 @@ def fetch_meduza_rss():
             _rss_record(feed_url, 'Meduza', http_status=response.status_code, t0=_t0)
             return []
 
-        root = ET.fromstring(response.content)
+        root = _lenient_root(response.content)
         items = root.findall('.//item')
 
         for item in items[:20]:
@@ -2880,7 +2898,7 @@ def fetch_meduza_rss():
 def fetch_isw_rss():
     """Fetch articles from Institute for the Study of War (ISW)"""
     articles = []
-    feed_url = 'https://www.understandingwar.org/rss.xml'
+    feed_url = 'https://news.google.com/rss/search?q=site:understandingwar.org&hl=en&gl=US&ceid=US:en'   # census Nov 5: own feed 403
 
     try:
         print("[Europe v1.1] ISW: Fetching RSS...")
@@ -2895,7 +2913,7 @@ def fetch_isw_rss():
             _rss_record(feed_url, 'ISW', http_status=response.status_code, t0=_t0)
             return []
 
-        root = ET.fromstring(response.content)
+        root = _lenient_root(response.content)
         items = root.findall('.//item')
 
         for item in items[:15]:
@@ -2934,7 +2952,7 @@ def fetch_isw_rss():
 def fetch_arctic_today_rss():
     """Fetch articles from Arctic Today"""
     articles = []
-    feed_url = 'https://www.arctictoday.com/feed/'
+    feed_url = 'https://news.google.com/rss/search?q=site:arctictoday.com&hl=en&gl=US&ceid=US:en'   # census Nov 5: own feed returned non-XML
 
     try:
         print("[Europe v1.1] Arctic Today: Fetching RSS...")
@@ -2949,7 +2967,7 @@ def fetch_arctic_today_rss():
             _rss_record(feed_url, 'Arctic Today', http_status=response.status_code, t0=_t0)
             return []
 
-        root = ET.fromstring(response.content)
+        root = _lenient_root(response.content)
         items = root.findall('.//item')
 
         for item in items[:15]:
@@ -3003,7 +3021,7 @@ def fetch_google_news_rss(query, source_label='Google News', max_articles=15):
             _rss_record(feed_url, source_label, http_status=response.status_code, t0=_t0)
             return []
 
-        root = ET.fromstring(response.content)
+        root = _lenient_root(response.content)
         items = root.findall('.//item')
 
         for item in items[:max_articles]:
@@ -3052,7 +3070,7 @@ def fetch_daily_sabah_rss():
             _rss_record(feed_url, 'Daily Sabah', http_status=response.status_code, t0=_t0)
             return []
 
-        root = ET.fromstring(response.content)
+        root = _lenient_root(response.content)
         items = root.findall('.//item')
 
         for item in items[:15]:
@@ -3102,7 +3120,7 @@ def fetch_ukrinform_rss():
             _rss_record(feed_url, 'Ukrinform', http_status=response.status_code, t0=_t0)
             return []
 
-        root = ET.fromstring(response.content)
+        root = _lenient_root(response.content)
         items = root.findall('.//item')
 
         for item in items[:20]:
@@ -3152,7 +3170,7 @@ def fetch_moscow_times_rss():
             _rss_record(feed_url, 'Moscow Times', http_status=response.status_code, t0=_t0)
             return []
 
-        root = ET.fromstring(response.content)
+        root = _lenient_root(response.content)
         items = root.findall('.//item')
 
         for item in items[:20]:
@@ -3205,7 +3223,7 @@ def _fetch_native_rss(feed_url, source_name, language, log_prefix='[Europe v1.4]
             _rss_record(feed_url, source_name, http_status=response.status_code, t0=_t0)
             return []
 
-        root = ET.fromstring(response.content)
+        root = _lenient_root(response.content)
         items = root.findall('.//item')
 
         for item in items[:20]:
@@ -3250,7 +3268,7 @@ def fetch_zviazda_rss():
 
 def fetch_euroradio_be_rss():
     """Euroradio — independent Belarusian-language broadcaster."""
-    return _fetch_native_rss('https://euroradio.fm/be/rss', 'Euroradio', 'be')
+    return _fetch_native_rss('https://news.google.com/rss/search?q=site:euroradio.fm&hl=en&gl=US&ceid=US:en', 'Euroradio', 'be')   # census: 403
 
 def fetch_svaboda_be_rss():
     """Radio Svaboda — RFE/RL Belarusian service."""
@@ -3274,15 +3292,15 @@ def fetch_zn_ua_rss():
 # ── Belarus — Russian-language and English-language opposition coverage (v1.4.0 full pass) ──
 def fetch_belsat_ru_rss():
     """Belsat — Poland-based Belarusian channel, Russian-language edition. Declared 'extremist' by both Belarus and Russia (highest-signal opposition source)."""
-    return _fetch_native_rss('https://belsat.eu/ru/feed', 'Belsat (RU)', 'ru')
+    return _fetch_native_rss('https://news.google.com/rss/search?q=site:belsat.eu&hl=en&gl=US&ceid=US:en', 'Belsat (RU)', 'ru')   # census: connection refused
 
 def fetch_nexta_en_rss():
     """NEXTA — Belarusian opposition Telegram-origin outlet, English RSS."""
-    return _fetch_native_rss('https://nexta.tv/en/rss', 'NEXTA', 'en')
+    return _fetch_native_rss('https://news.google.com/rss/search?q=site:nexta.tv&hl=en&gl=US&ceid=US:en', 'NEXTA', 'en')   # census: 404
 
 def fetch_rferl_belarus_en_rss():
     """RFE/RL Belarus Service — English-language RSS."""
-    return _fetch_native_rss('https://www.rferl.org/api/zypppgmm-en', 'RFE/RL Belarus', 'en')
+    return _fetch_native_rss('https://news.google.com/rss/search?q=site:rferl.org+belarus&hl=en&gl=US&ceid=US:en', 'RFE/RL Belarus', 'en')   # census: empty body
 
 def fetch_newsmaker_md_rss():
     # VERIFY-IN-LOGS: wordpress feed path assumed
@@ -3294,7 +3312,7 @@ def fetch_zdg_md_rss():
 
 def fetch_viasna_en_rss():
     """Viasna Human Rights Centre — political prisoner tracking, English RSS. Key signal for crackdown intensity."""
-    return _fetch_native_rss('https://spring96.org/en/rss', 'Viasna', 'en')
+    return _fetch_native_rss('https://news.google.com/rss/search?q=site:spring96.org&hl=en&gl=US&ceid=US:en', 'Viasna', 'en')   # census: 403
 
 
 # ── Ukraine — Russian-language and additional English-language coverage (v1.4.0 full pass) ──
@@ -3304,7 +3322,7 @@ def fetch_ukrainska_pravda_ru_rss():
 
 def fetch_euromaidan_press_rss():
     """Euromaidan Press — canonical English-language Ukrainian analytical outlet, est. 2014."""
-    return _fetch_native_rss('https://euromaidanpress.com/feed', 'Euromaidan Press', 'en')
+    return _fetch_native_rss('https://news.google.com/rss/search?q=site:euromaidanpress.com&hl=en&gl=US&ceid=US:en', 'Euromaidan Press', 'en')   # census: 403
 
 
 # ========================================
