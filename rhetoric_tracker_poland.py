@@ -185,7 +185,7 @@ RSS_FEEDS = [
     ('https://www.defence24.com/rss',                         'Defence24',          1.00),
     ('https://euractiv.com/sections/politics/feed/',          'Euractiv',           0.85),
     ('https://www.osw.waw.pl/en/rss.xml',                     'OSW (Centre for Eastern Studies)', 1.00),
-    ('https://kyivindependent.com/feed/',                     'Kyiv Independent',   0.80),
+    ('https://news.google.com/rss/search?q=site:kyivindependent.com&hl=en&gl=US&ceid=US:en',                     'Kyiv Independent',   0.80),
     ('https://www.rferl.org/api/zrqiteuuir',                  'RFE/RL',             0.90),
     ('https://feeds.bbci.co.uk/news/world/europe/rss.xml',    'BBC Europe',         0.80),
 ]
@@ -1004,3 +1004,51 @@ def register_poland_rhetoric_endpoints(app):
 
     print('[Poland Rhetoric] ✅ Endpoints registered: /api/rhetoric/poland, '
           '/summary, /history, /debug/poland-rhetoric')
+
+
+# ── Nov 5 2026 (URL sweep): every fetch here now reports to feed_health, so the
+# /api/census link can see these feeds. Before, they could die silently: a dark
+# feed makes a country look quiet when it is only unread. Never raises.
+# Reports each feed at most once every 2h per process (2 Upstash commands per
+# report): enough to tell healthy from dead, without multiplying Redis traffic.
+try:
+    from feed_health import record_fetch as _fh_record
+    _fh_inner__fetch_rss = _fetch_rss
+    _fh_last__fetch_rss = {}
+
+    def _fetch_rss(*a, **k):
+        _t0 = time.time()
+        try:
+            _url, _label = a[0], a[1]
+        except Exception:
+            _url, _label = None, None
+        if _url and time.time() - _fh_last__fetch_rss.get(_url, 0) < 7200:
+            _url = None                                    # reported recently: skip
+        elif _url:
+            _fh_last__fetch_rss[_url] = time.time()
+        try:
+            _out = _fh_inner__fetch_rss(*a, **k)
+        except Exception as _e:
+            try:
+                if _url:
+                    _fh_record('europe', _url, error=_e, label=_label,
+                               duration_ms=(time.time() - _t0) * 1000)
+            except Exception:
+                pass
+            raise
+        try:
+            if _url:
+                _n = len(_out) if isinstance(_out, (list, tuple)) else (
+                    len(_out.get('articles') or []) if isinstance(_out, dict) else (1 if _out else 0))
+                if _n:
+                    _fh_record('europe', _url, items=_n, http_status=200, label=_label,
+                               duration_ms=(time.time() - _t0) * 1000)
+                else:
+                    _fh_record('europe', _url, error='no items (blocked, moved or empty; '
+                               'this tracker does not keep the reason)', label=_label,
+                               duration_ms=(time.time() - _t0) * 1000)
+        except Exception:
+            pass
+        return _out
+except ImportError:
+    pass

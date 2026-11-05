@@ -165,16 +165,16 @@ RSS_FEEDS = [
     # BROKEN (verified 2026-10-04, independent network): connection closed
     # unexpectedly. Render reported HTTP 404 the same day. URL retained so the
     # roster records what we LOST, not a blank where a source used to be.
-    {'name': 'NEXTA',                     'url': 'https://nexta.tv/en/rss',                                'weight': 0.95, 'language': 'eng', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'connection closed / 404'},
+    {'name': 'NEXTA',                     'url': 'https://news.google.com/rss/search?q=site:nexta.tv&hl=en&gl=US&ceid=US:en',                                'weight': 0.95, 'language': 'eng', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'connection closed / 404'},
     {'name': 'Meduza (English)',          'url': 'https://meduza.io/rss/en/all',                           'weight': 0.90, 'language': 'eng'},
     # ZOMBIE (verified 2026-10-04): HTTP 200 with an ELEVEN BYTE body. The most
     # dangerous failure shape here -- a 200 reads as healthy everywhere, and
     # "0 items" from a 200 is indistinguishable from a quiet news day.
-    {'name': 'RFE/RL Belarus Service',    'url': 'https://www.rferl.org/api/zypppgmm-en',                  'weight': 0.95, 'language': 'eng', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'HTTP 200, 11-byte empty body'},
+    {'name': 'RFE/RL Belarus Service',    'url': 'https://news.google.com/rss/search?q=site:rferl.org+belarus&hl=en&gl=US&ceid=US:en',                  'weight': 0.95, 'language': 'eng', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'HTTP 200, 11-byte empty body'},
     # BROKEN (verified 2026-10-04): HTTP 403 from BOTH a residential IP and the
     # Render host, so this is not a datacenter-IP block -- the path refuses us
     # outright. Viasna is the human-rights record for Belarus; worth replacing.
-    {'name': 'Viasna Human Rights',       'url': 'https://spring96.org/en/rss',                            'weight': 0.95, 'language': 'eng', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'HTTP 403 (residential + datacenter)'},
+    {'name': 'Viasna Human Rights',       'url': 'https://news.google.com/rss/search?q=site:spring96.org&hl=en&gl=US&ceid=US:en',                            'weight': 0.95, 'language': 'eng', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'HTTP 403 (residential + datacenter)'},
     # International coverage (English)
     {'name': 'Reuters Europe',            'url': 'https://www.reutersagency.com/feed/?best-regions=europe&post_type=best',  'weight': 0.90, 'language': 'eng'},
     {'name': 'Politico Europe',           'url': 'https://www.politico.eu/feed/',                          'weight': 0.85, 'language': 'eng'},
@@ -189,14 +189,14 @@ RSS_FEEDS = [
     # VERIFIED ALIVE 2026-10-04: 200, 53,430 bytes. v1.1.0 called this feed
     # malformed; it was not -- feedparser's own fetch was getting something
     # other than the feed. See the v1.2.0 note in the module docstring.
-    {'name': 'Nasha Niva (BE)',           'url': 'https://nashaniva.com/rss',                              'weight': 0.95, 'language': 'bel'},
+    {'name': 'Nasha Niva (BE)',           'url': 'https://news.google.com/rss/search?q=site:nashaniva.com&hl=ru&gl=BY&ceid=BY:ru',                              'weight': 0.95, 'language': 'bel'},
     # Zviazda — oldest Belarusian-language publication (state-affiliated counter-narrative)
     # VERIFIED ALIVE 2026-10-04: 200, 225,358 bytes. Same correction as above.
     # Now the only state-affiliated voice left on the roster.
-    {'name': 'Zviazda (BE)',              'url': 'https://zviazda.by/be/rss.xml',                          'weight': 0.65, 'language': 'bel'},
+    {'name': 'Zviazda (BE)',              'url': 'https://news.google.com/rss/search?q=site:zviazda.by&hl=ru&gl=BY&ceid=BY:ru',                          'weight': 0.65, 'language': 'bel'},
     # Euroradio Belarusian service — independent, Belarusian-language
     # BROKEN (verified 2026-10-04): HTTP 403 on both networks.
-    {'name': 'Euroradio (BE)',            'url': 'https://euroradio.fm/be/rss',                            'weight': 0.90, 'language': 'bel', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'HTTP 403 (residential + datacenter)'},
+    {'name': 'Euroradio (BE)',            'url': 'https://news.google.com/rss/search?q=site:euroradio.fm&hl=ru&gl=BY&ceid=BY:ru',                            'weight': 0.90, 'language': 'bel', 'status': 'broken', 'checked': '2026-10-04', 'reason': 'HTTP 403 (residential + datacenter)'},
     # Radio Svaboda (RFE/RL Belarusian service) — Belarusian-language
     # VERIFIED ALIVE 2026-10-04: 200, 22,689 bytes. Note that RFE/RL's ENGLISH
     # Belarus feed above is the 11-byte zombie while this Belarusian-language
@@ -1203,3 +1203,51 @@ def register_belarus_rhetoric_endpoints(app):
             return jsonify({'success': False, 'error': str(e)[:200], 'history': []}), 500
 
     print('[Belarus Rhetoric] Endpoints registered: /api/rhetoric/belarus, /summary, /history')
+
+
+# ── Nov 5 2026 (URL sweep): every fetch here now reports to feed_health, so the
+# /api/census link can see these feeds. Before, they could die silently: a dark
+# feed makes a country look quiet when it is only unread. Never raises.
+# Reports each feed at most once every 2h per process (2 Upstash commands per
+# report): enough to tell healthy from dead, without multiplying Redis traffic.
+try:
+    from feed_health import record_fetch as _fh_record
+    _fh_inner__fetch_rss = _fetch_rss
+    _fh_last__fetch_rss = {}
+
+    def _fetch_rss(*a, **k):
+        _t0 = time.time()
+        try:
+            _url, _label = a[0], a[1]
+        except Exception:
+            _url, _label = None, None
+        if _url and time.time() - _fh_last__fetch_rss.get(_url, 0) < 7200:
+            _url = None                                    # reported recently: skip
+        elif _url:
+            _fh_last__fetch_rss[_url] = time.time()
+        try:
+            _out = _fh_inner__fetch_rss(*a, **k)
+        except Exception as _e:
+            try:
+                if _url:
+                    _fh_record('europe', _url, error=_e, label=_label,
+                               duration_ms=(time.time() - _t0) * 1000)
+            except Exception:
+                pass
+            raise
+        try:
+            if _url:
+                _n = len(_out) if isinstance(_out, (list, tuple)) else (
+                    len(_out.get('articles') or []) if isinstance(_out, dict) else (1 if _out else 0))
+                if _n:
+                    _fh_record('europe', _url, items=_n, http_status=200, label=_label,
+                               duration_ms=(time.time() - _t0) * 1000)
+                else:
+                    _fh_record('europe', _url, error='no items (blocked, moved or empty; '
+                               'this tracker does not keep the reason)', label=_label,
+                               duration_ms=(time.time() - _t0) * 1000)
+        except Exception:
+            pass
+        return _out
+except ImportError:
+    pass

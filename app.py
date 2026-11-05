@@ -3260,11 +3260,11 @@ def _fetch_native_rss(feed_url, source_name, language, log_prefix='[Europe v1.4]
 # ── Belarusian-language native feeds ──
 def fetch_nasha_niva_rss():
     """Nasha Niva — primary Belarusian-language opposition outlet (in exile, est. 1906)."""
-    return _fetch_native_rss('https://nashaniva.com/rss', 'Nasha Niva', 'be')
+    return _fetch_native_rss('https://news.google.com/rss/search?q=site:nashaniva.com&hl=ru&gl=BY&ceid=BY:ru', 'Nasha Niva', 'be')
 
 def fetch_zviazda_rss():
     """Zviazda — oldest Belarusian-language publication (state-affiliated counter-narrative)."""
-    return _fetch_native_rss('https://zviazda.by/be/rss.xml', 'Zviazda', 'be')
+    return _fetch_native_rss('https://news.google.com/rss/search?q=site:zviazda.by&hl=ru&gl=BY&ceid=BY:ru', 'Zviazda', 'be')
 
 def fetch_euroradio_be_rss():
     """Euroradio — independent Belarusian-language broadcaster."""

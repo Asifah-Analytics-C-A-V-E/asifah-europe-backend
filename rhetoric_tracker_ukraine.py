@@ -137,11 +137,11 @@ _scan_lock = threading.Lock()
 # ============================================================
 RSS_FEEDS = [
     # Ukrainian press
-    {'name': 'Kyiv Independent',         'url': 'https://kyivindependent.com/feed/',           'weight': 0.95},
+    {'name': 'Kyiv Independent',         'url': 'https://news.google.com/rss/search?q=site:kyivindependent.com&hl=en&gl=US&ceid=US:en',           'weight': 0.95},
     {'name': 'Ukrainska Pravda (EN)',    'url': 'https://www.pravda.com.ua/eng/rss/view_news/', 'weight': 0.90},
     {'name': 'Ukrinform',                'url': 'https://www.ukrinform.net/rss/block-lastnews', 'weight': 0.90},
     # Defense / OSINT
-    {'name': 'ISW',                      'url': 'https://www.understandingwar.org/rss.xml',     'weight': 0.95},
+    {'name': 'ISW',                      'url': 'https://news.google.com/rss/search?q=site:understandingwar.org&hl=en&gl=US&ceid=US:en',     'weight': 0.95},
     {'name': 'War on the Rocks',         'url': 'https://warontherocks.com/feed/',              'weight': 0.85, 'topic_filter': True},
     {'name': 'USNI News',                'url': 'https://news.usni.org/feed',                   'weight': 0.85, 'topic_filter': True},
     # Investigative / Russia-focused
@@ -1542,3 +1542,51 @@ def register_ukraine_rhetoric_endpoints(app):
             return jsonify({'success': False, 'error': str(e)[:200], 'history': []}), 500
 
     print('[Ukraine Rhetoric] Endpoints registered: /api/rhetoric/ukraine, /summary, /history')
+
+
+# ── Nov 5 2026 (URL sweep): every fetch here now reports to feed_health, so the
+# /api/census link can see these feeds. Before, they could die silently: a dark
+# feed makes a country look quiet when it is only unread. Never raises.
+# Reports each feed at most once every 2h per process (2 Upstash commands per
+# report): enough to tell healthy from dead, without multiplying Redis traffic.
+try:
+    from feed_health import record_fetch as _fh_record
+    _fh_inner__fetch_rss = _fetch_rss
+    _fh_last__fetch_rss = {}
+
+    def _fetch_rss(*a, **k):
+        _t0 = time.time()
+        try:
+            _url, _label = a[0], a[1]
+        except Exception:
+            _url, _label = None, None
+        if _url and time.time() - _fh_last__fetch_rss.get(_url, 0) < 7200:
+            _url = None                                    # reported recently: skip
+        elif _url:
+            _fh_last__fetch_rss[_url] = time.time()
+        try:
+            _out = _fh_inner__fetch_rss(*a, **k)
+        except Exception as _e:
+            try:
+                if _url:
+                    _fh_record('europe', _url, error=_e, label=_label,
+                               duration_ms=(time.time() - _t0) * 1000)
+            except Exception:
+                pass
+            raise
+        try:
+            if _url:
+                _n = len(_out) if isinstance(_out, (list, tuple)) else (
+                    len(_out.get('articles') or []) if isinstance(_out, dict) else (1 if _out else 0))
+                if _n:
+                    _fh_record('europe', _url, items=_n, http_status=200, label=_label,
+                               duration_ms=(time.time() - _t0) * 1000)
+                else:
+                    _fh_record('europe', _url, error='no items (blocked, moved or empty; '
+                               'this tracker does not keep the reason)', label=_label,
+                               duration_ms=(time.time() - _t0) * 1000)
+        except Exception:
+            pass
+        return _out
+except ImportError:
+    pass
