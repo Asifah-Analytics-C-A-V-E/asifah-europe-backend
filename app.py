@@ -1537,7 +1537,7 @@ TARGET_KEYWORDS = {
 # ========================================
 # REDDIT CONFIGURATION — EUROPE
 # ========================================
-EUROPE_BACKEND_VERSION = '1.10.1'  # Nov 5 2026: source census -- 10 blocked/dead feeds via Google News site: queries, lenient XML parsing; (1.10.0) Nov 4 2026 (night): UK rhetoric tracker on europe_rhetoric_engine; (1.9.3) Nov 4 2026 (late): uk_city_pulse (City of London, gilts, Lloyd's, LME); (1.9.2) United Kingdom target (City of London, gilts, territories, AUKUS); (1.9.1) Nov 3 2026 (late): Belgium Euroclear + Albania protest/migrant keywords; (1.9.0) Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
+EUROPE_BACKEND_VERSION = '1.10.2'  # Nov 6 2026: dashboard serves the last stored score between refreshes (was a blank card 4h-12h after each refresh) and sends cached_at; (1.10.1) Nov 5 2026: source census -- 10 blocked/dead feeds via Google News site: queries, lenient XML parsing; (1.10.0) Nov 4 2026 (night): UK rhetoric tracker on europe_rhetoric_engine; (1.9.3) Nov 4 2026 (late): uk_city_pulse (City of London, gilts, Lloyd's, LME); (1.9.2) United Kingdom target (City of London, gilts, territories, AUKUS); (1.9.1) Nov 3 2026 (late): Belgium Euroclear + Albania protest/migrant keywords; (1.9.0) Hungary financial pulse; (1.8.0) Europe actor matrix; (1.7.0) every live tracker boosts its card, military read
 
 # v1.4.1 (Oct 3 2026) -- ONE version, ONE User-Agent.
 # Europe was carrying both problems at once. The version: '/' said 1.1.0, the
@@ -4468,6 +4468,10 @@ def api_europe_dashboard():
                 if is_fresh and redis_cached:
                     cache_set(cache_key, redis_cached)  # warm in-memory
                     cached = redis_cached
+                elif redis_cached:
+                    # v1.10.2: older than 4h but the 12h refresh hasn't run yet.
+                    # Show the last read (with its date) -- not a blank card.
+                    cached = redis_cached
 
             if cached:
                 # Cache hit — return collapsed summary for dashboard
@@ -4479,6 +4483,7 @@ def api_europe_dashboard():
                     'total_articles': cached.get('total_articles', 0),
                     'flight_disruptions': len(cached.get('flight_disruptions', [])),
                     'cached': True,
+                    'cached_at': cached.get('cached_at'),
                     'cache_age_seconds': int(cache_age(cache_key) or 0)
                 }
                 continue
